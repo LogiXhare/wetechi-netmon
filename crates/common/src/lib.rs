@@ -5,7 +5,14 @@
 //! collector, aggregator, and future service crates — it is not a
 //! dumping ground for unrelated helpers.
 
+pub mod flow;
 pub mod logging;
+pub mod sampling;
+
+pub use flow::{FlowError, NormalizedFlow, NormalizedFlowBuilder, Protocol};
+pub use sampling::{
+    resolve as resolve_sampling, ResolvedSampling, SamplingInputs, SamplingRate, SamplingSource,
+};
 
 /// Errors that can cross crate boundaries within WetechiNetMon.
 ///

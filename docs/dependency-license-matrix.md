@@ -1,6 +1,6 @@
 # Dependency License Matrix
 
-Status: Phase 2 — first dependencies actually vendored (Rust workspace)
+Status: Phase 3 — ClickHouse client and time crates added
 Last updated: 2026-08-20
 
 No dependency is approved for use until this matrix has a completed row for
@@ -23,7 +23,7 @@ before any commercial distribution.
 | 8 | tracing / tracing-subscriber | Structured logging/tracing | MIT (verified via `cargo metadata` against v0.1.44 / v0.3.23) | None | Safe | **Approved** — vendored in `crates/common` (Phase 2) |
 | 9 | prometheus (Rust crate) | Metrics | Apache-2.0 (verified via `cargo metadata` against v0.14.0) | None | Safe | **Approved** — vendored in `crates/collector` (Phase 2) |
 | 10 | GoBGP | BGP speaker (external process/API dependency, not linked) | Apache-2.0 — REQUIRES VERIFICATION | None expected at Apache-2.0 | Likely safe; verify integration is via API/process boundary, not static link, before assuming no obligations | REQUIRES VERIFICATION |
-| 11 | ClickHouse (server, external service) | Analytics storage | Apache-2.0 — REQUIRES VERIFICATION | None expected | Safe as external service dependency | REQUIRES VERIFICATION |
+| 11 | ClickHouse (server, external service) | Analytics storage | Apache-2.0 — REQUIRES VERIFICATION | None expected | Safe as external service dependency | REQUIRES VERIFICATION — integration code written (Phase 3, `crates/storage`) and unit-tested, but no live ClickHouse server was reachable in this environment to verify the actual write path end to end; see docs/integrations/clickhouse.md |
 | 12 | PostgreSQL (server, external service) | Config/metadata storage | PostgreSQL License (permissive) — REQUIRES VERIFICATION | None | Safe | REQUIRES VERIFICATION |
 | 13 | Prometheus (server) | Metrics collection | Apache-2.0 — REQUIRES VERIFICATION | None | Safe | REQUIRES VERIFICATION |
 | 14 | Grafana | Dashboards | **AGPLv3 for core Grafana (post-2021 relicensing); some components Apache-2.0 — REQUIRES VERIFICATION against the exact edition/version used** | **AGPLv3 has network-use copyleft implications; must be evaluated before bundling/redistributing a modified Grafana in a commercial appliance** | **BLOCKING — legal review required before Phase 6 commercial packaging** | REQUIRES VERIFICATION — flagged as legal risk |
@@ -40,6 +40,10 @@ before any commercial distribution.
 | 25 | MkDocs Material | Documentation site | MIT | None | Safe | REQUIRES VERIFICATION (version pin) |
 | 26 | thiserror | Error-type derive macro | MIT OR Apache-2.0 (verified via `cargo metadata` against v2.0.20) | None | Safe | **Approved** — vendored in `crates/protocol-ipfix`, `crates/common`, `crates/collector` (Phase 2) |
 | 27 | proptest | Property-based testing | MIT OR Apache-2.0 (verified via `cargo metadata` against v1.11.0) | None | Safe, dev-dependency only (not shipped in release binaries) | **Approved** — dev-dependency in `crates/protocol-ipfix` (Phase 2) |
+| 28 | clickhouse (Rust client crate) | ClickHouse HTTP client/writer | MIT OR Apache-2.0 (verified via `cargo metadata` against v0.13.3) | None | Safe | **Approved** — vendored in `crates/storage` (Phase 3) |
+| 29 | time | Date/time handling for ClickHouse row timestamps | MIT OR Apache-2.0 (verified via `cargo metadata` against v0.3.55) | None | Safe | **Approved** — vendored in `crates/storage`, `crates/collector` (Phase 3) |
+| 30 | serde (direct use) | Row serialization for `clickhouse::Row` | MIT OR Apache-2.0 (verified via `cargo metadata` against v1.0.229) | None | Safe | **Approved** — vendored in `crates/storage` (Phase 3; already a transitive dependency since Phase 2, now a direct one) |
+| 31 | libfuzzer-sys | libFuzzer bindings for the cargo-fuzz target | MIT OR Apache-2.0 (commonly known; **not independently verified via `cargo metadata`** — the fuzz crate is its own standalone Cargo workspace, per `crates/protocol-ipfix/fuzz/Cargo.toml`, so it doesn't appear in the main workspace's dependency graph) | None expected | Safe; dev/tooling-only, never shipped in a release binary | REQUIRES VERIFICATION — **not yet run in CI or locally in this environment** (no nightly toolchain here); verify before first real `cargo fuzz run` |
 
 ## Toolchain-Only, Not Shipped in Any Binary
 

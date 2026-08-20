@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: Phase 2 complete
+Status: Phase 3 complete
 Last updated: 2026-08-20
 
 This roadmap mirrors the phased delivery model and versioning plan in the
@@ -15,8 +15,8 @@ an explicit decision record, a commit, and updated documentation.
 | Phase 0 | — | Product foundation and clean-room boundary (this document set) — ✅ complete |
 | Phase 1 | v0.1.0 | GitHub repository and documentation foundation — ✅ complete |
 | Phase 2 | v0.2.0 | IPFIX collector MVP — ✅ complete |
-| Phase 3 | v0.3.0 | Aggregation and direction classification |
-| Phase 3 (cont.) | v0.4.0 | ClickHouse and Prometheus metrics |
+| Phase 3 | v0.3.0 | Aggregation and direction classification — ✅ complete |
+| Phase 3 (cont.) | v0.4.0 | ClickHouse and Prometheus metrics — ✅ complete |
 | Phase 4 | v0.5.0 | Static detection engine |
 | Phase 5 | v0.6.0 | Incident lifecycle |
 | Phase 6 | v0.7.0 | Grafana and native UI |
@@ -88,9 +88,35 @@ in this environment — property-based tests cover the same "never panics"
 safety property via `proptest` instead. Tracked in
 [risk-register.md](risk-register.md) R4, not silently dropped.
 
-## Immediately Next: Phase 3 Preview
+## Phase 3 — Scope (complete)
 
-Aggregation and direction classification: host/network/hostgroup/ASN
-aggregation, Incoming/Outgoing/Internal/Other classification, ClickHouse
-output, tests, documentation. **Not started** — requires review of
-Phase 2 first, per master prompt §29.
+Aggregation and direction classification: `NormalizedFlow` protocol-
+independent flow model (`crates/common`), sampling correction with a
+documented priority order, tenant-aware prefix registry and direction
+classification (`crates/classifier`, binary trie — ADR 0002), bounded
+multi-dimensional aggregation and rate windows (`crates/aggregator` —
+ADR 0003), ClickHouse output (`crates/storage` — ADR 0005), an in-process
+bounded-channel pipeline (ADR 0004), SIGTERM graceful shutdown, extended
+`tools/flow-replay`, and 8 new documentation pages. ~154 tests passing;
+end-to-end verified against a real running collector process.
+
+**Known limitations carried forward:**
+
+- `cargo-fuzz` target exists but has not been executed (no nightly
+  toolchain in this environment) — see
+  [risk-register.md](risk-register.md) R4.
+- ClickHouse write path implemented and unit-tested but not verified
+  against a live server (none available here) — see
+  [integrations/clickhouse.md](integrations/clickhouse.md).
+- `interface_traffic` ClickHouse table not yet exported (aggregator's
+  interface dimension isn't exporter-scoped).
+- No performance benchmark executed — the 100k flows/sec target is
+  documented, not measured (see
+  [operations/capacity-planning.md](operations/capacity-planning.md)).
+
+## Immediately Next: Phase 4 Preview
+
+Detection engine: static threshold detection, per-host/per-prefix/total-
+hostgroup detection scopes, hysteresis, cooldown, dry-run and alert-only
+modes, tests, documentation. **Not started** — requires review of
+Phase 3 first, per master prompt §29.

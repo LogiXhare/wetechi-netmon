@@ -1,6 +1,7 @@
 # Flow Replay Tool
 
-**Status:** Implemented (Phase 2 MVP scope).
+**Status:** Implemented (Phase 2: basic IPv4; Phase 3: IPv4/IPv6,
+protocols, sampling, multi-exporter scenarios).
 
 Sends synthetic, well-formed IPFIX messages over UDP to a target
 collector — for local/lab testing only. See
@@ -12,14 +13,13 @@ never real captured traffic and never anything resembling attack traffic.
 ## Usage
 
 ```bash
-cargo run -p wetechinetmon-flow-replay -- <target_host:port> [record_count]
-# e.g. against a local collector:
-cargo run -p wetechinetmon-flow-replay -- 127.0.0.1:2055 10
+cargo run -p wetechinetmon-flow-replay -- <target_host:port> [options]
 ```
 
-Sends one synthetic Template Set (template ID 256: sourceIPv4Address,
-destinationIPv4Address, packetDeltaCount), then `record_count` (default 5)
-synthetic Data Sets with incrementing sequence numbers.
+See [../../docs/development/flow-replay.md](../../docs/development/flow-replay.md)
+for the full option reference (`--count`, `--scenario`, `--family`,
+`--protocol`, `--exporters`, `--sampling-rate`) and the address
+convention used for `--scenario`.
 
 ## Testing
 
@@ -27,7 +27,8 @@ synthetic Data Sets with incrementing sequence numbers.
 cargo test -p wetechinetmon-flow-replay
 ```
 
-Includes a round-trip test that builds a synthetic message with this
-tool's own byte-building code and decodes it with the real
+5 tests, including round-trip tests (IPv4, IPv6, and Options-Template
+sampling) that build synthetic messages with this tool's own byte-
+building code and decode them with the real
 `wetechinetmon-protocol-ipfix` decoder, confirming the values survive
 unchanged — the same path a live exporter's traffic would take.

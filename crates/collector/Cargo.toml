@@ -13,9 +13,13 @@ path = "src/main.rs"
 [dependencies]
 wetechinetmon-common = { path = "../common" }
 wetechinetmon-protocol-ipfix = { path = "../protocol-ipfix" }
+wetechinetmon-classifier = { path = "../classifier" }
+wetechinetmon-aggregator = { path = "../aggregator" }
+wetechinetmon-storage = { path = "../storage" }
 tokio.workspace = true
 tracing.workspace = true
 prometheus.workspace = true
 thiserror.workspace = true
+time = "0.3"
 
 [dev-dependencies]

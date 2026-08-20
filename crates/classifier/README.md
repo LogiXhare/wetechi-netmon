@@ -1,14 +1,20 @@
 # Direction Classifier
 
-**Status:** Reserved — not yet implemented.
+**Status:** Implemented (Phase 3).
 
-**Planned for:** Phase 3 (see [../../docs/roadmap.md](../../docs/roadmap.md)).
+Tenant-aware local-prefix registry (IPv4 + IPv6, binary trie, longest-
+prefix match — [ADR 0002](../../docs/architecture/decisions/0002-prefix-lookup-data-structure.md))
+and traffic direction classification
+(Incoming/Outgoing/Internal/Other/Unknown, with explainable diagnostics
+— FR-3.3). See
+[../../docs/architecture/direction-classification.md](../../docs/architecture/direction-classification.md).
 
-Incoming/Outgoing/Internal/Other classification. See docs/functional-requirements.md (FR-3).
+## Testing
 
-This directory is intentionally a placeholder as of Phase 1
-(repository and documentation foundation). No production code has been
-added here yet, per `prompts/CLAUDE_MASTER_PROMPT.md`. Do not implement
-functionality in this directory ahead of its scheduled phase without an
-explicit decision recorded in `docs/roadmap.md` and, where applicable, an
-architecture decision record under `docs/architecture/decisions/`.
+```bash
+cargo test -p wetechinetmon-classifier
+```
+
+29 tests: trie insertion/lookup/overlap/duplicate detection, registry
+construction and validation, direction classification (both address
+families, all four directions plus Unknown), and 2 `proptest` properties.

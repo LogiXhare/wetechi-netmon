@@ -1,0 +1,20 @@
+[package]
+name = "wetechinetmon-storage"
+description = "ClickHouse output for WetechiNetMon analytics: original schemas, bounded batching, and bounded-retry writes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wetechinetmon-common = { path = "../common" }
+wetechinetmon-aggregator = { path = "../aggregator" }
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+clickhouse = { version = "0.13", features = ["time"] }
+serde = { version = "1", features = ["derive"] }
+time = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

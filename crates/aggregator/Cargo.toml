@@ -1,0 +1,15 @@
+[package]
+name = "wetechinetmon-aggregator"
+description = "Bounded in-memory traffic aggregation and rate-window calculation for WetechiNetMon."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wetechinetmon-common = { path = "../common" }
+wetechinetmon-classifier = { path = "../classifier" }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -40,6 +40,10 @@ guessed). None are modified from their upstream published source.
   thiserror              MIT OR Apache-2.0  https://github.com/dtolnay/thiserror
   prometheus (Rust client)  Apache-2.0  https://github.com/tikv/rust-prometheus
   proptest (dev/test-only, not shipped)  MIT OR Apache-2.0  https://github.com/proptest-rs/proptest
+  clickhouse (Rust client)  MIT OR Apache-2.0  https://github.com/ClickHouse/clickhouse-rs
+  time                   MIT OR Apache-2.0  https://github.com/time-rs/time
+  serde (direct use)     MIT OR Apache-2.0  https://github.com/serde-rs/serde
+  libfuzzer-sys (fuzz-only, own workspace, never shipped)  MIT OR Apache-2.0 (REQUIRES VERIFICATION)  https://github.com/rust-fuzz/libfuzzer
 
 This list covers direct dependencies only. Transitive dependencies are
 recorded in Cargo.lock (committed to this repository) and are pulled in

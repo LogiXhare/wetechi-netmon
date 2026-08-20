@@ -8,6 +8,62 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
 
 ## [Unreleased]
 
+### Added — Phase 3: Aggregation and Direction Classification
+
+- `crates/common`: `NormalizedFlow` — protocol-independent flow record
+  (`flow.rs`) and sampling-correction module (`sampling.rs`) implementing
+  the documented priority order (record-level → options-template →
+  exporter-configured → global default → unsampled), with zero-rate
+  rejection and overflow rejection.
+- `crates/classifier` (new crate): binary-trie prefix registry (IPv4 +
+  IPv6, longest-prefix match, duplicate/overlap detection, tenant +
+  hostgroup ownership — ADR 0002) and direction classification
+  (Incoming/Outgoing/Internal/Other/Unknown, with explainable
+  diagnostics). 29 tests.
+- `crates/aggregator` (new crate): bounded multi-dimensional aggregation
+  (hosts, networks, /24, configurable prefix lengths, hostgroups, ASNs,
+  exporters, interfaces, protocols — ADR 0003), 1s/5s/15s/1m/5m rate
+  windows over processing time, deterministic LRU-style eviction,
+  inactivity expiration. 26 tests.
+- `crates/storage` (new crate): original ClickHouse schemas for 9 tables,
+  bounded batch writer, bounded retry queue with exponential backoff and
+  drop-oldest-on-overflow (ADR 0005), idempotent migrations. 13 unit
+  tests + 1 skip-cleanly-without-a-server integration test.
+- `crates/collector`: wired IPFIX → normalize → classify → aggregate →
+  (optional) ClickHouse export pipeline via a bounded in-process channel
+  (ADR 0004); SIGTERM graceful shutdown (Unix); 14 new Prometheus
+  metrics; periodic inactivity-expiration sweep; env-var configuration
+  for local prefixes, aggregation limits, sampling defaults, and optional
+  ClickHouse URL. 28 tests.
+- `tools/flow-replay`: extended for IPv4/IPv6, TCP/UDP/ICMP, sampling
+  (via synthetic Options Templates), and multiple simulated
+  exporters/observation domains, with a `--scenario` flag for
+  incoming/outgoing/internal/other traffic. 5 tests.
+- `crates/protocol-ipfix/fuzz/`: `cargo-fuzz` target for
+  `decode_message`, plus `.github/workflows/fuzz.yml` (scheduled/manual,
+  nightly toolchain isolated to that workflow only) — **not executed**
+  in this environment (no nightly toolchain available locally).
+- ADRs 0002–0005 (prefix lookup data structure, in-memory aggregation
+  structure, collector-aggregator event transport, ClickHouse batching
+  and retry).
+- Documentation: `docs/architecture/aggregation.md`,
+  `docs/architecture/direction-classification.md`,
+  `docs/configuration/prefixes.md`, `docs/configuration/aggregation.md`,
+  `docs/integrations/clickhouse.md`,
+  `docs/operations/aggregator-monitoring.md`,
+  `docs/operations/capacity-planning.md`,
+  `docs/development/flow-replay.md`.
+- `docs/dependency-license-matrix.md` and `NOTICE` updated with the
+  `clickhouse` and `time` Rust crates (both `cargo metadata`-verified).
+
+**Known limitations carried forward:** ClickHouse write path not
+verified against a live server (none available here); `cargo-fuzz` not
+executed (no nightly toolchain here); `interface_traffic` ClickHouse
+table not yet wired (aggregator's interface dimension isn't
+exporter-scoped); no performance benchmark executed (100k flows/sec is a
+documented target, not a measured result). None of these are silently
+dropped — see `docs/risk-register.md` and the relevant docs pages above.
+
 ### Added — Phase 2: IPFIX collector MVP
 
 - `crates/protocol-ipfix`: clean-room IPFIX (RFC 7011/7012/7015) decoder

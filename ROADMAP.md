@@ -19,8 +19,8 @@ documentation. See [docs/acceptance-criteria.md](docs/acceptance-criteria.md).
 | — | Phase 0: Product foundation and clean-room boundary | ✅ Complete |
 | v0.1.0 | Phase 1: GitHub repository and documentation foundation | ✅ Complete |
 | v0.2.0 | Phase 2: IPFIX collector MVP | ✅ Complete |
-| v0.3.0 | Phase 3: Aggregation and direction classification | Not started |
-| v0.4.0 | Phase 3 (cont.): ClickHouse and Prometheus metrics | Not started |
+| v0.3.0 | Phase 3: Aggregation and direction classification | ✅ Complete |
+| v0.4.0 | Phase 3 (cont.): ClickHouse and Prometheus metrics | ✅ Complete |
 | v0.5.0 | Phase 4: Static detection engine | Not started |
 | v0.6.0 | Phase 5: Incident lifecycle | Not started |
 | v0.7.0 | Phase 6: Grafana and native UI | Not started |

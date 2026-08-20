@@ -50,12 +50,14 @@ with an ADR selecting the default.
 | Redpanda | Kafka-API-compatible, no ZooKeeper, strong throughput | Heavier resource footprint than NATS for a small appliance deployment |
 | Kafka | Industry-standard, huge ecosystem, best tooling for very large multi-tenant deployments | Heaviest operational cost (ZooKeeper/KRaft, JVM), likely overkill for MVP single-tenant appliance and bare-metal Ubuntu target |
 
-**Leaning:** NATS JetStream for MVP (matches the "bare-metal Ubuntu
-appliance" and "Docker Compose" deployment targets with least operational
-overhead), with Kafka/Redpanda revisited at the v2.0.0 distributed HA
-milestone if multi-tenant managed-service scale demands it. This must be
-formalized as an ADR before Phase 3 (aggregation, first real consumer of
-the transport) begins — not decided silently.
+**Decision (ADR 0004):** narrower than the original leaning — Phase 3 uses
+an in-process bounded channel within the collector binary (no separate
+Aggregator process yet), with NATS JetStream recorded as the transport to
+implement when the Aggregator needs to run independently. See
+[ADR 0004](architecture/decisions/0004-collector-aggregator-event-transport.md)
+for the full reasoning (no Docker in the dev environment to validate NATS
+against, and Phase 3's own scope doesn't require a separate process).
+Kafka/Redpanda remain deferred to the v2.0.0 distributed-HA milestone.
 
 ## 3. Collector Language: Rust vs Go
 

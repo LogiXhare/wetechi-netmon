@@ -1,14 +1,24 @@
 # Storage Layer
 
-**Status:** Reserved — not yet implemented.
+**Status:** Implemented (Phase 3) — ClickHouse output only; PostgreSQL
+(config/metadata, Phase 5) and InfluxDB-compatible output are later.
 
-**Planned for:** Phase 3 (see [../../docs/roadmap.md](../../docs/roadmap.md)).
+Original ClickHouse schemas (9 tables), a bounded batch writer, and a
+bounded retry queue with exponential backoff and drop-oldest-on-overflow
+— see [ADR 0005](../../docs/architecture/decisions/0005-clickhouse-batching-and-retry.md)
+and [../../docs/integrations/clickhouse.md](../../docs/integrations/clickhouse.md).
 
-ClickHouse/PostgreSQL/InfluxDB-compatible storage access. See docs/functional-requirements.md and docs/dependency-license-matrix.md.
+**Not verified against a live ClickHouse server** — none was available
+in this development environment. All batching/retry/schema logic is
+unit-tested; the actual network write path has an integration test
+(`tests/clickhouse_integration.rs`) that skips cleanly, printing why,
+when `CLICKHOUSE_TEST_URL` is unset.
 
-This directory is intentionally a placeholder as of Phase 1
-(repository and documentation foundation). No production code has been
-added here yet, per `prompts/CLAUDE_MASTER_PROMPT.md`. Do not implement
-functionality in this directory ahead of its scheduled phase without an
-explicit decision recorded in `docs/roadmap.md` and, where applicable, an
-architecture decision record under `docs/architecture/decisions/`.
+## Testing
+
+```bash
+cargo test -p wetechinetmon-storage
+```
+
+13 unit tests (batch queue, retry backoff/overflow, schema/DDL shape,
+counter conversion) + 1 integration test (skips without a live server).

@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/common",
     "crates/protocol-ipfix",
+    "crates/classifier",
+    "crates/aggregator",
+    "crates/storage",
     "crates/collector",
     "tools/flow-replay",
 ]

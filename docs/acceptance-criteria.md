@@ -61,15 +61,99 @@ These are stated now so later phases can be scoped against them; they are
       synthetic fixture — verified end-to-end (template + 5 data records
       sent, received, decoded, and reflected in `/metrics`).
 
-### Phase 3 — Aggregation and classification
+### Phase 3 — Aggregation and Direction Classification (complete 2026-08-20)
 
-- Direction classification has a passing unit test for each of
-  Incoming/Outgoing/Internal/Other, including IPv6 and prefix-overlap
-  cases.
-- Aggregation stays within a documented bounded-memory target under a
-  high-cardinality synthetic load test.
-- ClickHouse output schema is documented (not proprietary-derived) before
-  merge.
+Full detail in the Phase 3 completion report (commit message / session
+summary). Status against the acceptance checklist:
+
+#### Functional
+
+- [x] Normalized flow record (`wetechinetmon_common::NormalizedFlow`) —
+      protocol-independent, IPFIX today, reusable by future NetFlow/sFlow
+      collectors.
+- [x] Sampling correction with the documented priority order
+      (record-level → options-template → exporter-configured → global
+      default → 1), zero-rate rejection, overflow rejection,
+      double-correction prevented by construction.
+- [x] IPv4 prefix matching (binary trie, ADR 0002).
+- [x] IPv6 prefix matching (same trie, 128-bit).
+- [x] Incoming/outgoing/internal/other classification — implemented and
+      tested for both address families.
+- [x] Per-host counters.
+- [x] Per-network counters (configurable prefix lengths).
+- [x] /24 counters (always-on IPv4 dimension).
+- [x] Hostgroup counters.
+- [x] ASN counters when available (`source_asn`/`destination_asn`
+      populated from IPFIX IE 16/17 when present).
+- [x] Protocol counters (TCP/UDP/ICMP/ICMPv6/Other).
+- [x] ClickHouse output — schema, batch writer, retry, migrations
+      implemented and unit-tested; **not verified against a live server**
+      (none available in this environment) — see
+      [../integrations/clickhouse.md](../integrations/clickhouse.md).
+- [x] Prometheus platform metrics — 14 new Phase 3 metrics, verified
+      end-to-end against a real running collector process.
+
+#### Safety
+
+- [x] Memory bounded (per-dimension `BoundedMap` with configurable caps).
+- [x] Maximum tracked hosts configurable (`WETECHINETMON_COLLECTOR_MAX_HOSTS`).
+- [x] Maximum tracked networks configurable (`..._MAX_NETWORKS`).
+- [x] Expiration implemented (inactivity TTL, swept every 30s).
+- [x] High-cardinality labels avoided in Prometheus (only bounded label
+      sets — Set kind, Direction; per-entity detail goes to ClickHouse,
+      not Prometheus labels).
+- [x] Malformed normalized flows rejected (`FlowError::Empty`,
+      `NormalizeError::MissingAddresses`).
+- [x] Integer overflow handled (`SamplingOverflow`, saturating counter
+      arithmetic in `TrafficCounters`).
+- [x] Sample rate zero rejected (falls through the priority chain,
+      counted via `sampling_errors_total`).
+- [x] Duplicate flows are documented (not deduplicated — a known,
+      explicit limitation in `docs/architecture/aggregation.md`, not
+      silently absent).
+- [x] Missing fields are handled safely (optional fields default to
+      `None`; only missing addresses reject a record).
+
+#### Tests
+
+(All executed; see full counts in the Phase 3 completion report.)
+
+- [x] Unit tests (all new crates).
+- [x] Direction classification tests (IPv4 + IPv6, all four directions +
+      Unknown).
+- [x] Prefix-overlap tests (broader-ancestor and narrower-descendant
+      cases).
+- [x] IPv6 tests (trie, registry, classification, normalization, replay
+      round-trip).
+- [x] Sampling correction tests (all five priority tiers, zero-rate
+      skip, overflow).
+- [x] Overflow tests (sampling correction, counter saturation).
+- [x] Expiration tests (`BoundedMap`, `Aggregator`).
+- [x] Aggregation correctness tests (per-dimension, two-sided accounting).
+- [x] Hostgroup tests.
+- [x] ASN tests (present/absent).
+- [x] ClickHouse serialization/schema tests — unit-level (13 tests, no
+      live server).
+- [x] ClickHouse retry-behavior tests (backoff, overflow, permanent
+      drop) — unit-level, no live server.
+- [ ] ClickHouse *integration* test against a real server — test file
+      exists (`crates/storage/tests/clickhouse_integration.rs`) and
+      skips cleanly (not fabricated) when `CLICKHOUSE_TEST_URL` is
+      unset, which it was throughout this environment.
+- [x] End-to-end UDP-to-aggregation test — both as a Rust integration-
+      style unit test (`crates/collector/src/lib.rs`
+      `a_full_ipfix_flow_is_normalized_classified_and_aggregated`) and as
+      a real running-process smoke test with `tools/flow-replay`.
+- [x] Arbitrary input safety properties (`proptest`) where applicable —
+      classifier trie insertion, existing IPFIX decoder properties.
+
+#### Performance
+
+- [x] Target defined: sustain ≥100,000 normalized flow records/sec on a
+      documented test machine (see
+      [../operations/capacity-planning.md](../operations/capacity-planning.md)).
+- [ ] **No benchmark executed.** Per explicit instruction, no performance
+      claim is made — this is a target for Phase 9, not a Phase 3 result.
 
 ### Phase 4 — Detection engine
 

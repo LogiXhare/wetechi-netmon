@@ -59,6 +59,8 @@ nav:
       - Overview: architecture/index.md
       - Architecture Options: architecture-options.md
       - Technology Options: technology-options.md
+      - Aggregation: architecture/aggregation.md
+      - Direction Classification: architecture/direction-classification.md
       - Decision Records: architecture/decisions/index.md
   - Security:
       - Overview: security/index.md
@@ -71,13 +73,21 @@ nav:
       - Risk Register: risk-register.md
       - Blocking Questions: blocking-questions.md
   - Installation: installation/index.md
-  - Configuration: configuration/index.md
+  - Configuration:
+      - Overview: configuration/index.md
+      - Local Prefixes: configuration/prefixes.md
+      - Aggregation: configuration/aggregation.md
   - Integrations:
       - Overview: integrations/index.md
       - IPFIX Collector Guide: integrations/ipfix-collector.md
-  - Operations: operations/index.md
+      - ClickHouse: integrations/clickhouse.md
+  - Operations:
+      - Overview: operations/index.md
+      - Aggregator Monitoring: operations/aggregator-monitoring.md
+      - Capacity Planning: operations/capacity-planning.md
   - API Reference: api/index.md
   - Commercial: commercial/index.md
   - Development:
       - Overview: development/index.md
       - Local Setup: development/local-setup.md
+      - Flow Replay Tool: development/flow-replay.md

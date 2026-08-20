@@ -1,21 +1,21 @@
-//! Prometheus metrics for the Telemetry Collector.
+//! Prometheus metrics for the Telemetry Collector and its Phase 3
+//! aggregation pipeline.
 //!
 //! Names and the set of metrics tracked here follow
-//! docs/functional-requirements.md (FR-1.8) and the collector-relevant
-//! subset of the metric list in `prompts/CLAUDE_MASTER_PROMPT.md` §20.
-//! Phase 2 implements the metrics that are meaningful without an event
-//! transport or downstream consumer yet (aggregation/detection latency
-//! metrics are added when those components exist in Phase 3/4).
+//! docs/functional-requirements.md (FR-1.8, FR-2) and the
+//! collector/aggregator-relevant subset of the metric list in
+//! `prompts/CLAUDE_MASTER_PROMPT.md` §20.
 //!
 //! **Known limitation:** `udp_receive_buffer_errors_total` from the
-//! master-prompt list is not implemented in Phase 2 — reading the
-//! kernel's UDP socket drop counter portably (Windows vs. Linux) needs
-//! platform-specific code this phase doesn't need yet. Tracked as a
-//! follow-up rather than faked with a metric that never increments.
+//! master-prompt list is not implemented — reading the kernel's UDP
+//! socket drop counter portably (Windows vs. Linux) needs
+//! platform-specific code. Tracked as a follow-up rather than faked with
+//! a metric that never increments.
 
-use prometheus::{IntCounter, IntCounterVec, IntGauge, Opts, Registry};
+use prometheus::{Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, Opts, Registry};
 
 pub struct Metrics {
+    // --- Phase 2: IPFIX collector ---
     pub datagrams_received_total: IntCounter,
     pub parsed_flow_records_total: IntCounter,
     pub ipv4_flows_total: IntCounter,
@@ -31,6 +31,32 @@ pub struct Metrics {
     /// see the traffic mix without needing per-kind counters wired up by
     /// hand for every future Set kind.
     pub sets_by_kind_total: IntCounterVec,
+
+    // --- Phase 3: normalization, sampling, classification, aggregation ---
+    pub normalized_flows_total: IntCounter,
+    pub incomplete_records_total: IntCounter,
+    pub unsupported_protocol_fields_total: IntCounter,
+    pub corrected_samples_total: IntCounter,
+    pub sampling_errors_total: IntCounter,
+    /// Labeled by `Direction` (`incoming`, `outgoing`, `internal`,
+    /// `other`, `unknown`) — bounded label cardinality (5 fixed values),
+    /// never a raw address or tenant name (see module docs / Phase 3
+    /// objective 9 "no unbounded Prometheus labels").
+    pub classified_flows_by_direction_total: IntCounterVec,
+    pub prefix_lookup_failures_total: IntCounter,
+    pub active_hosts: IntGauge,
+    pub active_networks: IntGauge,
+    pub active_hostgroups: IntGauge,
+    pub active_asns: IntGauge,
+    pub queue_depth: IntGauge,
+    pub aggregation_latency_seconds: Histogram,
+    pub expired_entries_total: IntCounter,
+    pub evicted_entries_total: IntCounter,
+
+    // --- Phase 3: ClickHouse export (only active when configured) ---
+    pub clickhouse_rows_written_total: IntCounter,
+    pub clickhouse_write_failures_total: IntCounter,
+    pub clickhouse_retry_queue_dropped_total: IntCounter,
 }
 
 impl Metrics {
@@ -89,6 +115,83 @@ impl Metrics {
             &["kind"],
         )?;
 
+        let normalized_flows_total = IntCounter::new(
+            "wetechinetmon_collector_normalized_flows_total",
+            "Total Data Records successfully converted into a NormalizedFlow.",
+        )?;
+        let incomplete_records_total = IntCounter::new(
+            "wetechinetmon_collector_incomplete_records_total",
+            "Total Data Records rejected during normalization for missing required fields (e.g. no address).",
+        )?;
+        let unsupported_protocol_fields_total = IntCounter::new(
+            "wetechinetmon_collector_unsupported_protocol_fields_total",
+            "Total normalized flows whose IP protocol number is not one of the well-known ones this project names (TCP/UDP/ICMP/ICMPv6).",
+        )?;
+        let corrected_samples_total = IntCounter::new(
+            "wetechinetmon_collector_corrected_samples_total",
+            "Total normalized flows that had a sampling rate greater than 1 applied.",
+        )?;
+        let sampling_errors_total = IntCounter::new(
+            "wetechinetmon_collector_sampling_errors_total",
+            "Total flows where a declared sampling rate of zero had to be skipped, or sampling correction overflowed.",
+        )?;
+        let classified_flows_by_direction_total = IntCounterVec::new(
+            Opts::new(
+                "wetechinetmon_collector_classified_flows_by_direction_total",
+                "Total normalized flows, labeled by classified direction.",
+            ),
+            &["direction"],
+        )?;
+        let prefix_lookup_failures_total = IntCounter::new(
+            "wetechinetmon_collector_prefix_lookup_failures_total",
+            "Total flows classified as Unknown direction because no local prefixes are configured.",
+        )?;
+        let active_hosts = IntGauge::new(
+            "wetechinetmon_collector_active_hosts",
+            "Current number of distinct hosts (IPv4 + IPv6) tracked by the aggregator.",
+        )?;
+        let active_networks = IntGauge::new(
+            "wetechinetmon_collector_active_networks",
+            "Current number of distinct networks (all prefix-length dimensions combined) tracked by the aggregator.",
+        )?;
+        let active_hostgroups = IntGauge::new(
+            "wetechinetmon_collector_active_hostgroups",
+            "Current number of distinct hostgroups tracked by the aggregator.",
+        )?;
+        let active_asns = IntGauge::new(
+            "wetechinetmon_collector_active_asns",
+            "Current number of distinct ASNs tracked by the aggregator.",
+        )?;
+        let queue_depth = IntGauge::new(
+            "wetechinetmon_collector_queue_depth",
+            "Current number of datagrams queued between the UDP receive loop and the classify/aggregate stage.",
+        )?;
+        let aggregation_latency_seconds = Histogram::with_opts(HistogramOpts::new(
+            "wetechinetmon_collector_aggregation_latency_seconds",
+            "Time to normalize, classify, and aggregate one Data Record.",
+        ))?;
+        let expired_entries_total = IntCounter::new(
+            "wetechinetmon_collector_expired_entries_total",
+            "Total aggregation entries removed by inactivity expiration, across all dimensions.",
+        )?;
+        let evicted_entries_total = IntCounter::new(
+            "wetechinetmon_collector_evicted_entries_total",
+            "Total aggregation entries removed to stay within a dimension's configured capacity, across all dimensions.",
+        )?;
+
+        let clickhouse_rows_written_total = IntCounter::new(
+            "wetechinetmon_collector_clickhouse_rows_written_total",
+            "Total rows successfully written to ClickHouse across all tables. Always zero if ClickHouse export is not configured.",
+        )?;
+        let clickhouse_write_failures_total = IntCounter::new(
+            "wetechinetmon_collector_clickhouse_write_failures_total",
+            "Total ClickHouse batch write attempts that failed and were queued for retry.",
+        )?;
+        let clickhouse_retry_queue_dropped_total = IntCounter::new(
+            "wetechinetmon_collector_clickhouse_retry_queue_dropped_total",
+            "Total ClickHouse batches permanently lost because the bounded retry queue was full (see ADR 0005).",
+        )?;
+
         registry.register(Box::new(datagrams_received_total.clone()))?;
         registry.register(Box::new(parsed_flow_records_total.clone()))?;
         registry.register(Box::new(ipv4_flows_total.clone()))?;
@@ -100,6 +203,24 @@ impl Metrics {
         registry.register(Box::new(template_cache_size.clone()))?;
         registry.register(Box::new(active_exporters.clone()))?;
         registry.register(Box::new(sets_by_kind_total.clone()))?;
+        registry.register(Box::new(normalized_flows_total.clone()))?;
+        registry.register(Box::new(incomplete_records_total.clone()))?;
+        registry.register(Box::new(unsupported_protocol_fields_total.clone()))?;
+        registry.register(Box::new(corrected_samples_total.clone()))?;
+        registry.register(Box::new(sampling_errors_total.clone()))?;
+        registry.register(Box::new(classified_flows_by_direction_total.clone()))?;
+        registry.register(Box::new(prefix_lookup_failures_total.clone()))?;
+        registry.register(Box::new(active_hosts.clone()))?;
+        registry.register(Box::new(active_networks.clone()))?;
+        registry.register(Box::new(active_hostgroups.clone()))?;
+        registry.register(Box::new(active_asns.clone()))?;
+        registry.register(Box::new(queue_depth.clone()))?;
+        registry.register(Box::new(aggregation_latency_seconds.clone()))?;
+        registry.register(Box::new(expired_entries_total.clone()))?;
+        registry.register(Box::new(evicted_entries_total.clone()))?;
+        registry.register(Box::new(clickhouse_rows_written_total.clone()))?;
+        registry.register(Box::new(clickhouse_write_failures_total.clone()))?;
+        registry.register(Box::new(clickhouse_retry_queue_dropped_total.clone()))?;
 
         let metrics = Metrics {
             datagrams_received_total,
@@ -113,6 +234,24 @@ impl Metrics {
             template_cache_size,
             active_exporters,
             sets_by_kind_total,
+            normalized_flows_total,
+            incomplete_records_total,
+            unsupported_protocol_fields_total,
+            corrected_samples_total,
+            sampling_errors_total,
+            classified_flows_by_direction_total,
+            prefix_lookup_failures_total,
+            active_hosts,
+            active_networks,
+            active_hostgroups,
+            active_asns,
+            queue_depth,
+            aggregation_latency_seconds,
+            expired_entries_total,
+            evicted_entries_total,
+            clickhouse_rows_written_total,
+            clickhouse_write_failures_total,
+            clickhouse_retry_queue_dropped_total,
         };
 
         Ok((metrics, registry))
@@ -128,6 +267,7 @@ mod tests {
         let (metrics, registry) = Metrics::new().expect("metric registration should not collide");
         assert_eq!(metrics.datagrams_received_total.get(), 0);
         assert_eq!(metrics.template_cache_size.get(), 0);
+        assert_eq!(metrics.active_hosts.get(), 0);
         assert!(!registry.gather().is_empty());
     }
 
@@ -140,6 +280,10 @@ mod tests {
             .sets_by_kind_total
             .with_label_values(&["data"])
             .inc();
+        metrics
+            .classified_flows_by_direction_total
+            .with_label_values(&["incoming"])
+            .inc();
         assert_eq!(metrics.datagrams_received_total.get(), 1);
         assert_eq!(metrics.parser_failures_total.get(), 3);
         assert_eq!(
@@ -149,5 +293,19 @@ mod tests {
                 .get(),
             1
         );
+        assert_eq!(
+            metrics
+                .classified_flows_by_direction_total
+                .with_label_values(&["incoming"])
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn aggregation_latency_histogram_observes_values() {
+        let (metrics, _registry) = Metrics::new().unwrap();
+        metrics.aggregation_latency_seconds.observe(0.001);
+        assert_eq!(metrics.aggregation_latency_seconds.get_sample_count(), 1);
     }
 }
