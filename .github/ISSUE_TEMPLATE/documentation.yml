@@ -1,0 +1,25 @@
+name: Documentation Issue
+description: Report an error, gap, or improvement for the documentation
+title: "[Docs]: "
+labels: ["documentation", "triage"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document
+      description: Path or URL of the affected document (e.g. docs/roadmap.md)
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's wrong or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Fix
+      description: If you have specific wording or content in mind.
+    validations:
+      required: false

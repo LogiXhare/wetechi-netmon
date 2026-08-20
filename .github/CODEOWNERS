@@ -1,0 +1,18 @@
+# CODEOWNERS for wetechi-netmon
+#
+# This is a founder-led, pre-v1.0 project (see GOVERNANCE.md). All paths
+# currently route to a single owner. As the contributor base grows, split
+# this file by directory (e.g. per-crate ownership) and update
+# GOVERNANCE.md accordingly.
+
+* @badshashorif
+
+# Legal/licensing/clean-room-sensitive documents get the same owner today,
+# called out explicitly so future splits don't accidentally drop review
+# coverage on these paths.
+/LICENSE @badshashorif
+/NOTICE @badshashorif
+/docs/clean-room-boundary.md @badshashorif
+/docs/dependency-license-matrix.md @badshashorif
+/docs/license-recommendation.md @badshashorif
+/docs/commercial-boundaries.md @badshashorif

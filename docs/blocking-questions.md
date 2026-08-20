@@ -15,6 +15,7 @@ CONTRIBUTING model, and it interacts directly with the Enterprise/Managed
 edition strategy in [commercial-boundaries.md](commercial-boundaries.md).
 
 Options to choose between:
+
 - Permissive (Apache-2.0 or MIT) — maximizes community adoption, but a
   competitor could fork and offer a competing managed service on the exact
   same code.

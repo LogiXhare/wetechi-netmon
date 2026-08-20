@@ -1,0 +1,41 @@
+version: "3"
+
+# wetechi-netmon — Phase 1 tasks (documentation/validation only).
+# Rust (cargo) and frontend tasks are added starting Phase 2 / Phase 6.
+# See docs/roadmap.md.
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list-all
+
+  validate:
+    desc: Run all available Phase 1 validation
+    deps: [lint:markdown, lint:yaml]
+
+  lint:markdown:
+    desc: Lint all Markdown files
+    cmds:
+      - npx -y markdownlint-cli2 "**/*.md" "#node_modules"
+
+  lint:yaml:
+    desc: Validate syntax of all YAML files
+    cmds:
+      - npx -y js-yaml mkdocs.yml
+      - for f in $(find .github -type f \( -name '*.yml' -o -name '*.yaml' \)); do npx -y js-yaml "$f" > /dev/null && echo "OK: $f"; done
+
+  docs:serve:
+    desc: Serve the MkDocs Material site locally (requires Python)
+    cmds:
+      - mkdocs serve
+
+  docs:build:
+    desc: Build the MkDocs Material site strictly (requires Python)
+    cmds:
+      - mkdocs build --strict
+
+  clean:
+    desc: Remove build output
+    cmds:
+      - rm -rf site/

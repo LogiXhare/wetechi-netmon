@@ -1,0 +1,33 @@
+# Node (docs/validation tooling, and later apps/web)
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# MkDocs build output
+site/
+
+# Python (mkdocs-material virtualenvs, if used locally)
+.venv/
+__pycache__/
+*.pyc
+
+# Rust (from Phase 2 onward)
+target/
+Cargo.lock
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment / secrets — never commit these
+.env
+.env.*
+*.pem
+*.key
+!**/deployments/**/*.key.example
+
+# Local override configs
+*.local.yml
+*.local.yaml

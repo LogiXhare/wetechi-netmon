@@ -1,0 +1,18 @@
+{
+  "config": {
+    "default": true,
+    // Long lines in tables, links, and reference documentation are
+    // normal and more readable unwrapped; wrapping every table row at
+    // 80 chars would make the risk register / requirement tables
+    // illegible. Disabled deliberately, not an oversight.
+    "MD013": false,
+    // MD060 enforces exact single-space pipe padding on every table
+    // cell; several of our tables use deliberate alignment for
+    // readability. Disabled deliberately.
+    "MD060": false
+  },
+  "ignores": [
+    "node_modules/**",
+    "prompts/CLAUDE_MASTER_PROMPT.md"
+  ]
+}

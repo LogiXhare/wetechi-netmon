@@ -1,0 +1,81 @@
+site_name: WetechiNetMon
+site_description: >-
+  Independently engineered open network telemetry, DDoS detection, traffic
+  analytics, and policy-controlled mitigation platform.
+site_author: WeTechi Solutions
+repo_name: badshashorif/wetechi-netmon
+repo_url: https://github.com/badshashorif/wetechi-netmon
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Product Foundation:
+      - Product Charter: product-charter.md
+      - Clean-Room Boundary: clean-room-boundary.md
+      - Naming and Branding: naming-and-branding.md
+      - Commercial Boundaries: commercial-boundaries.md
+  - Requirements:
+      - Functional Requirements: functional-requirements.md
+      - Non-Functional Requirements: non-functional-requirements.md
+      - MVP Scope: mvp-scope.md
+      - Out of Scope: out-of-scope.md
+      - Acceptance Criteria: acceptance-criteria.md
+  - Architecture:
+      - Overview: architecture/index.md
+      - Architecture Options: architecture-options.md
+      - Technology Options: technology-options.md
+      - Decision Records: architecture/decisions/index.md
+  - Security:
+      - Overview: security/index.md
+      - Security Principles: security-principles.md
+  - Licensing:
+      - Dependency License Matrix: dependency-license-matrix.md
+      - License Recommendation: license-recommendation.md
+  - Planning:
+      - Roadmap: roadmap.md
+      - Risk Register: risk-register.md
+      - Blocking Questions: blocking-questions.md
+  - Installation: installation/index.md
+  - Configuration: configuration/index.md
+  - Integrations: integrations/index.md
+  - Operations: operations/index.md
+  - API Reference: api/index.md
+  - Commercial: commercial/index.md
+  - Development:
+      - Overview: development/index.md
+      - Local Setup: development/local-setup.md
