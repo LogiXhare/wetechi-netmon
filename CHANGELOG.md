@@ -8,6 +8,47 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
 
 ## [Unreleased]
 
+### Added — Phase 2: IPFIX collector MVP
+
+- `crates/protocol-ipfix`: clean-room IPFIX (RFC 7011/7012/7015) decoder
+  — message header, Template Sets, Options Template Sets, Data Sets
+  (fixed and variable-length fields), per-exporter `TemplateCache`, and
+  structural sampling-parameter extraction (`SamplingInfo`). 34 tests
+  including 3 `proptest` properties ("never panics on arbitrary bytes").
+- `crates/collector` (`wetechinetmon-collector` binary): UDP IPFIX
+  listener, per-exporter template caching with sequence-number-regression
+  restart detection, a hand-rolled `/metrics` HTTP endpoint (Prometheus
+  text format), and environment-variable configuration
+  (`WETECHINETMON_COLLECTOR_BIND`, `WETECHINETMON_COLLECTOR_METRICS_BIND`).
+  16 tests, including a real `tokio` TCP integration test of the metrics
+  endpoint. Verified end-to-end against a real running process (not just
+  unit tests) — see `docs/roadmap.md` Phase 2 section.
+- `crates/common`: shared structured JSON logging setup
+  (`wetechinetmon_common::logging::init`).
+- `tools/flow-replay` (`flow-replay` binary): synthetic-only IPFIX
+  traffic generator for safely testing the collector, with a round-trip
+  test against the real decoder.
+- ADR 0001: Rust selected as the Telemetry Collector's implementation
+  language (`docs/architecture/decisions/0001-collector-implementation-language.md`),
+  resolving the leaning recorded in Phase 0's `docs/architecture-options.md`.
+- Root `Cargo.toml` workspace; `Cargo.lock` now committed (binary crates —
+  see `.gitignore`).
+- `docs/integrations/ipfix-collector.md`, `docs/configuration/index.md`
+  populated with the real collector config options.
+- `docs/dependency-license-matrix.md` and `NOTICE` updated with real,
+  `cargo metadata`-verified license rows for the crates now vendored
+  (tokio, tracing, tracing-subscriber, thiserror, prometheus, proptest).
+- `.github/dependabot.yml`: added the `cargo` ecosystem.
+- `.github/workflows/validate.yml`: added `cargo fmt --check`,
+  `cargo clippy -D warnings`, `cargo test --workspace`, and
+  `cargo build --workspace --all-targets` jobs.
+
+**Known limitation carried forward:** true coverage-guided fuzzing
+(`cargo-fuzz`/libFuzzer) needs a nightly Rust toolchain, not installed in
+this environment. Property-based tests (`proptest`) cover the same
+"never panics" safety property via random sampling instead. Tracked in
+`docs/risk-register.md` R4, not silently dropped.
+
 ### Added — Phase 1: GitHub repository and documentation foundation
 
 - Full monorepo directory skeleton per `prompts/CLAUDE_MASTER_PROMPT.md`

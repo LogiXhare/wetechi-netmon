@@ -72,7 +72,9 @@ nav:
       - Blocking Questions: blocking-questions.md
   - Installation: installation/index.md
   - Configuration: configuration/index.md
-  - Integrations: integrations/index.md
+  - Integrations:
+      - Overview: integrations/index.md
+      - IPFIX Collector Guide: integrations/ipfix-collector.md
   - Operations: operations/index.md
   - API Reference: api/index.md
   - Commercial: commercial/index.md

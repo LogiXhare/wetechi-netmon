@@ -1,31 +1,58 @@
 # Local Development Setup
 
-Status: Phase 1 — documentation/validation tooling only. No product
-services are runnable yet (first runnable component ships in Phase 2).
+Status: Phase 2 — the Rust workspace (collector + IPFIX parser) is
+runnable. The web app (Phase 6) and other tooling are still ahead.
 
 ## What You Can Do Today
 
-At Phase 1, the repository contains documentation, repository scaffolding,
-and validation tooling only. There is no application code to build or run.
-What you *can* do locally:
-
-1. Validate Markdown formatting
-2. Validate YAML syntax (workflows, Dependabot, issue templates)
-3. Preview the documentation site (requires Python + MkDocs Material)
+1. Build, test, lint, and run the Rust workspace (collector, IPFIX
+   parser, flow-replay tool)
+2. Validate Markdown formatting
+3. Validate YAML syntax (workflows, Dependabot, issue templates)
+4. Preview the documentation site (requires Python + MkDocs Material)
 
 ## Prerequisites
 
 | Tool | Used for | Required now? |
 |---|---|---|
 | Git | Version control | Yes |
+| Rust (`cargo`/`rustc`/`rustfmt`/`clippy`) | Building/testing `crates/`, `tools/flow-replay` | Yes |
+| A C linker toolchain for your Rust target (see Windows note below) | Linking Rust binaries | Yes, platform-dependent |
 | Node.js + npm (npx) | Markdown/YAML linting via `npx` | Yes |
 | Python 3.10+ and `pip` | MkDocs Material site build/preview | Only if previewing docs site |
 | GitHub CLI (`gh`) | Optional, for PRs/issues from the terminal | No |
 
-Rust (`cargo`/`rustc`), Node build tooling for the web app, and container
-tooling are **not** required yet — they become relevant starting Phase 2
-(collector) and Phase 6 (web app) respectively, and this document will be
-updated when that happens.
+Node build tooling for the web app and container tooling are **not**
+required yet — they become relevant starting Phase 6 (web app) and this
+document will be updated when that happens.
+
+### Installing Rust
+
+Any standard Rust install works (`rustup`, a distro package, etc.) —
+this repository doesn't require a specific installation method. What
+matters is that `cargo`, `rustc`, `rustfmt`, and `clippy` are all on
+`PATH`, and that you have a working linker for your target.
+
+**Windows-specific note:** if you install a **GNU-target** Rust
+toolchain (`x86_64-pc-windows-gnu`) rather than the MSVC-target one, you
+also need a real MinGW-w64 toolchain with GNU Binutils (`as`, `ar`,
+`dlltool`, `ld`) on `PATH` — the small "self-contained" linker subset
+some Rust GNU installers bundle is linker-only and is **not** enough by
+itself (crates like `windows-sys` need `dlltool` to generate import
+libraries, which in turn needs a full binutils, not just `dlltool.exe` on
+its own). A verified-working option:
+[WinLibs](https://winlibs.com/) (`winget install BrechtSanders.WinLibs.POSIX.UCRT`),
+with its `mingw64\bin` directory added to `PATH`. If you install the
+**MSVC-target** toolchain instead, you need the Visual Studio C++ Build
+Tools instead of MinGW — that trade-off (smaller MinGW download vs.
+larger, more "standard on Windows" MSVC Build Tools) is a per-contributor
+choice; either target works with this workspace.
+
+Verify your setup:
+
+```bash
+cargo --version && rustc --version && rustfmt --version && cargo clippy --version
+```
 
 ## Clone
 
@@ -33,6 +60,37 @@ updated when that happens.
 git clone https://github.com/badshashorif/wetechi-netmon.git
 cd wetechi-netmon
 ```
+
+## Build, Test, and Lint the Rust Workspace
+
+```bash
+cargo build --workspace --all-targets
+cargo test --workspace
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+All four are run in CI (`.github/workflows/validate.yml`, jobs
+`rust-build`, `rust-test`, `rust-fmt`, `rust-clippy`).
+
+### Run the Collector Locally
+
+```bash
+export WETECHINETMON_COLLECTOR_BIND=127.0.0.1:2055
+export WETECHINETMON_COLLECTOR_METRICS_BIND=127.0.0.1:9090
+export RUST_LOG=info
+cargo run --bin wetechinetmon-collector
+```
+
+In another terminal, send it synthetic test traffic (never real captured
+or attack traffic — see [../security-principles.md](../security-principles.md)):
+
+```bash
+cargo run -p wetechinetmon-flow-replay -- 127.0.0.1:2055 5
+curl -s http://127.0.0.1:9090/metrics | grep wetechinetmon_collector
+```
+
+Full guide: [../integrations/ipfix-collector.md](../integrations/ipfix-collector.md).
 
 ## Validate Markdown
 
@@ -80,7 +138,7 @@ make docs-serve
 task docs:serve
 ```
 
-## Run All Phase 1 Validation
+## Run All Validation
 
 ```bash
 make validate
@@ -88,9 +146,10 @@ make validate
 task validate
 ```
 
-This runs Markdown lint and YAML lint. It will grow to include `cargo fmt`
-/ `cargo clippy` / `cargo test` once Phase 2 introduces the first Rust
-crate, and frontend lint/test once Phase 6 introduces the web app.
+This runs Markdown lint, YAML lint, `cargo fmt --check`, `cargo clippy`,
+`cargo test`, and `cargo build` — everything CI checks in
+`.github/workflows/validate.yml`, runnable locally before pushing.
+Frontend lint/test will be added once Phase 6 introduces the web app.
 
 ## Contribution Workflow
 

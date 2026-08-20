@@ -29,12 +29,22 @@ the full clean-room policy governing this codebase.
 THIRD-PARTY SOFTWARE
 ============================================================
 
-As of this NOTICE (Phase 1), WetechiNetMon does not vendor or statically
-link any third-party dependency — the repository contains documentation
-and scaffolding only. Third-party attribution notices will be added here
-as dependencies are actually introduced, in accordance with the process
-defined in docs/dependency-license-matrix.md. No dependency is added to
-this project without a completed license record.
+Starting Phase 2, the following third-party Rust crates are vendored.
+Each has a completed, license-verified row in
+docs/dependency-license-matrix.md (verified against `cargo metadata`, not
+guessed). None are modified from their upstream published source.
 
-This section will be populated starting with the Phase 2 IPFIX collector
-implementation.
+  tokio                 MIT             https://github.com/tokio-rs/tokio
+  tracing               MIT             https://github.com/tokio-rs/tracing
+  tracing-subscriber    MIT             https://github.com/tokio-rs/tracing
+  thiserror              MIT OR Apache-2.0  https://github.com/dtolnay/thiserror
+  prometheus (Rust client)  Apache-2.0  https://github.com/tikv/rust-prometheus
+  proptest (dev/test-only, not shipped)  MIT OR Apache-2.0  https://github.com/proptest-rs/proptest
+
+This list covers direct dependencies only. Transitive dependencies are
+recorded in Cargo.lock (committed to this repository) and are pulled in
+by the above crates' own dependency graphs, not chosen directly by
+WetechiNetMon.
+
+No dependency is added to this project without a completed license
+record in docs/dependency-license-matrix.md first.

@@ -1,0 +1,13 @@
+[package]
+name = "wetechinetmon-protocol-ipfix"
+description = "Clean-room IPFIX (RFC 7011/7012/7015) message decoder for WetechiNetMon."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

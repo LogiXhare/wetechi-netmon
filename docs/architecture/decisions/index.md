@@ -1,6 +1,6 @@
 # Architecture Decision Records (ADRs)
 
-Status: Phase 1 — template established, no decisions recorded yet.
+Status: Phase 2 — one decision recorded.
 
 ## Purpose
 
@@ -32,7 +32,6 @@ yet:
 
 | Topic | Needed before | Reference |
 |---|---|---|
-| Collector implementation language (Rust vs. Go split) | Phase 2 | [architecture-options.md §3](../../architecture-options.md) |
 | Event transport (NATS JetStream vs. Redpanda vs. Kafka) | Phase 3 | [architecture-options.md §2](../../architecture-options.md) |
 | Mitigation Controller implementation language | Phase 7 | [architecture-options.md §3](../../architecture-options.md) |
 | Recharts vs. Apache ECharts for the web UI | Phase 6 | [architecture-options.md §5](../../architecture-options.md) |
@@ -40,5 +39,6 @@ yet:
 
 ## Index
 
-No ADRs have been recorded yet. This index will list them by number once
-the first one is merged.
+| # | Title | Status |
+|---|---|---|
+| [0001](0001-collector-implementation-language.md) | Telemetry Collector Implementation Language: Rust | Accepted |

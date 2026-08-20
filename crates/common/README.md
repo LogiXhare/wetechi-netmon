@@ -1,14 +1,15 @@
 # Common Library
 
-**Status:** Reserved — not yet implemented.
+**Status:** Implemented (Phase 2 scope — structured logging setup only).
 
-**Planned for:** Phase 2 (see [../../docs/roadmap.md](../../docs/roadmap.md)).
+Shared, cross-cutting code used by more than one WetechiNetMon service.
+Deliberately small — this is not a dumping ground for unrelated helpers.
+Currently provides `wetechinetmon_common::logging::init()`, the shared
+JSON structured-logging setup used by `wetechinetmon-collector` (see
+[../collector](../collector)).
 
-Shared types, error handling, and utilities used across crates.
+## Testing
 
-This directory is intentionally a placeholder as of Phase 1
-(repository and documentation foundation). No production code has been
-added here yet, per `prompts/CLAUDE_MASTER_PROMPT.md`. Do not implement
-functionality in this directory ahead of its scheduled phase without an
-explicit decision recorded in `docs/roadmap.md` and, where applicable, an
-architecture decision record under `docs/architecture/decisions/`.
+```bash
+cargo test -p wetechinetmon-common
+```

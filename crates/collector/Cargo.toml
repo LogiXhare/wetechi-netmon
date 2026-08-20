@@ -1,0 +1,21 @@
+[package]
+name = "wetechinetmon-collector"
+description = "WetechiNetMon Telemetry Collector — IPFIX (and later NetFlow/sFlow) UDP listener, template management, and metrics."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "wetechinetmon-collector"
+path = "src/main.rs"
+
+[dependencies]
+wetechinetmon-common = { path = "../common" }
+wetechinetmon-protocol-ipfix = { path = "../protocol-ipfix" }
+tokio.workspace = true
+tracing.workspace = true
+prometheus.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]

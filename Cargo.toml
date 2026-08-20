@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/common",
+    "crates/protocol-ipfix",
+    "crates/collector",
+    "tools/flow-replay",
+]
+
+# Only crates with real Phase 2 content are workspace members. Other
+# crates/ and apps/ directories remain README-only placeholders (see
+# their individual README.md) and are added to this list starting the
+# phase that populates them — see docs/roadmap.md.
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal", "time", "io-util"] }
+prometheus = "0.14"
+proptest = "1"

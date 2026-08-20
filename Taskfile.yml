@@ -1,8 +1,7 @@
 version: "3"
 
-# wetechi-netmon — Phase 1 tasks (documentation/validation only).
-# Rust (cargo) and frontend tasks are added starting Phase 2 / Phase 6.
-# See docs/roadmap.md.
+# wetechi-netmon — documentation + Rust workspace tasks.
+# Frontend tasks are added starting Phase 6. See docs/roadmap.md.
 
 tasks:
   default:
@@ -11,8 +10,13 @@ tasks:
       - task --list-all
 
   validate:
-    desc: Run all available Phase 1 validation
+    desc: Run all available validation (docs + Rust)
     deps: [lint:markdown, lint:yaml]
+    cmds:
+      - task: rust:fmt
+      - task: rust:clippy
+      - task: rust:test
+      - task: rust:build
 
   lint:markdown:
     desc: Lint all Markdown files
@@ -24,6 +28,26 @@ tasks:
     cmds:
       - npx -y js-yaml mkdocs.yml
       - for f in $(find .github -type f \( -name '*.yml' -o -name '*.yaml' \)); do npx -y js-yaml "$f" > /dev/null && echo "OK: $f"; done
+
+  rust:build:
+    desc: cargo build --workspace --all-targets
+    cmds:
+      - cargo build --workspace --all-targets
+
+  rust:test:
+    desc: cargo test --workspace
+    cmds:
+      - cargo test --workspace
+
+  rust:fmt:
+    desc: cargo fmt --check
+    cmds:
+      - cargo fmt --check
+
+  rust:clippy:
+    desc: cargo clippy --workspace --all-targets -- -D warnings
+    cmds:
+      - cargo clippy --workspace --all-targets -- -D warnings
 
   docs:serve:
     desc: Serve the MkDocs Material site locally (requires Python)
@@ -38,4 +62,4 @@ tasks:
   clean:
     desc: Remove build output
     cmds:
-      - rm -rf site/
+      - rm -rf site/ target/

@@ -1,6 +1,6 @@
 # Dependency License Matrix
 
-Status: Phase 0 draft — candidate dependencies only, nothing vendored yet
+Status: Phase 2 — first dependencies actually vendored (Rust workspace)
 Last updated: 2026-08-20
 
 No dependency is approved for use until this matrix has a completed row for
@@ -14,14 +14,14 @@ before any commercial distribution.
 | # | Project | Purpose | Known/likely license | Copyleft implications | Commercial distribution | Status |
 |---|---|---|---|---|---|---|
 | 1 | Rust toolchain | Core language | MIT / Apache-2.0 dual | None | Safe | REQUIRES VERIFICATION (version pin) |
-| 2 | tokio | Async runtime | MIT | None | Safe | REQUIRES VERIFICATION (version pin) |
+| 2 | tokio | Async runtime | MIT (verified via `cargo metadata` against v1.53.1) | None | Safe | **Approved** — vendored in `crates/collector`, `tools/flow-replay` (Phase 2) |
 | 3 | axum | REST API framework | MIT | None | Safe | REQUIRES VERIFICATION (version pin) |
 | 4 | tonic | gRPC framework | MIT | None | Safe | REQUIRES VERIFICATION (version pin) |
 | 5 | serde / serde_json / serde_yaml | Serialization | MIT / Apache-2.0 dual | None | Safe | REQUIRES VERIFICATION (version pin) |
 | 6 | clap | CLI argument parsing | MIT / Apache-2.0 dual | None | Safe | REQUIRES VERIFICATION (version pin) |
 | 7 | sqlx | PostgreSQL client | MIT / Apache-2.0 dual | None | Safe | REQUIRES VERIFICATION (version pin) |
-| 8 | tracing / tracing-subscriber | Structured logging/tracing | MIT | None | Safe | REQUIRES VERIFICATION (version pin) |
-| 9 | prometheus (Rust crate) | Metrics | Apache-2.0 | None | Safe | REQUIRES VERIFICATION (version pin) |
+| 8 | tracing / tracing-subscriber | Structured logging/tracing | MIT (verified via `cargo metadata` against v0.1.44 / v0.3.23) | None | Safe | **Approved** — vendored in `crates/common` (Phase 2) |
+| 9 | prometheus (Rust crate) | Metrics | Apache-2.0 (verified via `cargo metadata` against v0.14.0) | None | Safe | **Approved** — vendored in `crates/collector` (Phase 2) |
 | 10 | GoBGP | BGP speaker (external process/API dependency, not linked) | Apache-2.0 — REQUIRES VERIFICATION | None expected at Apache-2.0 | Likely safe; verify integration is via API/process boundary, not static link, before assuming no obligations | REQUIRES VERIFICATION |
 | 11 | ClickHouse (server, external service) | Analytics storage | Apache-2.0 — REQUIRES VERIFICATION | None expected | Safe as external service dependency | REQUIRES VERIFICATION |
 | 12 | PostgreSQL (server, external service) | Config/metadata storage | PostgreSQL License (permissive) — REQUIRES VERIFICATION | None | Safe | REQUIRES VERIFICATION |
@@ -38,6 +38,21 @@ before any commercial distribution.
 | 23 | Apache ECharts | Charting | Apache-2.0 | None | Safe | REQUIRES VERIFICATION (version pin) |
 | 24 | InfluxDB (v1-compatible target, external service) | Legacy metrics output | MIT (v1.x) / varies by version — REQUIRES VERIFICATION | Verify per version | Safe if MIT-era version targeted | REQUIRES VERIFICATION |
 | 25 | MkDocs Material | Documentation site | MIT | None | Safe | REQUIRES VERIFICATION (version pin) |
+| 26 | thiserror | Error-type derive macro | MIT OR Apache-2.0 (verified via `cargo metadata` against v2.0.20) | None | Safe | **Approved** — vendored in `crates/protocol-ipfix`, `crates/common`, `crates/collector` (Phase 2) |
+| 27 | proptest | Property-based testing | MIT OR Apache-2.0 (verified via `cargo metadata` against v1.11.0) | None | Safe, dev-dependency only (not shipped in release binaries) | **Approved** — dev-dependency in `crates/protocol-ipfix` (Phase 2) |
+
+## Toolchain-Only, Not Shipped in Any Binary
+
+The Rust GNU toolchain requires a MinGW-w64 build environment (binutils —
+`as`, `ar`, `dlltool`, `ld` — plus `gcc.exe` used only as a linker driver)
+to link `windows-sys`-dependent crates on Windows dev machines. Installed
+locally via winget (`BrechtSanders.WinLibs.POSIX.UCRT`, multiple licenses
+— see <https://winlibs.com/#license>). This is **build tooling only**
+— none of it is linked into or distributed with WetechiNetMon binaries, so
+it carries no distribution obligations for the product itself. Not added
+as a numbered row above since it is not a dependency of the product in any
+license-relevant sense; noted here for engineering-environment
+reproducibility (see docs/development/local-setup.md).
 
 ## Process
 

@@ -17,8 +17,8 @@ documentation. See [docs/acceptance-criteria.md](docs/acceptance-criteria.md).
 | Version | Milestone | Status |
 |---|---|---|
 | — | Phase 0: Product foundation and clean-room boundary | ✅ Complete |
-| v0.1.0 | Phase 1: GitHub repository and documentation foundation | 🚧 In progress |
-| v0.2.0 | Phase 2: IPFIX collector MVP | Not started |
+| v0.1.0 | Phase 1: GitHub repository and documentation foundation | ✅ Complete |
+| v0.2.0 | Phase 2: IPFIX collector MVP | ✅ Complete |
 | v0.3.0 | Phase 3: Aggregation and direction classification | Not started |
 | v0.4.0 | Phase 3 (cont.): ClickHouse and Prometheus metrics | Not started |
 | v0.5.0 | Phase 4: Static detection engine | Not started |

@@ -60,7 +60,12 @@ the transport) begins — not decided silently.
 ## 3. Collector Language: Rust vs Go
 
 Required by master prompt section 6 as an explicit ADR before
-implementation (Phase 2). Preliminary comparison:
+implementation (Phase 2). **Decided:** see
+[ADR 0001](architecture/decisions/0001-collector-implementation-language.md)
+— Rust, for the collector and everything upstream of storage (parsing,
+aggregation, classification). The comparison table below is preserved as
+the supporting analysis; the Mitigation Controller's language remains a
+separate, later decision (see below).
 
 | Dimension | Rust | Go |
 |---|---|---|
@@ -74,14 +79,13 @@ implementation (Phase 2). Preliminary comparison:
 | Long-term maintenance | Steeper learning curve, stronger correctness guarantees | Easier to onboard contributors, faster iteration |
 | Developer availability | Smaller pool | Larger pool |
 
-**Leaning:** Rust for the Telemetry Collector and protocol parsers
-specifically (untrusted-input parsing is the highest-risk attack surface —
-see [security-principles.md](security-principles.md) threat model), per the
-master prompt's stated preference. Go remains attractive for the Mitigation
-Controller given GoBGP is itself a Go library — this is worth a dedicated
-ADR rather than assuming Rust everywhere. This split (Rust for
-parsing/aggregation/detection, Go or Rust for BGP integration) is proposed
-as the Phase 1 ADR topic, not decided here.
+**Decision (ADR 0001):** Rust for the Telemetry Collector and protocol
+parsers specifically (untrusted-input parsing is the highest-risk attack
+surface — see [security-principles.md](security-principles.md) threat
+model), per the master prompt's stated preference. Go remains attractive
+for the Mitigation Controller given GoBGP is itself a Go library — that
+stays a separate, dedicated ADR rather than assuming Rust everywhere, due
+before Phase 7.
 
 ## 4. Storage Architecture
 

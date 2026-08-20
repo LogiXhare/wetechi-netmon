@@ -1,9 +1,11 @@
 # Integrations
 
-Status: Phase 1 skeleton.
+Status: Phase 2 — IPFIX collector guide added.
 
-Router/exporter integration guides (Cisco NCS540, generic NetFlow/IPFIX/
-sFlow exporters), ClickHouse, InfluxDB compatibility, Prometheus, Grafana,
-and notification-channel (Teams/Slack/Telegram/PagerDuty/webhook) guides
-will live here. Populated incrementally starting Phase 2, expanding through
+- [IPFIX Collector Guide](ipfix-collector.md) — pointing an exporter at
+  `wetechinetmon-collector` and verifying it's working
+
+ClickHouse, InfluxDB compatibility, Prometheus, Grafana, and
+notification-channel (Teams/Slack/Telegram/PagerDuty/webhook) guides will
+be added as those integrations are implemented, expanding through
 Phase 6.

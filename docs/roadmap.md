@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: Phase 0 draft
+Status: Phase 2 complete
 Last updated: 2026-08-20
 
 This roadmap mirrors the phased delivery model and versioning plan in the
@@ -12,9 +12,9 @@ an explicit decision record, a commit, and updated documentation.
 
 | Phase | Milestone | Deliverable focus |
 |---|---|---|
-| Phase 0 | — | Product foundation and clean-room boundary (this document set) |
-| Phase 1 | v0.1.0 | GitHub repository and documentation foundation |
-| Phase 2 | v0.2.0 | IPFIX collector MVP |
+| Phase 0 | — | Product foundation and clean-room boundary (this document set) — ✅ complete |
+| Phase 1 | v0.1.0 | GitHub repository and documentation foundation — ✅ complete |
+| Phase 2 | v0.2.0 | IPFIX collector MVP — ✅ complete |
 | Phase 3 | v0.3.0 | Aggregation and direction classification |
 | Phase 3 (cont.) | v0.4.0 | ClickHouse and Prometheus metrics |
 | Phase 4 | v0.5.0 | Static detection engine |
@@ -64,11 +64,33 @@ matrix, commercial boundaries, security principles, MVP scope, out-of-scope
 list, risk register, this roadmap, acceptance criteria, blocking questions,
 and naming/branding decision. No production code.
 
-## Immediately Next: Phase 1 Preview
+## Phase 1 — Scope (complete)
 
 GitHub repository and documentation foundation — monorepo skeleton,
 README, LICENSE recommendation, NOTICE, SECURITY, CONTRIBUTING,
 CODE_OF_CONDUCT, GOVERNANCE, SUPPORT, ROADMAP, CHANGELOG, MkDocs skeleton,
 ADR template, issue templates, PR template, CODEOWNERS, Dependabot,
-validation CI, local dev setup, Makefile, Taskfile. **Not started** — this
-requires review of Phase 0 first, per master prompt §31.
+validation CI, local dev setup, Makefile, Taskfile.
+
+## Phase 2 — Scope (complete)
+
+IPFIX collector MVP: clean-room IPFIX decoder (`crates/protocol-ipfix`),
+per-exporter template caching and restart detection, Prometheus metrics,
+structured JSON logging (`crates/common`), a synthetic flow replay tool
+(`tools/flow-replay`), unit tests, property-based ("never panics on
+arbitrary bytes") tests, and documentation (IPFIX collector guide,
+configuration reference, ADR 0001 recording the Rust-for-collector
+decision). See [architecture/decisions/0001-collector-implementation-language.md](architecture/decisions/0001-collector-implementation-language.md).
+
+**Known limitation carried forward:** true coverage-guided fuzzing
+(`cargo-fuzz`/libFuzzer) requires a nightly Rust toolchain, not installed
+in this environment — property-based tests cover the same "never panics"
+safety property via `proptest` instead. Tracked in
+[risk-register.md](risk-register.md) R4, not silently dropped.
+
+## Immediately Next: Phase 3 Preview
+
+Aggregation and direction classification: host/network/hostgroup/ASN
+aggregation, Incoming/Outgoing/Internal/Other classification, ClickHouse
+output, tests, documentation. **Not started** — requires review of
+Phase 2 first, per master prompt §29.

@@ -13,7 +13,11 @@ __pycache__/
 
 # Rust (from Phase 2 onward)
 target/
-Cargo.lock
+# Cargo.lock is committed (not ignored): this workspace ships binaries
+# (collector, flow-replay), and per docs/security-principles.md
+# ("reproducible builds where possible") binary crates should pin their
+# exact dependency graph. Library-only crates conventionally ignore it,
+# but this workspace is mixed and binaries dominate.
 
 # Editors / OS
 .vscode/
