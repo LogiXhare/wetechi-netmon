@@ -8,4 +8,4 @@ principles already exist at [../security-principles.md](../security-principles.m
 (Phase 0) and are expanded here starting Phase 2 (parser fuzzing) through
 Phase 9 (production security review).
 
-For reporting a vulnerability, see [../../SECURITY.md](../../SECURITY.md).
+For reporting a vulnerability, see [Security Policy](security-policy.md).

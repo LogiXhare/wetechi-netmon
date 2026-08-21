@@ -180,5 +180,5 @@ WETECHI_SKIP_PREPUSH=1 git push
 
 ## Contribution Workflow
 
-See [../../CONTRIBUTING.md](../../CONTRIBUTING.md) for branch naming,
+See [Contributing](contributing.md) for branch naming,
 commit conventions, and the pull-request checklist.

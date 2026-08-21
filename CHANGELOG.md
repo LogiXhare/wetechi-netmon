@@ -8,6 +8,24 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
 
 ## [Unreleased]
 
+### Fixed
+
+- `mkdocs build --strict` now exits 0 with zero warnings. It previously
+  aborted on 9 broken relative links — a failure that predates this work
+  and had never been caught, because the strict docs build runs only in
+  CI (blocked by the Actions billing state since this repository's first
+  workflow run) and is not part of `make validate`. Two links were
+  wrong-depth paths to pages that do exist; the other seven pointed
+  outside `docs/`, which MkDocs cannot resolve. Root governance files now
+  have documentation-native summary pages —
+  [Contributing](docs/development/contributing.md) and
+  [Security Policy](docs/security/security-policy.md), both registered in
+  the nav — and references to source files and crate READMEs use explicit
+  repository URLs, added to the `.github/mlc_config.json` ignore list on
+  the same grounds as the advisory and discussion URLs already there: the
+  repository is private, so an anonymous link checker cannot reach them.
+  No warning was suppressed and strict mode was not relaxed.
+
 ### Added — Governance records
 
 - [ADR 0006](docs/architecture/decisions/0006-contribution-licensing-dco-not-cla.md)

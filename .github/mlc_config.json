@@ -1,16 +1,39 @@
 {
   "ignorePatterns": [
-    { "pattern": "^mailto:" },
-    { "pattern": "^http://localhost" },
-    { "pattern": "^https://github.com/badshashorif/wetechi-netmon/security/advisories/new" },
-    { "pattern": "^https://github.com/badshashorif/wetechi-netmon/discussions" },
-    { "pattern": "^https://github.com/badshashorif/wetechi-netmon/compare/" }
+    {
+      "pattern": "^mailto:"
+    },
+    {
+      "pattern": "^http://localhost"
+    },
+    {
+      "pattern": "^https://github.com/badshashorif/wetechi-netmon/security/advisories/new"
+    },
+    {
+      "pattern": "^https://github.com/badshashorif/wetechi-netmon/discussions"
+    },
+    {
+      "pattern": "^https://github.com/badshashorif/wetechi-netmon/compare/"
+    },
+    {
+      "pattern": "^https://github.com/badshashorif/wetechi-netmon/blob/"
+    }
   ],
-  "aliveStatusCodes": [200, 206, 301, 302, 403],
+  "aliveStatusCodes": [
+    200,
+    206,
+    301,
+    302,
+    403
+  ],
   "httpHeaders": [
     {
-      "urls": ["https://github.com/"],
-      "headers": { "Accept": "text/html" }
+      "urls": [
+        "https://github.com/"
+      ],
+      "headers": {
+        "Accept": "text/html"
+      }
     }
   ],
   "timeout": "20s",

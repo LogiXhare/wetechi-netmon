@@ -65,6 +65,7 @@ nav:
   - Security:
       - Overview: security/index.md
       - Security Principles: security-principles.md
+      - Security Policy: security/security-policy.md
   - Licensing:
       - Dependency License Matrix: dependency-license-matrix.md
       - License Recommendation: license-recommendation.md
@@ -90,5 +91,6 @@ nav:
   - Development:
       - Overview: development/index.md
       - Local Setup: development/local-setup.md
+      - Contributing: development/contributing.md
       - Flow Replay Tool: development/flow-replay.md
       - Engineering Follow-Ups: development/follow-ups.md
