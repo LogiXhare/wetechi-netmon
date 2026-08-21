@@ -74,6 +74,9 @@ requests should target the current phase's scope.
 ### Local Setup
 
 See [docs/development/local-setup.md](docs/development/local-setup.md).
+Enable the repository hooks while you are there (`make hooks`) —
+`.githooks/pre-push` runs `cargo fmt`, `clippy`, and `test` before every
+push.
 
 ### Branching
 

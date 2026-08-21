@@ -35,6 +35,14 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
   bumps arrive as one pull request, and Cargo minor/patch bumps as
   another. Major Cargo bumps are deliberately left ungrouped so a
   breaking change gets reviewed on its own.
+- `.githooks/pre-push` plus `make hooks` / `task hooks` — an opt-in local
+  gate running `cargo fmt --check`, `cargo clippy -D warnings`, and
+  `cargo test` before each push. It skips itself when `cargo` is absent,
+  and honours `WETECHI_SKIP_PREPUSH=1`. Documented in
+  [docs/development/local-setup.md](docs/development/local-setup.md).
+- `.gitattributes` — pins shell scripts and `.githooks/**` to LF endings.
+  Under `core.autocrlf=true` on Windows the hook would otherwise be
+  checked out with a CRLF shebang and fail to execute on Linux or WSL.
 
 ### Added — Phase 3: Aggregation and Direction Classification
 

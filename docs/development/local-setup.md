@@ -151,6 +151,33 @@ This runs Markdown lint, YAML lint, `cargo fmt --check`, `cargo clippy`,
 `.github/workflows/validate.yml`, runnable locally before pushing.
 Frontend lint/test will be added once Phase 6 introduces the web app.
 
+## Enable the Pre-Push Hook
+
+`.githooks/pre-push` runs the Rust gate — `cargo fmt --check`, `cargo
+clippy -D warnings`, `cargo test` — before every push, so a broken commit
+never reaches a branch. Git never enables repository hooks
+automatically, so turn it on once per clone:
+
+```bash
+make hooks
+# or
+task hooks
+# or, directly:
+git config core.hooksPath .githooks
+```
+
+The hook deliberately leaves the Markdown, YAML, link, and MkDocs checks
+to CI: those need network access (`npx`, `pip`) and would make every push
+slow and offline-hostile. `make validate` still runs the complete set.
+
+It skips itself, with a warning, when `cargo` is not on `PATH` — a
+docs-only clone does not need a Rust toolchain. To bypass it for a
+work-in-progress push:
+
+```bash
+WETECHI_SKIP_PREPUSH=1 git push
+```
+
 ## Contribution Workflow
 
 See [../../CONTRIBUTING.md](../../CONTRIBUTING.md) for branch naming,
