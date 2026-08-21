@@ -8,6 +8,18 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
 
 ## [Unreleased]
 
+### Added — Governance records
+
+- [ADR 0006](docs/architecture/decisions/0006-contribution-licensing-dco-not-cla.md)
+  — contribution licensing: Apache-2.0 stays, DCO sign-off is required,
+  no CLA is introduced. Records plainly what the DCO does *not* do: it is
+  not a copyright assignment, contributors keep their copyright, and
+  contributed code therefore cannot be relicensed unilaterally. Resolves
+  the incoming-contribution half of BQ-1.
+- [docs/development/follow-ups.md](docs/development/follow-ups.md) — the
+  known, deliberately-deferred engineering loose ends (FU-1..FU-7), each
+  with what blocks it.
+
 ### Added — Contribution licensing
 
 - `DCO` — the Developer Certificate of Origin 1.1 text, verbatim.

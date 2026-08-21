@@ -34,7 +34,6 @@ yet:
 |---|---|---|
 | Mitigation Controller implementation language | Phase 7 | [architecture-options.md §3](../../architecture-options.md) |
 | Recharts vs. Apache ECharts for the web UI | Phase 6 | [architecture-options.md §5](../../architecture-options.md) |
-| WetechiNetMon's own open-source license | Phase 1 (blocking) | [blocking-questions.md BQ-1](../../blocking-questions.md) |
 | NATS JetStream transport (deferred from Phase 3, see ADR 0004) | When Aggregator needs to scale independently | [0004](0004-collector-aggregator-event-transport.md) |
 
 ## Index
@@ -46,3 +45,4 @@ yet:
 | [0003](0003-in-memory-aggregation-structure.md) | In-Memory Aggregation Structure: Bounded HashMap + Eviction | Accepted |
 | [0004](0004-collector-aggregator-event-transport.md) | Collector-to-Aggregator Event Transport: In-Process Channel (NATS Deferred) | Accepted |
 | [0005](0005-clickhouse-batching-and-retry.md) | ClickHouse Batching and Retry Behavior | Accepted |
+| [0006](0006-contribution-licensing-dco-not-cla.md) | Contribution Licensing: DCO Sign-Off, No CLA | Accepted |
