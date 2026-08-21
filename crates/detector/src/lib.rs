@@ -11,15 +11,19 @@
 //! docs/security/detection-safety.md and ADR 0007.
 
 pub mod clock;
+pub mod evaluate;
 pub mod input;
 pub mod policy;
+pub mod precedence;
 
 pub use clock::{Clock, SystemClock, TestClock};
+pub use evaluate::{evaluate, Evaluation, MatchedReason, SkipReason, SkippedMetric};
 pub use input::{
     AddressFamily, CompletenessFlag, DataCompleteness, DetectionSnapshot, MetricKind, MetricRates,
     MetricUnit, SamplingStatus, ScopeId, ScopeKey, ScopeType, TrafficDirection, ALL_METRIC_KINDS,
 };
 pub use policy::{
     ClearPercent, DetectionPolicy, ExecutionMode, PolicyDraft, PolicyError, PolicySelector,
-    Severity, TenantPrefixes, Thresholds,
+    Severity, TenantPrefixes, Thresholds, WILDCARD_TENANT,
 };
+pub use precedence::{Candidate, PolicySet, PrecedenceReason, Selection};

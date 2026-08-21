@@ -33,6 +33,14 @@ pub const MAX_WINDOW: Duration = Duration::from_secs(300);
 /// almost certainly a units mistake, not an intention.
 pub const MAX_TIMER: Duration = Duration::from_secs(7 * 24 * 3600);
 
+/// The tenant value that means "every tenant".
+///
+/// This is how a global default policy is expressed. It is deliberately
+/// a character no real tenant identifier would contain, and a policy
+/// carrying it is always less specific than one naming a tenant — so a
+/// global default can never outrank a tenant's own policy.
+pub const WILDCARD_TENANT: &str = "*";
+
 /// What the engine is allowed to do when a policy matches.
 ///
 /// There is deliberately no mitigation-capable variant. Adding one is a
@@ -249,7 +257,10 @@ impl DetectionPolicy {
 
     /// Whether this policy could ever apply to the given scope key.
     pub fn matches_scope(&self, key: &crate::input::ScopeKey) -> bool {
-        if !self.enabled || self.tenant != key.tenant {
+        if !self.enabled {
+            return false;
+        }
+        if self.tenant != WILDCARD_TENANT && self.tenant != key.tenant {
             return false;
         }
         if self.scope_type != key.scope_type {
@@ -290,7 +301,15 @@ impl DetectionPolicy {
             PolicySelector::Any => 0,
         };
         let family = if self.address_family.is_some() { 1 } else { 0 };
-        scope + selector + family
+        // A policy naming its tenant always outranks the global default,
+        // whatever their selectors — hence a term larger than any
+        // scope/selector combination can reach.
+        let tenant = if self.tenant == WILDCARD_TENANT {
+            0
+        } else {
+            1_000_000
+        };
+        tenant + scope + selector + family
     }
 }
 
@@ -675,7 +694,7 @@ fn validate_prefix_ownership(
     selector: &PolicySelector,
     tenant_prefixes: &TenantPrefixes,
 ) -> Result<(), PolicyError> {
-    if tenant_prefixes.is_empty() {
+    if tenant_prefixes.is_empty() || tenant == WILDCARD_TENANT {
         return Ok(());
     }
     let (addr, prefix_len) = match selector {
