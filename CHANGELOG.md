@@ -17,6 +17,21 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
   in [CONTRIBUTING.md](CONTRIBUTING.md); the pull-request template
   carries a matching checklist item.
 
+### Changed — CI efficiency
+
+- `.github/workflows/validate.yml`: consolidated from nine jobs to three
+  (`rust`, `docs`, `history`), split by *environment* rather than by
+  individual check. `cargo fmt`/`clippy`/`test`/`build` previously ran as
+  four separate runners that each recompiled the whole workspace from a
+  cold cache; they now share one `target/` directory in a single job. No
+  check was removed and no action version changed — the same commands run
+  against the same pinned action SHAs.
+- The former `secret-scan` job is now `history`, and gained a DCO
+  sign-off check: it verifies every non-merge commit in a pull request
+  carries a `Signed-off-by` trailer matching its author, exempting
+  automated `[bot]` commits. It reuses the full-history checkout that the
+  secret scan already needed, so it costs no extra runner minutes.
+
 ### Added — Phase 3: Aggregation and Direction Classification
 
 - `crates/common`: `NormalizedFlow` — protocol-independent flow record
