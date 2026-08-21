@@ -94,8 +94,24 @@ jobs:
       - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Dependabot's pull requests carry no sign-off, so they need an
+      # exemption — but it is keyed on the pull request's author login,
+      # which GitHub sets and a contributor cannot forge. It must never be
+      # keyed on commit author metadata: anyone can run
+      # `git config user.name 'x[bot]'` and walk straight past a check that
+      # trusts the commit's own author string.
+      #
+      # Scope, deliberately: this runs on pull_request only. Commits pushed
+      # directly to a branch are not checked (the repository has no branch
+      # protection today), and a squash merge replaces the checked commits
+      # with a new one — so whoever squashes must keep a Signed-off-by
+      # trailer in the squash message. Merge commits are skipped by
+      # --no-merges; the commits they bring in are still checked.
       - name: DCO sign-off check
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          github.event.pull_request.user.login != 'github-actions[bot]'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -105,12 +121,6 @@ jobs:
           while IFS= read -r sha; do
             author="$(git show -s --format='%an <%ae>' "$sha")"
             subject="$(git show -s --format='%h %s' "$sha")"
-            case "$author" in
-              *"[bot]"*)
-                echo "SKIP:    $subject (automated commit)"
-                continue
-                ;;
-            esac
             if git show -s --format='%B' "$sha" | grep -qiF "Signed-off-by: $author"; then
               echo "OK:      $subject"
             else

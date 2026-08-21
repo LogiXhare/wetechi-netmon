@@ -17,6 +17,16 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
   in [CONTRIBUTING.md](CONTRIBUTING.md); the pull-request template
   carries a matching checklist item.
 
+### Security
+
+- The DCO check's bot exemption no longer trusts commit author metadata.
+  It previously skipped any commit whose `%an <%ae>` contained `[bot]`,
+  so a contributor could bypass sign-off entirely with
+  `git config user.name 'x[bot]'`. Verified against a synthetic commit
+  authored as `evil[bot] <attacker@example.com>`: it was silently
+  exempted before the fix and is correctly rejected after. The exemption
+  is now keyed on the pull request author's login, which GitHub sets.
+
 ### Changed — CI efficiency
 
 - `.github/workflows/validate.yml`: consolidated from nine jobs to three
@@ -28,9 +38,11 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
   against the same pinned action SHAs.
 - The former `secret-scan` job is now `history`, and gained a DCO
   sign-off check: it verifies every non-merge commit in a pull request
-  carries a `Signed-off-by` trailer matching its author, exempting
-  automated `[bot]` commits. It reuses the full-history checkout that the
-  secret scan already needed, so it costs no extra runner minutes.
+  carries a `Signed-off-by` trailer matching its author. It reuses the
+  full-history checkout that the secret scan already needed, so it costs
+  no extra runner minutes. Bot-authored pull requests are exempted on
+  `github.event.pull_request.user.login`, which GitHub sets — never on
+  commit author metadata, which a contributor controls.
 - `.github/dependabot.yml`: updates are now grouped — all GitHub Actions
   bumps arrive as one pull request, and Cargo minor/patch bumps as
   another. Major Cargo bumps are deliberately left ungrouped so a

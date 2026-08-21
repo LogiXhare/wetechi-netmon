@@ -60,9 +60,14 @@ To sign off a branch you have already committed to:
 git rebase --signoff main
 ```
 
-CI checks every non-merge commit in a pull request for the trailer
-(automated dependency-update commits are exempt). Commits without it
-block the merge.
+CI checks every non-merge commit in a pull request for the trailer.
+Pull requests opened by Dependabot are exempt as a whole; individual
+commits are never exempted on their author name.
+
+Two limits are worth knowing. A **squash merge** replaces the commits CI
+checked with a single new one, so whoever squashes must keep a
+`Signed-off-by` trailer in the squash message. And commits pushed
+**directly to a branch** are not checked at all — only pull requests are.
 
 ## Development Process
 
