@@ -1,0 +1,18 @@
+[package]
+name = "wetechinetmon-detector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wetechinetmon-common = { path = "../common" }
+wetechinetmon-classifier = { path = "../classifier" }
+wetechinetmon-aggregator = { path = "../aggregator" }
+thiserror.workspace = true
+tracing.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+proptest.workspace = true
