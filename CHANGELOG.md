@@ -31,6 +31,10 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
   carries a `Signed-off-by` trailer matching its author, exempting
   automated `[bot]` commits. It reuses the full-history checkout that the
   secret scan already needed, so it costs no extra runner minutes.
+- `.github/dependabot.yml`: updates are now grouped — all GitHub Actions
+  bumps arrive as one pull request, and Cargo minor/patch bumps as
+  another. Major Cargo bumps are deliberately left ungrouped so a
+  breaking change gets reviewed on its own.
 
 ### Added — Phase 3: Aggregation and Direction Classification
 
