@@ -8,6 +8,15 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
 
 ## [Unreleased]
 
+### Added — Contribution licensing
+
+- `DCO` — the Developer Certificate of Origin 1.1 text, verbatim.
+  Contributions are accepted under Apache-2.0 and every non-merge commit
+  now requires a matching `Signed-off-by` trailer (`git commit -s`).
+  There is no separate CLA. See the new "Licensing and Sign-Off" section
+  in [CONTRIBUTING.md](CONTRIBUTING.md); the pull-request template
+  carries a matching checklist item.
+
 ### Added — Phase 3: Aggregation and Direction Classification
 
 - `crates/common`: `NormalizedFlow` — protocol-independent flow record
