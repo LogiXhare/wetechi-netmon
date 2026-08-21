@@ -22,6 +22,53 @@ for what the project is and why, start with
    deferred, not rejected outright — open an issue to discuss timing
    first.
 
+## Licensing and Sign-Off (DCO)
+
+WetechiNetMon is licensed under Apache-2.0 (see [LICENSE](LICENSE) and
+[NOTICE](NOTICE)), and contributions are accepted under that same
+license. Contributing does not transfer your copyright — you keep it,
+and the Apache-2.0 grant is what lets the project ship your work.
+
+WeTechi Solutions may additionally distribute commercially-licensed
+editions containing features that are not part of this repository, and
+may include contributed code in those editions on terms consistent with
+Apache-2.0 — see
+[docs/commercial-boundaries.md](docs/commercial-boundaries.md).
+
+### Every commit must be signed off
+
+This project uses the [Developer Certificate of Origin](DCO) (DCO 1.1):
+a short statement that you wrote the contribution, or otherwise have the
+right to submit it under Apache-2.0. There is no separate CLA to sign.
+
+Certify a commit with a `Signed-off-by` trailer matching the commit
+author:
+
+```text
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+Git writes it for you with `-s`:
+
+```bash
+git commit -s -m "feat(phase4): add hysteresis to threshold detection"
+```
+
+To sign off a branch you have already committed to:
+
+```bash
+git rebase --signoff main
+```
+
+CI checks every non-merge commit in a pull request for the trailer.
+Pull requests opened by Dependabot are exempt as a whole; individual
+commits are never exempted on their author name.
+
+Two limits are worth knowing. A **squash merge** replaces the commits CI
+checked with a single new one, so whoever squashes must keep a
+`Signed-off-by` trailer in the squash message. And commits pushed
+**directly to a branch** are not checked at all — only pull requests are.
+
 ## Development Process
 
 This project is built in explicit, sequential phases (see
@@ -32,6 +79,9 @@ requests should target the current phase's scope.
 ### Local Setup
 
 See [docs/development/local-setup.md](docs/development/local-setup.md).
+Enable the repository hooks while you are there (`make hooks`) —
+`.githooks/pre-push` runs `cargo fmt`, `clippy`, and `test` before every
+push.
 
 ### Branching
 
@@ -68,6 +118,8 @@ Every pull request must:
   runnable code (Phase 2 onward). Untested code is not "done."
 - Self-certify against [docs/clean-room-boundary.md](docs/clean-room-boundary.md)
   using the pull-request template checklist.
+- Have every commit signed off under the [DCO](DCO) — see
+  [Licensing and Sign-Off](#licensing-and-sign-off-dco).
 - Pass all validation CI checks (see `.github/workflows/`).
 - Be small and focused. Prefer several small PRs over one large one.
 

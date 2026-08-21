@@ -1,0 +1,41 @@
+#!/bin/sh
+# Local pre-push gate for wetechi-netmon.
+#
+# Enable once per clone (see docs/development/local-setup.md):
+#
+#     git config core.hooksPath .githooks
+#     # or: make hooks
+#
+# Skip deliberately for a work-in-progress push:
+#
+#     WETECHI_SKIP_PREPUSH=1 git push
+#
+# This runs the Rust half of `make validate` only. Markdown, YAML, link
+# and MkDocs checks are left to CI because they need network access
+# (npx, pip), which would make every push slow and offline-hostile. Run
+# `make validate` for the complete set.
+
+set -eu
+
+if [ "${WETECHI_SKIP_PREPUSH:-0}" != "0" ]; then
+    echo "pre-push: skipped (WETECHI_SKIP_PREPUSH is set)"
+    exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-push: cargo is not on PATH — skipping the Rust gate." >&2
+    echo "pre-push: docs-only clones can ignore this; otherwise see" >&2
+    echo "pre-push: docs/development/local-setup.md to install Rust." >&2
+    exit 0
+fi
+
+echo "pre-push: cargo fmt --check"
+cargo fmt --check
+
+echo "pre-push: cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "pre-push: cargo test --workspace"
+cargo test --workspace
+
+echo "pre-push: OK"

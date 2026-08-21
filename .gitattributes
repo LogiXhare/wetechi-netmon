@@ -1,0 +1,6 @@
+# Shell scripts must keep LF line endings regardless of core.autocrlf.
+# A CRLF shebang makes the file unrunnable on Linux and in WSL
+# ("bad interpreter: /bin/sh^M"), and the Git hooks below are executed
+# on whatever platform a contributor clones to.
+*.sh text eol=lf
+.githooks/** text eol=lf

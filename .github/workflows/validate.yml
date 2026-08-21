@@ -5,6 +5,20 @@ name: Validate
 # Rust workspace (crates/, tools/flow-replay) — GitHub-hosted ubuntu-latest
 # runners ship a Rust toolchain preinstalled, so no separate toolchain
 # action is needed.
+#
+# Checks are deliberately grouped into three jobs rather than one job per
+# check. Every job is a separate runner, billed with a one-minute minimum
+# and starting from a cold cache: as nine jobs, fmt/clippy/test/build each
+# recompiled the whole workspace independently, four times over. Grouping
+# them lets a single `target/` directory be reused within the job. The
+# split that remains is by *environment*, not by check:
+#
+#   rust    — needs only the preinstalled Rust toolchain
+#   docs    — needs Node + Python
+#   history — needs full history (fetch-depth: 0), which the others do not
+#
+# Adding a check belongs in an existing job unless it genuinely needs a
+# different environment.
 
 on:
   pull_request:
@@ -21,25 +35,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  markdown-lint:
-    name: Markdown lint
+  rust:
+    name: Rust (fmt, clippy, test, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "20"
-      - name: markdownlint-cli2
-        run: npx -y markdownlint-cli2@0.13.0 "**/*.md" "#node_modules"
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Unit + property tests
+        run: cargo test --workspace
+      - name: Build (all targets)
+        run: cargo build --workspace --all-targets
 
-  yaml-lint:
-    name: YAML syntax validation
+  docs:
+    name: Docs (Markdown, YAML, links, MkDocs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Markdown lint
+        run: npx -y markdownlint-cli2@0.13.0 "**/*.md" "#node_modules"
       - name: Validate YAML syntax
         run: |
           set -euo pipefail
@@ -51,33 +73,19 @@ jobs:
               || { echo "INVALID YAML: $f"; status=1; }
           done < <(find . -type f \( -name '*.yml' -o -name '*.yaml' \) -not -path './node_modules/*' -not -path './.git/*' -print0)
           exit "$status"
-
-  link-check:
-    name: Markdown link check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: gaurav-nelson/github-action-markdown-link-check@499c1e7f3637c131334fa8e937c45144f79d72d2 # v1
+      - name: Markdown link check
+        uses: gaurav-nelson/github-action-markdown-link-check@499c1e7f3637c131334fa8e937c45144f79d72d2 # v1
         with:
           use-quiet-mode: "yes"
           use-verbose-mode: "yes"
           config-file: ".github/mlc_config.json"
-
-  mkdocs-build:
-    name: MkDocs Material strict build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.12"
       - name: Install MkDocs Material
         run: pip install mkdocs-material
       - name: Build docs (strict — fails on broken nav/links)
         run: mkdocs build --strict
 
-  secret-scan:
-    name: Secret scanning
+  history:
+    name: History (secret scan, DCO sign-off)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -86,31 +94,44 @@ jobs:
       - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  rust-fmt:
-    name: Rust formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: cargo fmt --check
-
-  rust-clippy:
-    name: Rust clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-
-  rust-test:
-    name: Rust unit + property tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: cargo test --workspace
-
-  rust-build:
-    name: Rust build (all targets)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: cargo build --workspace --all-targets
+      # Dependabot's pull requests carry no sign-off, so they need an
+      # exemption — but it is keyed on the pull request's author login,
+      # which GitHub sets and a contributor cannot forge. It must never be
+      # keyed on commit author metadata: anyone can run
+      # `git config user.name 'x[bot]'` and walk straight past a check that
+      # trusts the commit's own author string.
+      #
+      # Scope, deliberately: this runs on pull_request only. Commits pushed
+      # directly to a branch are not checked (the repository has no branch
+      # protection today), and a squash merge replaces the checked commits
+      # with a new one — so whoever squashes must keep a Signed-off-by
+      # trailer in the squash message. Merge commits are skipped by
+      # --no-merges; the commits they bring in are still checked.
+      - name: DCO sign-off check
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          github.event.pull_request.user.login != 'github-actions[bot]'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r sha; do
+            author="$(git show -s --format='%an <%ae>' "$sha")"
+            subject="$(git show -s --format='%h %s' "$sha")"
+            if git show -s --format='%B' "$sha" | grep -qiF "Signed-off-by: $author"; then
+              echo "OK:      $subject"
+            else
+              echo "MISSING: $subject — needs 'Signed-off-by: $author'"
+              status=1
+            fi
+          done < <(git rev-list --no-merges "$BASE_SHA".."$HEAD_SHA")
+          if [ "$status" -ne 0 ]; then
+            echo
+            echo "Every commit needs a DCO sign-off matching its author — see the DCO file."
+            echo "Fix the latest commit with:  git commit -s --amend"
+            echo "Fix a whole branch with:     git rebase --signoff $BASE_SHA"
+          fi
+          exit "$status"

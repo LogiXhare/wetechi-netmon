@@ -89,7 +89,7 @@ summary). Status against the acceptance checklist:
 - [x] ClickHouse output — schema, batch writer, retry, migrations
       implemented and unit-tested; **not verified against a live server**
       (none available in this environment) — see
-      [../integrations/clickhouse.md](../integrations/clickhouse.md).
+      [integrations/clickhouse.md](integrations/clickhouse.md).
 - [x] Prometheus platform metrics — 14 new Phase 3 metrics, verified
       end-to-end against a real running collector process.
 
@@ -151,7 +151,7 @@ summary). Status against the acceptance checklist:
 
 - [x] Target defined: sustain ≥100,000 normalized flow records/sec on a
       documented test machine (see
-      [../operations/capacity-planning.md](../operations/capacity-planning.md)).
+      [operations/capacity-planning.md](operations/capacity-planning.md)).
 - [ ] **No benchmark executed.** Per explicit instruction, no performance
       claim is made — this is a target for Phase 9, not a Phase 3 result.
 

@@ -13,6 +13,7 @@
 ### Always required
 
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
+- [ ] Every commit is signed off under the [DCO](../DCO) (`git commit -s`)
 - [ ] Documentation updated in this same PR (not deferred to a follow-up)
 - [ ] No secrets, real customer data, or hardcoded credentials/IPs/ASNs added
 - [ ] No fabricated test results, benchmark numbers, or security claims

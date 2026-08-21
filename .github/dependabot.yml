@@ -18,6 +18,12 @@ updates:
       - "github-actions"
     commit-message:
       prefix: "chore(deps)"
+    # One PR for all action bumps instead of one per action. Six separate
+    # PRs sat open through August 2026 because each needed its own CI run.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/"
@@ -28,6 +34,15 @@ updates:
       - "rust"
     commit-message:
       prefix: "chore(deps)"
+    # Minor and patch bumps travel together; major bumps stay as
+    # individual PRs so a breaking change is reviewed on its own.
+    groups:
+      cargo-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # New crates always need a docs/dependency-license-matrix.md row
     # first — this only updates *versions* of already-approved crates,
     # it does not add new dependencies on its own.

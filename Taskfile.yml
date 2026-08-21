@@ -9,6 +9,11 @@ tasks:
     cmds:
       - task --list-all
 
+  hooks:
+    desc: Enable the repo Git hooks (pre-push Rust gate)
+    cmds:
+      - git config core.hooksPath .githooks
+
   validate:
     desc: Run all available validation (docs + Rust)
     deps: [lint:markdown, lint:yaml]

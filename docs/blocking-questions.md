@@ -31,6 +31,11 @@ Options to choose between:
 **This cannot be defaulted by the agent** — it is a business decision for
 WeTechi Solutions.
 
+**Resolved 2026-08-21.** Apache-2.0, with incoming contributions accepted
+under the same license via DCO sign-off and no CLA — see
+[ADR 0006](architecture/decisions/0006-contribution-licensing-dco-not-cla.md).
+The permissive-license fork risk described above was accepted knowingly.
+
 ## BQ-2: Is Grafana bundled/modified, or treated strictly as an external, operator-supplied service?
 
 Directly affects whether Grafana's AGPLv3 terms create obligations for

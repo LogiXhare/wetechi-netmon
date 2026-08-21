@@ -1,8 +1,9 @@
-.PHONY: help validate lint-markdown lint-yaml rust-build rust-test rust-fmt rust-clippy docs-serve docs-build clean
+.PHONY: help hooks validate lint-markdown lint-yaml rust-build rust-test rust-fmt rust-clippy docs-serve docs-build clean
 
 help:
 	@echo "wetechi-netmon — targets"
 	@echo ""
+	@echo "  make hooks          Enable the repo Git hooks (pre-push Rust gate)"
 	@echo "  make validate       Run all available validation (docs + Rust)"
 	@echo "  make lint-markdown  Lint all Markdown files with markdownlint-cli2"
 	@echo "  make lint-yaml      Validate syntax of all YAML files"
@@ -14,6 +15,10 @@ help:
 	@echo "  make docs-build     Build the MkDocs Material site strictly (requires Python)"
 	@echo ""
 	@echo "Frontend (npm build/test) targets are added starting Phase 6 — see docs/roadmap.md."
+
+hooks:
+	git config core.hooksPath .githooks
+	@echo "Git hooks enabled — .githooks/pre-push runs the Rust gate before each push."
 
 validate: lint-markdown lint-yaml rust-fmt rust-clippy rust-test rust-build
 	@echo "Validation complete."

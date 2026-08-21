@@ -8,6 +8,84 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
 
 ## [Unreleased]
 
+### Fixed
+
+- `mkdocs build --strict` now exits 0 with zero warnings. It previously
+  aborted on 9 broken relative links — a failure that predates this work
+  and had never been caught, because the strict docs build runs only in
+  CI (blocked by the Actions billing state since this repository's first
+  workflow run) and is not part of `make validate`. Two links were
+  wrong-depth paths to pages that do exist; the other seven pointed
+  outside `docs/`, which MkDocs cannot resolve. Root governance files now
+  have documentation-native summary pages —
+  [Contributing](docs/development/contributing.md) and
+  [Security Policy](docs/security/security-policy.md), both registered in
+  the nav — and references to source files and crate READMEs use explicit
+  repository URLs, added to the `.github/mlc_config.json` ignore list on
+  the same grounds as the advisory and discussion URLs already there: the
+  repository is private, so an anonymous link checker cannot reach them.
+  No warning was suppressed and strict mode was not relaxed.
+
+### Added — Governance records
+
+- [ADR 0006](docs/architecture/decisions/0006-contribution-licensing-dco-not-cla.md)
+  — contribution licensing: Apache-2.0 stays, DCO sign-off is required,
+  no CLA is introduced. Records plainly what the DCO does *not* do: it is
+  not a copyright assignment, contributors keep their copyright, and
+  contributed code therefore cannot be relicensed unilaterally. Resolves
+  the incoming-contribution half of BQ-1.
+- [docs/development/follow-ups.md](docs/development/follow-ups.md) — the
+  known, deliberately-deferred engineering loose ends (FU-1..FU-7), each
+  with what blocks it.
+
+### Added — Contribution licensing
+
+- `DCO` — the Developer Certificate of Origin 1.1 text, verbatim.
+  Contributions are accepted under Apache-2.0 and every non-merge commit
+  now requires a matching `Signed-off-by` trailer (`git commit -s`).
+  There is no separate CLA. See the new "Licensing and Sign-Off" section
+  in [CONTRIBUTING.md](CONTRIBUTING.md); the pull-request template
+  carries a matching checklist item.
+
+### Security
+
+- The DCO check's bot exemption no longer trusts commit author metadata.
+  It previously skipped any commit whose `%an <%ae>` contained `[bot]`,
+  so a contributor could bypass sign-off entirely with
+  `git config user.name 'x[bot]'`. Verified against a synthetic commit
+  authored as `evil[bot] <attacker@example.com>`: it was silently
+  exempted before the fix and is correctly rejected after. The exemption
+  is now keyed on the pull request author's login, which GitHub sets.
+
+### Changed — CI efficiency
+
+- `.github/workflows/validate.yml`: consolidated from nine jobs to three
+  (`rust`, `docs`, `history`), split by *environment* rather than by
+  individual check. `cargo fmt`/`clippy`/`test`/`build` previously ran as
+  four separate runners that each recompiled the whole workspace from a
+  cold cache; they now share one `target/` directory in a single job. No
+  check was removed and no action version changed — the same commands run
+  against the same pinned action SHAs.
+- The former `secret-scan` job is now `history`, and gained a DCO
+  sign-off check: it verifies every non-merge commit in a pull request
+  carries a `Signed-off-by` trailer matching its author. It reuses the
+  full-history checkout that the secret scan already needed, so it costs
+  no extra runner minutes. Bot-authored pull requests are exempted on
+  `github.event.pull_request.user.login`, which GitHub sets — never on
+  commit author metadata, which a contributor controls.
+- `.github/dependabot.yml`: updates are now grouped — all GitHub Actions
+  bumps arrive as one pull request, and Cargo minor/patch bumps as
+  another. Major Cargo bumps are deliberately left ungrouped so a
+  breaking change gets reviewed on its own.
+- `.githooks/pre-push` plus `make hooks` / `task hooks` — an opt-in local
+  gate running `cargo fmt --check`, `cargo clippy -D warnings`, and
+  `cargo test` before each push. It skips itself when `cargo` is absent,
+  and honours `WETECHI_SKIP_PREPUSH=1`. Documented in
+  [docs/development/local-setup.md](docs/development/local-setup.md).
+- `.gitattributes` — pins shell scripts and `.githooks/**` to LF endings.
+  Under `core.autocrlf=true` on Windows the hook would otherwise be
+  checked out with a CRLF shebang and fail to execute on Linux or WSL.
+
 ### Added — Phase 3: Aggregation and Direction Classification
 
 - `crates/common`: `NormalizedFlow` — protocol-independent flow record
