@@ -114,9 +114,31 @@ end-to-end verified against a real running collector process.
   documented, not measured (see
   [operations/capacity-planning.md](operations/capacity-planning.md)).
 
-## Immediately Next: Phase 4 Preview
+## Phase 4: Detection Engine — Implemented
 
-Detection engine: static threshold detection, per-host/per-prefix/total-
-hostgroup detection scopes, hysteresis, cooldown, dry-run and alert-only
-modes, tests, documentation. **Not started** — requires review of
-Phase 3 first, per master prompt §29.
+Static threshold detection across host, prefix, /24, and hostgroup
+scopes; direction-aware windowed counters; hysteresis and the four
+timers (`triggerFor`, `clearFor`, `holdDown`, `cooldown`); deterministic
+policy precedence; explainable detection events with stable identity;
+observe, alert-only, and dry-run execution modes; a ClickHouse analytics
+table for events; Prometheus metrics; and traffic patterns in
+`flow-replay` that exercise the whole path.
+
+See [detection-engine.md](architecture/detection-engine.md) and
+ADRs [0007](architecture/decisions/0007-detection-engine-cannot-mitigate.md),
+[0008](architecture/decisions/0008-detection-policy-configuration.md),
+[0009](architecture/decisions/0009-detection-event-identity.md), and
+[0010](architecture/decisions/0010-detector-owns-its-windowed-counters.md).
+
+**The detection engine cannot mitigate**, and that is structural rather
+than configured — see
+[detection-safety.md](security/detection-safety.md).
+
+Not covered, and deliberately: incident lifecycle (Phase 5),
+notifications (Phase 6), and any form of mitigation (Phase 7).
+
+## Immediately Next: Phase 5 Preview
+
+Incident lifecycle: grouping related detections into incidents, incident
+state, acknowledgement, and history. **Not started** — requires review of
+Phase 4 first, per master prompt §29.

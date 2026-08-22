@@ -1,6 +1,6 @@
 # Architecture Decision Records (ADRs)
 
-Status: Phase 3 — five decisions recorded.
+Status: Phase 4 — ten decisions recorded.
 
 ## Purpose
 
@@ -46,3 +46,7 @@ yet:
 | [0004](0004-collector-aggregator-event-transport.md) | Collector-to-Aggregator Event Transport: In-Process Channel (NATS Deferred) | Accepted |
 | [0005](0005-clickhouse-batching-and-retry.md) | ClickHouse Batching and Retry Behavior | Accepted |
 | [0006](0006-contribution-licensing-dco-not-cla.md) | Contribution Licensing: DCO Sign-Off, No CLA | Accepted |
+| [0007](0007-detection-engine-cannot-mitigate.md) | The Detection Engine Cannot Mitigate | Accepted |
+| [0008](0008-detection-policy-configuration.md) | Detection Policy Configuration: JSON, Not YAML | Accepted |
+| [0009](0009-detection-event-identity.md) | Detection Event Identity and Deduplication | Accepted |
+| [0010](0010-detector-owns-its-windowed-counters.md) | The Detector Keeps Its Own Windowed Counters | Accepted |
