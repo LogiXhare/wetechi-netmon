@@ -5,6 +5,7 @@ members = [
     "crates/protocol-ipfix",
     "crates/classifier",
     "crates/aggregator",
+    "crates/detector",
     "crates/storage",
     "crates/collector",
     "tools/flow-replay",

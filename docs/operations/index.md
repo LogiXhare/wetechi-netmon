@@ -8,3 +8,10 @@ guides will live here. Populated starting with the phases that introduce
 the corresponding capability (backup/restore and upgrade/rollback land in
 Phase 9; runbooks land alongside Phase 5 incident management and Phase 7
 BGP mitigation).
+
+Written so far:
+
+- [Aggregator Monitoring](aggregator-monitoring.md) — Phase 3
+- [Detection Monitoring](detection-monitoring.md) — Phase 4: the metrics,
+  what to alert on, and the ClickHouse queries worth having
+- [Capacity Planning](capacity-planning.md)

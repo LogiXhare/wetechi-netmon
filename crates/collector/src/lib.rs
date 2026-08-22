@@ -16,6 +16,7 @@
 
 pub mod clickhouse_export;
 pub mod config;
+pub mod detection;
 pub mod exporter;
 pub mod metrics;
 pub mod metrics_server;
@@ -25,6 +26,8 @@ pub mod pipeline;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use std::time::SystemTime;
 
 use tokio::net::UdpSocket;
 use wetechinetmon_classifier::{build_registry, classify, Direction};
@@ -56,6 +59,7 @@ const CLICKHOUSE_EXPORT_INTERVAL: Duration = Duration::from_secs(15);
 pub async fn run(config: Config) -> std::io::Result<()> {
     let (metrics, registry) =
         Metrics::new().expect("metric registration should never collide at startup");
+    let metrics_registry = registry.clone();
     let registry = Arc::new(registry);
 
     let metrics_addr = config.metrics_bind;
@@ -103,6 +107,67 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         Instant::now(),
     );
 
+    // Detection is off unless a policy document is configured. A
+    // failure to read or compile it disables detection for this run
+    // rather than stopping the collector: decode/normalize/aggregate
+    // stays useful, and a collector that refuses to start over a typo in
+    // one policy is a collector that loses telemetry to a config error.
+    let mut detection = match &config.detection_policy_file {
+        Some(path) => match detection::load_policy_file(path) {
+            Ok(policies) => {
+                let count = policies.policies.len();
+                let clickhouse_sink = config.clickhouse_url.as_ref().map(|_| {
+                    Arc::new(detection::ClickHouseEventSink::new(
+                        config.detection_event_buffer,
+                    ))
+                });
+                match detection::DetectionPrometheusMetrics::new(&metrics_registry) {
+                    Ok(detection_metrics) => {
+                        tracing::info!(path, policies = count, "detection engine enabled");
+                        Some(detection::DetectionStage::new(
+                            detection::DetectionStageConfig {
+                                window: wetechinetmon_detector::WindowConfig {
+                                    window: Duration::from_secs(config.detection_window_secs),
+                                    max_hosts: config.detection_max_scopes,
+                                    max_networks: config.detection_max_scopes,
+                                    max_slash24: config.detection_max_scopes,
+                                    max_hostgroups: config.max_hostgroups,
+                                },
+                                engine: wetechinetmon_detector::EngineConfig {
+                                    state: wetechinetmon_detector::StateTableConfig {
+                                        max_entries: config.detection_max_scopes,
+                                        idle_ttl: Duration::from_secs(config.inactivity_ttl_secs),
+                                        stale_after: Duration::from_secs(
+                                            config.detection_stale_secs,
+                                        ),
+                                    },
+                                },
+                                event_buffer: config.detection_event_buffer,
+                            },
+                            policies,
+                            Arc::new(detection_metrics),
+                            clickhouse_sink,
+                            Instant::now(),
+                        ))
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "detection metrics failed to register; detection disabled for this run");
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!(path, error = %err, "detection policies could not be loaded; detection disabled for this run");
+                None
+            }
+        },
+        None => {
+            tracing::info!("no detection policy file configured; detection is off");
+            None
+        }
+    };
+    let mut detection_interval = tokio::time::interval(detection::TICK_INTERVAL);
+
     let (tx, mut rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(config.queue_capacity);
 
     let receiver_task = tokio::spawn(receive_loop(
@@ -146,7 +211,14 @@ pub async fn run(config: Config) -> std::io::Result<()> {
                 match received {
                     Some((bytes, src)) => {
                         metrics.queue_depth.dec();
-                        process_datagram(&bytes, src, &mut exporters, &mut pipeline, &metrics);
+                        process_datagram(
+                            &bytes,
+                            src,
+                            &mut exporters,
+                            &mut pipeline,
+                            detection.as_mut(),
+                            &metrics,
+                        );
                     }
                     None => {
                         tracing::warn!("UDP receive task ended; stopping collector");
@@ -161,11 +233,31 @@ pub async fn run(config: Config) -> std::io::Result<()> {
                     tracing::debug!(expired, "swept inactive aggregation entries");
                 }
             }
+            _ = detection_interval.tick(), if detection.is_some() => {
+                if let Some(stage) = detection.as_mut() {
+                    let report = stage.tick(Instant::now(), SystemTime::now());
+                    if report.events_built > 0 {
+                        tracing::debug!(
+                            opened = report.detections_opened,
+                            closed = report.detections_closed,
+                            built = report.events_built,
+                            published = report.events_published,
+                            failed = report.events_failed,
+                            "detection cycle produced events"
+                        );
+                    }
+                }
+            }
             _ = clickhouse_interval.tick(), if clickhouse_exporters.is_some() => {
                 if let Some(exporters) = clickhouse_exporters.as_mut() {
                     let now = Instant::now();
                     let ts = time::OffsetDateTime::now_utc();
                     exporters.snapshot(&pipeline.aggregator, ts);
+                    if let Some(stage) = detection.as_ref() {
+                        for row in stage.drain_rows() {
+                            exporters.push_detection_event(row);
+                        }
+                    }
                     let report = exporters.tick(now).await;
                     metrics.clickhouse_rows_written_total.inc_by(report.rows_written as u64);
                     metrics.clickhouse_write_failures_total.inc_by(report.write_failures as u64);
@@ -253,6 +345,7 @@ fn process_datagram(
     src: std::net::SocketAddr,
     registry: &mut ExporterRegistry,
     pipeline: &mut Pipeline,
+    mut detection: Option<&mut detection::DetectionStage>,
     metrics: &Metrics,
 ) {
     // Peek the header first (cheap — 16 bytes, no allocation) purely to
@@ -352,6 +445,14 @@ fn process_datagram(
                                     }
 
                                     let now = Instant::now();
+                                    if let Some(stage) = detection.as_deref_mut() {
+                                        stage.ingest(
+                                            &pipeline.prefixes,
+                                            &outcome.flow,
+                                            &classification,
+                                            now,
+                                        );
+                                    }
                                     let ingest_report = pipeline.aggregator.ingest(
                                         &outcome.flow,
                                         &classification,
@@ -477,6 +578,7 @@ mod tests {
             addr(),
             &mut exporters,
             &mut pipeline,
+            None,
             &metrics,
         );
         assert_eq!(metrics.parser_failures_total.get(), 1);
@@ -493,7 +595,7 @@ mod tests {
         let set = template_set_bytes(&[(8, 4), (12, 4), (1, 8), (2, 8)]);
         let mut msg1 = message_header_bytes((16 + set.len()) as u16);
         msg1.extend_from_slice(&set);
-        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, None, &metrics);
         assert_eq!(metrics.parser_failures_total.get(), 0);
 
         // Data: source 203.0.113.1 (external) -> destination 10.0.0.5 (local) => Incoming.
@@ -509,7 +611,7 @@ mod tests {
         let mut msg2 = message_header_bytes((16 + data_set.len()) as u16);
         msg2.extend_from_slice(&data_set);
 
-        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, None, &metrics);
 
         assert_eq!(metrics.normalized_flows_total.get(), 1);
         assert_eq!(metrics.incomplete_records_total.get(), 0);
@@ -524,6 +626,201 @@ mod tests {
         assert_eq!(pipeline.aggregator.active_hosts(), 2); // source + destination
     }
 
+    /// The whole Phase 4 chain, from bytes on the wire to a detection
+    /// event: synthetic IPFIX datagram, decoded, normalized, direction
+    /// classified, aggregated, windowed, evaluated against a policy, and
+    /// emitted as a dry-run event.
+    ///
+    /// It asserts on the event's contents rather than merely that one
+    /// appeared, because every field here is something an operator acts
+    /// on at three in the morning and every one of them crosses a crate
+    /// boundary to get there.
+    #[test]
+    fn synthetic_ipfix_produces_a_dry_run_detection_event_end_to_end() {
+        use std::sync::Arc;
+        use wetechinetmon_detector::{ActionTaken, ScopeType, TrafficDirection};
+
+        const POLICY_DOC: &str = r#"{
+          "schemaVersion": 1,
+          "tenants": [ { "tenant": "wetechi", "prefixes": ["10.0.0.0/8"] } ],
+          "policies": [
+            {
+              "id": "e2e-host-inbound",
+              "name": "end-to-end host inbound bps",
+              "tenant": "wetechi",
+              "scopeType": "host",
+              "direction": "incoming",
+              "window": "1s",
+              "thresholds": { "bps": "500k" },
+              "triggerFor": "2s",
+              "clearFor": "2s",
+              "cooldown": "10s",
+              "severity": "critical",
+              "executionMode": "dryRun"
+            }
+          ]
+        }"#;
+
+        let (metrics, registry) = Metrics::new().unwrap();
+        // The real Prometheus implementation, on the collector's own
+        // registry, so the metric assertions below exercise the
+        // production path rather than a test double.
+        let detector_metrics =
+            Arc::new(detection::DetectionPrometheusMetrics::new(&registry).expect("registers"));
+        let sink = Arc::new(detection::ClickHouseEventSink::new(64));
+        let policies = wetechinetmon_detector::load_policies(POLICY_DOC).expect("valid policies");
+
+        let start = Instant::now();
+        let mut stage = detection::DetectionStage::new(
+            detection::DetectionStageConfig {
+                window: wetechinetmon_detector::WindowConfig {
+                    window: Duration::from_secs(1),
+                    ..wetechinetmon_detector::WindowConfig::default()
+                },
+                engine: wetechinetmon_detector::EngineConfig::default(),
+                event_buffer: 64,
+            },
+            policies,
+            detector_metrics.clone(),
+            Some(sink.clone()),
+            start,
+        );
+
+        let mut exporters = ExporterRegistry::new();
+        let mut pipeline = test_pipeline();
+
+        // Template: sourceIPv4Address(8,4), destinationIPv4Address(12,4),
+        // octetDeltaCount(1,8), packetDeltaCount(2,8), protocolIdentifier(4,1).
+        let set = template_set_bytes(&[(8, 4), (12, 4), (1, 8), (2, 8), (4, 1)]);
+        let mut template_msg = message_header_bytes((16 + set.len()) as u16);
+        template_msg.extend_from_slice(&set);
+        process_datagram(
+            &template_msg,
+            addr(),
+            &mut exporters,
+            &mut pipeline,
+            Some(&mut stage),
+            &metrics,
+        );
+        assert_eq!(metrics.parser_failures_total.get(), 0);
+
+        // 125_000 bytes in a one-second window is 1_000_000 bps, twice
+        // the policy threshold.
+        let mut record_bytes = Vec::new();
+        record_bytes.extend_from_slice(&[203, 0, 113, 1]); // external source
+        record_bytes.extend_from_slice(&[10, 0, 0, 5]); // local destination
+        record_bytes.extend_from_slice(&125_000u64.to_be_bytes());
+        record_bytes.extend_from_slice(&100u64.to_be_bytes());
+        record_bytes.push(17); // UDP
+        let mut data_set = Vec::new();
+        data_set.extend_from_slice(&256u16.to_be_bytes());
+        data_set.extend_from_slice(&((4 + record_bytes.len()) as u16).to_be_bytes());
+        data_set.extend_from_slice(&record_bytes);
+        let mut data_msg = message_header_bytes((16 + data_set.len()) as u16);
+        data_msg.extend_from_slice(&data_set);
+
+        // Four one-second windows above threshold. The first opens
+        // PendingTrigger; the third satisfies the two-second triggerFor.
+        let mut opened = 0;
+        for second in 0..4u64 {
+            process_datagram(
+                &data_msg,
+                addr(),
+                &mut exporters,
+                &mut pipeline,
+                Some(&mut stage),
+                &metrics,
+            );
+            let report = stage.tick(
+                start + Duration::from_secs(second + 1),
+                std::time::SystemTime::UNIX_EPOCH,
+            );
+            opened += report.detections_opened;
+        }
+
+        // --- the Phase 3 half still behaves ---
+        assert_eq!(metrics.normalized_flows_total.get(), 4);
+        assert_eq!(metrics.incomplete_records_total.get(), 0);
+        assert_eq!(
+            metrics
+                .classified_flows_by_direction_total
+                .with_label_values(&["incoming"])
+                .get(),
+            4
+        );
+
+        // --- exactly one detection opened ---
+        assert_eq!(
+            opened, 1,
+            "a sustained flood must open exactly one detection"
+        );
+        assert_eq!(stage.open_detections(), 1);
+
+        // --- the event says what it should ---
+        let rows = stage.drain_rows();
+        assert_eq!(rows.len(), 1, "one start event should have been stored");
+        let row = &rows[0];
+        assert_eq!(row.kind, "started");
+        assert_eq!(row.tenant, "wetechi");
+        assert_eq!(row.scope_type, ScopeType::Host.as_str());
+        assert_eq!(row.target, "10.0.0.5");
+        assert_eq!(row.direction, TrafficDirection::Incoming.as_str());
+        assert_eq!(row.policy_id, "e2e-host-inbound");
+        assert_eq!(row.policy_version, 1);
+        assert_eq!(row.severity, "critical");
+        assert_eq!(row.execution_mode, "dryRun");
+        assert_eq!(row.action, ActionTaken::DryRun.as_str());
+        assert_eq!(row.state, "active");
+        assert_eq!(row.previous_state, "pendingTrigger");
+        assert_eq!(row.reason, "triggerSustained");
+        assert_eq!(row.window_ms, 1000);
+        assert_eq!(row.family, 4);
+
+        // Observed and threshold values, and the reason list.
+        assert_eq!(row.bps, 1_000_000, "125000 bytes over one second");
+        assert_eq!(row.pps, 100);
+        assert_eq!(row.udp_bps, 1_000_000, "the record declared UDP");
+        assert_eq!(row.top_metric, "bps");
+        assert_eq!(row.top_observed, 1_000_000);
+        assert_eq!(row.top_threshold, 500_000);
+        assert_eq!(row.top_ratio_percent, 200);
+        assert!(
+            row.matched_json.contains("\"bps\"") && row.matched_json.contains("1000000"),
+            "every matching reason must be preserved: {}",
+            row.matched_json
+        );
+        assert_eq!(row.flows_observed, 1);
+        assert_eq!(row.exporters_observed, 1);
+
+        // --- and above all, that nothing was done about it ---
+        assert_eq!(
+            row.executed, 0,
+            "a dry-run event must record that no action was taken"
+        );
+
+        // --- the detector's metrics moved, as scraped from /metrics ---
+        let text = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encodes");
+        for expected in [
+            "wetechinetmon_detector_events_total{kind=\"started\"} 1",
+            "wetechinetmon_detector_events_published_total{kind=\"started\"} 1",
+            "wetechinetmon_detector_scopes_in_state{state=\"active\"} 1",
+            "wetechinetmon_detector_snapshots_evaluated_total{scope_type=\"host\"} 4",
+            "wetechinetmon_detector_state_transitions_total{from=\"pendingTrigger\",reason=\"triggerSustained\",to=\"active\"} 1",
+        ] {
+            assert!(text.contains(expected), "missing from /metrics: {expected}");
+        }
+        assert!(
+            !text.contains("wetechinetmon_detector_events_failed_total"),
+            "no publish should have failed"
+        );
+        assert!(
+            text.contains("wetechinetmon_collector_normalized_flows_total 4"),
+            "the Phase 3 metrics must still be on the same endpoint"
+        );
+    }
+
     #[test]
     fn a_record_missing_addresses_increments_incomplete_records() {
         let (metrics, _registry) = Metrics::new().unwrap();
@@ -534,7 +831,7 @@ mod tests {
         let set = template_set_bytes(&[(1, 8)]);
         let mut msg1 = message_header_bytes((16 + set.len()) as u16);
         msg1.extend_from_slice(&set);
-        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, None, &metrics);
 
         let record_bytes = 100u64.to_be_bytes().to_vec();
         let mut data_set = Vec::new();
@@ -544,7 +841,7 @@ mod tests {
         let mut msg2 = message_header_bytes((16 + data_set.len()) as u16);
         msg2.extend_from_slice(&data_set);
 
-        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, None, &metrics);
         assert_eq!(metrics.incomplete_records_total.get(), 1);
         assert_eq!(metrics.normalized_flows_total.get(), 0);
     }
@@ -557,11 +854,11 @@ mod tests {
 
         let mut msg1 = message_header_bytes(16);
         msg1[8..12].copy_from_slice(&100u32.to_be_bytes());
-        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, None, &metrics);
 
         let mut msg2 = message_header_bytes(16);
         msg2[8..12].copy_from_slice(&3u32.to_be_bytes());
-        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, None, &metrics);
 
         assert_eq!(metrics.exporter_restarts_total.get(), 1);
     }
@@ -579,7 +876,7 @@ mod tests {
         let mut msg = message_header_bytes((16 + data_set.len()) as u16);
         msg.extend_from_slice(&data_set);
 
-        process_datagram(&msg, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg, addr(), &mut exporters, &mut pipeline, None, &metrics);
         assert_eq!(metrics.unknown_templates_total.get(), 1);
         assert_eq!(metrics.parser_failures_total.get(), 0);
     }
@@ -598,7 +895,7 @@ mod tests {
         let set = template_set_bytes(&[(8, 4), (12, 4), (1, 8), (2, 8)]);
         let mut msg1 = message_header_bytes((16 + set.len()) as u16);
         msg1.extend_from_slice(&set);
-        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg1, addr(), &mut exporters, &mut pipeline, None, &metrics);
 
         let mut record_bytes = Vec::new();
         record_bytes.extend_from_slice(&[203, 0, 113, 1]);
@@ -611,7 +908,7 @@ mod tests {
         data_set.extend_from_slice(&record_bytes);
         let mut msg2 = message_header_bytes((16 + data_set.len()) as u16);
         msg2.extend_from_slice(&data_set);
-        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, &metrics);
+        process_datagram(&msg2, addr(), &mut exporters, &mut pipeline, None, &metrics);
 
         assert_eq!(metrics.prefix_lookup_failures_total.get(), 1);
         assert_eq!(

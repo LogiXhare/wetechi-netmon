@@ -10,6 +10,7 @@ pub mod writer;
 
 pub use batch::{BatchConfig, BatchQueue};
 pub use retry::{EnqueueOutcome, RequeueOutcome, RetryConfig, RetryQueue};
+pub use schema::DetectionEventRow;
 pub use writer::{run_migrations, ClickHouseWriter, FlushReport};
 
 pub use clickhouse::Client;

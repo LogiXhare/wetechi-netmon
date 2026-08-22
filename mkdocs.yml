@@ -61,11 +61,13 @@ nav:
       - Technology Options: technology-options.md
       - Aggregation: architecture/aggregation.md
       - Direction Classification: architecture/direction-classification.md
+      - Detection Engine: architecture/detection-engine.md
       - Decision Records: architecture/decisions/index.md
   - Security:
       - Overview: security/index.md
       - Security Principles: security-principles.md
       - Security Policy: security/security-policy.md
+      - Detection Safety: security/detection-safety.md
   - Licensing:
       - Dependency License Matrix: dependency-license-matrix.md
       - License Recommendation: license-recommendation.md
@@ -78,6 +80,7 @@ nav:
       - Overview: configuration/index.md
       - Local Prefixes: configuration/prefixes.md
       - Aggregation: configuration/aggregation.md
+      - Detection Policies: configuration/detection-policies.md
   - Integrations:
       - Overview: integrations/index.md
       - IPFIX Collector Guide: integrations/ipfix-collector.md
@@ -85,6 +88,7 @@ nav:
   - Operations:
       - Overview: operations/index.md
       - Aggregator Monitoring: operations/aggregator-monitoring.md
+      - Detection Monitoring: operations/detection-monitoring.md
       - Capacity Planning: operations/capacity-planning.md
   - API Reference: api/index.md
   - Commercial: commercial/index.md
@@ -93,4 +97,5 @@ nav:
       - Local Setup: development/local-setup.md
       - Contributing: development/contributing.md
       - Flow Replay Tool: development/flow-replay.md
+      - Testing Detection: development/detection-testing.md
       - Engineering Follow-Ups: development/follow-ups.md

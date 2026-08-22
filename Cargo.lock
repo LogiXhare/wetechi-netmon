@@ -1263,6 +1263,7 @@ dependencies = [
  "wetechinetmon-aggregator",
  "wetechinetmon-classifier",
  "wetechinetmon-common",
+ "wetechinetmon-detector",
  "wetechinetmon-protocol-ipfix",
  "wetechinetmon-storage",
 ]
@@ -1274,6 +1275,20 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "wetechinetmon-detector"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracing",
+ "wetechinetmon-aggregator",
+ "wetechinetmon-classifier",
+ "wetechinetmon-common",
 ]
 
 [[package]]
@@ -1298,12 +1313,14 @@ version = "0.0.0"
 dependencies = [
  "clickhouse",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "time",
  "tokio",
  "tracing",
  "wetechinetmon-aggregator",
  "wetechinetmon-common",
+ "wetechinetmon-detector",
 ]
 
 [[package]]

@@ -9,3 +9,9 @@ principles already exist at [../security-principles.md](../security-principles.m
 Phase 9 (production security review).
 
 For reporting a vulnerability, see [Security Policy](security-policy.md).
+
+Component security notes:
+
+- [Detection Safety](detection-safety.md) — what the detection engine
+  can and cannot do, which of those claims are structural, and what an
+  attacker can do *to* the detector
