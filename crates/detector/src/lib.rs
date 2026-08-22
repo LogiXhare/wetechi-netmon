@@ -17,6 +17,7 @@ pub mod input;
 pub mod policy;
 pub mod precedence;
 pub mod state;
+pub mod window;
 
 pub use clock::{Clock, SystemClock, TestClock};
 pub use evaluate::{evaluate, Evaluation, MatchedReason, SkipReason, SkippedMetric};
@@ -38,3 +39,4 @@ pub use state::{
     StateTableConfig, StateTableStats, StateTransition, StepIgnored, StepOutcome, Suppression,
     TransitionReason,
 };
+pub use window::{DetectionWindows, WindowConfig, WindowStats, UNATTRIBUTED_TENANT};
