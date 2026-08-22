@@ -626,6 +626,201 @@ mod tests {
         assert_eq!(pipeline.aggregator.active_hosts(), 2); // source + destination
     }
 
+    /// The whole Phase 4 chain, from bytes on the wire to a detection
+    /// event: synthetic IPFIX datagram, decoded, normalized, direction
+    /// classified, aggregated, windowed, evaluated against a policy, and
+    /// emitted as a dry-run event.
+    ///
+    /// It asserts on the event's contents rather than merely that one
+    /// appeared, because every field here is something an operator acts
+    /// on at three in the morning and every one of them crosses a crate
+    /// boundary to get there.
+    #[test]
+    fn synthetic_ipfix_produces_a_dry_run_detection_event_end_to_end() {
+        use std::sync::Arc;
+        use wetechinetmon_detector::{ActionTaken, ScopeType, TrafficDirection};
+
+        const POLICY_DOC: &str = r#"{
+          "schemaVersion": 1,
+          "tenants": [ { "tenant": "wetechi", "prefixes": ["10.0.0.0/8"] } ],
+          "policies": [
+            {
+              "id": "e2e-host-inbound",
+              "name": "end-to-end host inbound bps",
+              "tenant": "wetechi",
+              "scopeType": "host",
+              "direction": "incoming",
+              "window": "1s",
+              "thresholds": { "bps": "500k" },
+              "triggerFor": "2s",
+              "clearFor": "2s",
+              "cooldown": "10s",
+              "severity": "critical",
+              "executionMode": "dryRun"
+            }
+          ]
+        }"#;
+
+        let (metrics, registry) = Metrics::new().unwrap();
+        // The real Prometheus implementation, on the collector's own
+        // registry, so the metric assertions below exercise the
+        // production path rather than a test double.
+        let detector_metrics =
+            Arc::new(detection::DetectionPrometheusMetrics::new(&registry).expect("registers"));
+        let sink = Arc::new(detection::ClickHouseEventSink::new(64));
+        let policies = wetechinetmon_detector::load_policies(POLICY_DOC).expect("valid policies");
+
+        let start = Instant::now();
+        let mut stage = detection::DetectionStage::new(
+            detection::DetectionStageConfig {
+                window: wetechinetmon_detector::WindowConfig {
+                    window: Duration::from_secs(1),
+                    ..wetechinetmon_detector::WindowConfig::default()
+                },
+                engine: wetechinetmon_detector::EngineConfig::default(),
+                event_buffer: 64,
+            },
+            policies,
+            detector_metrics.clone(),
+            Some(sink.clone()),
+            start,
+        );
+
+        let mut exporters = ExporterRegistry::new();
+        let mut pipeline = test_pipeline();
+
+        // Template: sourceIPv4Address(8,4), destinationIPv4Address(12,4),
+        // octetDeltaCount(1,8), packetDeltaCount(2,8), protocolIdentifier(4,1).
+        let set = template_set_bytes(&[(8, 4), (12, 4), (1, 8), (2, 8), (4, 1)]);
+        let mut template_msg = message_header_bytes((16 + set.len()) as u16);
+        template_msg.extend_from_slice(&set);
+        process_datagram(
+            &template_msg,
+            addr(),
+            &mut exporters,
+            &mut pipeline,
+            Some(&mut stage),
+            &metrics,
+        );
+        assert_eq!(metrics.parser_failures_total.get(), 0);
+
+        // 125_000 bytes in a one-second window is 1_000_000 bps, twice
+        // the policy threshold.
+        let mut record_bytes = Vec::new();
+        record_bytes.extend_from_slice(&[203, 0, 113, 1]); // external source
+        record_bytes.extend_from_slice(&[10, 0, 0, 5]); // local destination
+        record_bytes.extend_from_slice(&125_000u64.to_be_bytes());
+        record_bytes.extend_from_slice(&100u64.to_be_bytes());
+        record_bytes.push(17); // UDP
+        let mut data_set = Vec::new();
+        data_set.extend_from_slice(&256u16.to_be_bytes());
+        data_set.extend_from_slice(&((4 + record_bytes.len()) as u16).to_be_bytes());
+        data_set.extend_from_slice(&record_bytes);
+        let mut data_msg = message_header_bytes((16 + data_set.len()) as u16);
+        data_msg.extend_from_slice(&data_set);
+
+        // Four one-second windows above threshold. The first opens
+        // PendingTrigger; the third satisfies the two-second triggerFor.
+        let mut opened = 0;
+        for second in 0..4u64 {
+            process_datagram(
+                &data_msg,
+                addr(),
+                &mut exporters,
+                &mut pipeline,
+                Some(&mut stage),
+                &metrics,
+            );
+            let report = stage.tick(
+                start + Duration::from_secs(second + 1),
+                std::time::SystemTime::UNIX_EPOCH,
+            );
+            opened += report.detections_opened;
+        }
+
+        // --- the Phase 3 half still behaves ---
+        assert_eq!(metrics.normalized_flows_total.get(), 4);
+        assert_eq!(metrics.incomplete_records_total.get(), 0);
+        assert_eq!(
+            metrics
+                .classified_flows_by_direction_total
+                .with_label_values(&["incoming"])
+                .get(),
+            4
+        );
+
+        // --- exactly one detection opened ---
+        assert_eq!(
+            opened, 1,
+            "a sustained flood must open exactly one detection"
+        );
+        assert_eq!(stage.open_detections(), 1);
+
+        // --- the event says what it should ---
+        let rows = stage.drain_rows();
+        assert_eq!(rows.len(), 1, "one start event should have been stored");
+        let row = &rows[0];
+        assert_eq!(row.kind, "started");
+        assert_eq!(row.tenant, "wetechi");
+        assert_eq!(row.scope_type, ScopeType::Host.as_str());
+        assert_eq!(row.target, "10.0.0.5");
+        assert_eq!(row.direction, TrafficDirection::Incoming.as_str());
+        assert_eq!(row.policy_id, "e2e-host-inbound");
+        assert_eq!(row.policy_version, 1);
+        assert_eq!(row.severity, "critical");
+        assert_eq!(row.execution_mode, "dryRun");
+        assert_eq!(row.action, ActionTaken::DryRun.as_str());
+        assert_eq!(row.state, "active");
+        assert_eq!(row.previous_state, "pendingTrigger");
+        assert_eq!(row.reason, "triggerSustained");
+        assert_eq!(row.window_ms, 1000);
+        assert_eq!(row.family, 4);
+
+        // Observed and threshold values, and the reason list.
+        assert_eq!(row.bps, 1_000_000, "125000 bytes over one second");
+        assert_eq!(row.pps, 100);
+        assert_eq!(row.udp_bps, 1_000_000, "the record declared UDP");
+        assert_eq!(row.top_metric, "bps");
+        assert_eq!(row.top_observed, 1_000_000);
+        assert_eq!(row.top_threshold, 500_000);
+        assert_eq!(row.top_ratio_percent, 200);
+        assert!(
+            row.matched_json.contains("\"bps\"") && row.matched_json.contains("1000000"),
+            "every matching reason must be preserved: {}",
+            row.matched_json
+        );
+        assert_eq!(row.flows_observed, 1);
+        assert_eq!(row.exporters_observed, 1);
+
+        // --- and above all, that nothing was done about it ---
+        assert_eq!(
+            row.executed, 0,
+            "a dry-run event must record that no action was taken"
+        );
+
+        // --- the detector's metrics moved, as scraped from /metrics ---
+        let text = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encodes");
+        for expected in [
+            "wetechinetmon_detector_events_total{kind=\"started\"} 1",
+            "wetechinetmon_detector_events_published_total{kind=\"started\"} 1",
+            "wetechinetmon_detector_scopes_in_state{state=\"active\"} 1",
+            "wetechinetmon_detector_snapshots_evaluated_total{scope_type=\"host\"} 4",
+            "wetechinetmon_detector_state_transitions_total{from=\"pendingTrigger\",reason=\"triggerSustained\",to=\"active\"} 1",
+        ] {
+            assert!(text.contains(expected), "missing from /metrics: {expected}");
+        }
+        assert!(
+            !text.contains("wetechinetmon_detector_events_failed_total"),
+            "no publish should have failed"
+        );
+        assert!(
+            text.contains("wetechinetmon_collector_normalized_flows_total 4"),
+            "the Phase 3 metrics must still be on the same endpoint"
+        );
+    }
+
     #[test]
     fn a_record_missing_addresses_increments_incomplete_records() {
         let (metrics, _registry) = Metrics::new().unwrap();
