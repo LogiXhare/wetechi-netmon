@@ -15,6 +15,7 @@ pub mod evaluate;
 pub mod input;
 pub mod policy;
 pub mod precedence;
+pub mod state;
 
 pub use clock::{Clock, SystemClock, TestClock};
 pub use evaluate::{evaluate, Evaluation, MatchedReason, SkipReason, SkippedMetric};
@@ -27,3 +28,7 @@ pub use policy::{
     Severity, TenantPrefixes, Thresholds, WILDCARD_TENANT,
 };
 pub use precedence::{Candidate, PolicySet, PrecedenceReason, Selection};
+pub use state::{
+    DetectionState, Expiry, ScopeState, Signal, StateTable, StateTableConfig, StateTableStats,
+    StateTransition, StepIgnored, StepOutcome, Suppression, TransitionReason,
+};
