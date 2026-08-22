@@ -111,6 +111,20 @@ impl ActionTaken {
             ExecutionMode::DryRun => Some(ActionTaken::DryRun),
         }
     }
+
+    /// Whether anything was actually done to the traffic.
+    ///
+    /// Exhaustively `false`, and the match is deliberately not a
+    /// catch-all: a later phase adding a variant that *does* act has to
+    /// come here and say so, rather than inheriting `false` by default
+    /// and silently reporting a mitigation as having not happened.
+    pub fn executed(&self) -> bool {
+        match self {
+            ActionTaken::Observed => false,
+            ActionTaken::Alerted => false,
+            ActionTaken::DryRun => false,
+        }
+    }
 }
 
 /// The scope an event is about, flattened for consumers that cannot
@@ -182,6 +196,20 @@ pub struct DetectionEvent {
     pub flows_observed: u64,
     pub exporters_observed: u32,
     pub snapshots_in_detection: u64,
+
+    /// Whether anything was actually done to the traffic this event
+    /// describes.
+    ///
+    /// **Always `false` in Phase 4**, and structurally so: it is derived
+    /// from [`ActionTaken::executed`], and no `ActionTaken` variant
+    /// returns `true`. It is written onto every event anyway, because an
+    /// audit trail that states the fact is worth more than one where the
+    /// fact must be inferred from the absence of a field — a consumer
+    /// reading the JSON should not have to know which product version
+    /// could have acted.
+    ///
+    /// See ADR 0007 and docs/security/detection-safety.md.
+    pub executed: bool,
 
     /// One line, safe to put in a subject header or a chat message.
     pub summary: String,
@@ -333,6 +361,7 @@ impl EventFactory {
             exporters_observed: snapshot.exporters_observed,
             snapshots_in_detection: context.snapshots_in_detection,
 
+            executed: action.executed(),
             summary,
         })
     }
@@ -414,6 +443,7 @@ impl EventFactory {
             exporters_observed: 0,
             snapshots_in_detection: context.snapshots_in_detection,
 
+            executed: action.executed(),
             summary,
         })
     }
@@ -820,6 +850,90 @@ mod tests {
     #[test]
     fn a_disabled_mode_yields_no_action_and_therefore_no_event() {
         assert_eq!(ActionTaken::for_mode(ExecutionMode::Disabled), None);
+    }
+
+    #[test]
+    fn no_action_this_phase_can_produce_reports_itself_as_executed() {
+        for action in [
+            ActionTaken::Observed,
+            ActionTaken::Alerted,
+            ActionTaken::DryRun,
+        ] {
+            assert!(
+                !action.executed(),
+                "{} must not report itself as executed: this crate cannot act",
+                action.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn every_execution_mode_produces_an_unexecuted_event() {
+        for mode in [
+            ExecutionMode::Observe,
+            ExecutionMode::AlertOnly,
+            ExecutionMode::DryRun,
+        ] {
+            let mut draft = draft();
+            draft.execution_mode = mode;
+            let policy = draft.validate(&TenantPrefixes::new()).expect("valid");
+            let events = run(
+                &policy,
+                &[(0, 5_000_000), (2, 5_000_000), (3, 100), (5, 100)],
+            );
+            assert!(!events.is_empty(), "{} produced no events", mode.as_str());
+            for event in &events {
+                assert!(
+                    !event.executed,
+                    "{} produced an event claiming it acted on traffic",
+                    mode.as_str()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_dry_run_event_serializes_executed_as_false() {
+        let mut draft = draft();
+        draft.execution_mode = ExecutionMode::DryRun;
+        let policy = draft.validate(&TenantPrefixes::new()).expect("valid");
+        let events = run(&policy, &[(0, 5_000_000), (2, 5_000_000)]);
+        let value: serde_json::Value = serde_json::to_value(&events[0]).expect("serializes");
+        assert_eq!(value["action"], "dryRun");
+        assert_eq!(
+            value["executed"],
+            serde_json::Value::Bool(false),
+            "a dry-run event must state on the wire that nothing was done"
+        );
+    }
+
+    #[test]
+    fn a_closing_event_is_also_unexecuted() {
+        // The stale/withdrawn close path builds events without a
+        // snapshot and must carry the same guarantee.
+        let mut draft = draft();
+        draft.execution_mode = ExecutionMode::DryRun;
+        let policy = draft.validate(&TenantPrefixes::new()).expect("valid");
+        let factory = EventFactory::with_instance_id(1);
+        let mut table = StateTable::new(StateTableConfig::default());
+        let start = Instant::now();
+        for (offset, bps) in [(0u64, 5_000_000u64), (2, 5_000_000)] {
+            let snap = snapshot(start + Duration::from_secs(offset), bps);
+            let evaluation = evaluate(&policy, &snap);
+            table.step(&policy, &snap, &evaluation);
+        }
+        let expiries = table.sweep(start + Duration::from_secs(400), UNIX_EPOCH);
+        let expiry = expiries.first().expect("a stale close");
+        let record = crate::state::SignalRecord {
+            signal: crate::state::Signal::Ended,
+            transition: expiry.transition.clone().expect("a transition"),
+            detection: expiry.detection.clone().expect("a context"),
+        };
+        let event = factory
+            .build_closing(&record, &policy, UNIX_EPOCH)
+            .expect("an event");
+        assert_eq!(event.kind, EventKind::Ended);
+        assert!(!event.executed);
     }
 
     #[test]

@@ -79,6 +79,11 @@ and are then hard to change.
 - Every event records an `action` of `observed`, `alerted`, or `dryRun`,
   so an audit trail can never confuse "we would have blocked this" with
   "we blocked this".
+- Every event also records `executed`, derived from
+  `ActionTaken::executed()` and always `false`. That function matches
+  exhaustively rather than using a catch-all, so a later phase adding an
+  acting variant must come there and state it — it cannot inherit
+  `false` and quietly report a real mitigation as not having happened.
 
 ## Consequences
 

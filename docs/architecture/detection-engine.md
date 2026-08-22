@@ -224,6 +224,10 @@ Three identifiers doing three jobs — `event_id`, `detection_id`,
 `dedup_key` — plus a gapless `sequence`. See
 [ADR 0009](decisions/0009-detection-event-identity.md).
 
+Every event also carries `executed`, always `false` in this phase and
+structurally so — see
+[detection-safety.md](../security/detection-safety.md).
+
 Events reach a tracing sink always, and a ClickHouse sink
 (`wetechinetmon_detection_events`, 365-day retention) when ClickHouse
 export is configured. A fan-out sink attempts every sink even after one

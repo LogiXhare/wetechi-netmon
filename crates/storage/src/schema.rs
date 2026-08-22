@@ -231,6 +231,7 @@ const DDL_DETECTION_EVENTS: &str = "CREATE TABLE IF NOT EXISTS wetechinetmon_det
         flows_observed UInt64, \
         exporters_observed UInt32, \
         snapshots_in_detection UInt64, \
+        executed UInt8, \
         summary String \
      ) ENGINE = MergeTree \
      PARTITION BY toYYYYMMDD(timestamp) \
@@ -423,6 +424,11 @@ pub struct DetectionEventRow {
     pub flows_observed: u64,
     pub exporters_observed: u32,
     pub snapshots_in_detection: u64,
+    /// Whether anything was actually done to the traffic. Always `0` in
+    /// Phase 4 — the detector has no means to act. Stored anyway so an
+    /// auditor can filter on it rather than having to know which
+    /// product version could have acted.
+    pub executed: u8,
     pub summary: String,
 }
 
@@ -508,6 +514,7 @@ impl From<&wetechinetmon_detector::DetectionEvent> for DetectionEventRow {
             flows_observed: event.flows_observed,
             exporters_observed: event.exporters_observed,
             snapshots_in_detection: event.snapshots_in_detection,
+            executed: u8::from(event.executed),
             summary: event.summary.clone(),
         }
     }
@@ -627,6 +634,7 @@ mod tests {
             flows_observed: 42,
             exporters_observed: 2,
             snapshots_in_detection: 3,
+            executed: false,
             summary: "critical started".to_string(),
         };
 
@@ -658,6 +666,18 @@ mod tests {
         assert!(row.peak_json.contains("9000000"));
         assert_eq!(row.timestamp.unix_timestamp(), 1_700_000_002);
         assert_eq!(row.detected_at.unix_timestamp(), 1_700_000_000);
+        assert_eq!(
+            row.executed, 0,
+            "a Phase 4 row must never record that traffic was acted on"
+        );
+    }
+
+    #[test]
+    fn the_detection_events_table_records_whether_anything_was_executed() {
+        assert!(
+            DDL_DETECTION_EVENTS.contains("executed UInt8"),
+            "the audit table must carry the executed column"
+        );
     }
 
     #[test]

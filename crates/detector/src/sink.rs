@@ -291,6 +291,7 @@ mod tests {
             flows_observed: 0,
             exporters_observed: 0,
             snapshots_in_detection: 0,
+            executed: false,
             summary: "test".to_string(),
         }
     }

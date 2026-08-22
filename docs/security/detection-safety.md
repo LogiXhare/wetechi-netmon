@@ -24,6 +24,15 @@ did would be a single boolean. See
 A `DetectionEventSink` receives an event and returns. There is no return
 channel through which an action could be requested.
 
+Every event carries `executed`, and it is always `false`. It is derived
+from `ActionTaken::executed()`, whose match is exhaustive rather than a
+catch-all: a later phase adding a variant that *does* act has to come to
+that function and say so, rather than inheriting `false` by default and
+silently reporting a real mitigation as not having happened. The field is
+written onto every event and stored as a column in
+`wetechinetmon_detection_events`, so an auditor can filter on it without
+needing to know which product version could have acted.
+
 **What `dryRun` means today.** It differs from `alertOnly` only in the
 event's `action` field. There is no mitigation for it to describe. It is
 a placeholder for a later phase's audit trail, and it is documented as

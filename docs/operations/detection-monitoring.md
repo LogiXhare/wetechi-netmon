@@ -138,6 +138,12 @@ GROUP BY policy_id, policy_version, severity
 ORDER BY starts DESC;
 ```
 
+```sql
+-- Audit: confirm nothing has ever claimed to act on traffic.
+-- Must return zero rows for as long as mitigation is unimplemented.
+SELECT count() FROM wetechinetmon_detection_events WHERE executed != 0;
+```
+
 `matched_json` and `peak_json` hold the full reason lists as JSON text;
 query into them with ClickHouse's JSON functions when the flattened
 `top_*` columns are not enough.
