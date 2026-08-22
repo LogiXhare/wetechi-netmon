@@ -57,9 +57,44 @@ green.
 **Reviewable because** it is pure logic with no infrastructure, so review
 attention goes to the rules rather than to wiring.
 
+**5A is database-independent and dependency-free.** It may implement
+incident domain types, the seven-state lifecycle, correlation, reopen
+behaviour, the suppression attribute, severity and priority, assignment
+abstractions, timeline and audit types, in-memory repositories,
+idempotency and outbox *abstractions*, and unit and property tests.
+
+It must **not** add a PostgreSQL driver, an HTTP framework, migrations, a
+REST server, notification delivery, mitigation, BGP, or FlowSpec. If 5A
+needs any of those, the domain boundary in
+[ADR 0011](../architecture/decisions/0011-incident-domain-boundary.md)
+has been drawn wrong and that is the thing to fix, not the constraint.
+
 ## Milestone 5B — PostgreSQL persistence
 
-**BQ-7 resolved; gated on ADR 0018 crate selection (FU-25, FU-26).**
+**BQ-7 resolved architecturally; 5B does not start until every gate below
+is met.** BQ-7 approved the *capability*; these gates are what turns that
+into a specific, defensible set of crates.
+
+| # | Entry gate |
+|---|---|
+| 1 | UUID crate ADR (from [ADR 0013](../architecture/decisions/0013-incident-identity.md), still conditional) |
+| 2 | PostgreSQL client ADR |
+| 3 | Async runtime ADR — the runtime follows from the frameworks, never the reverse |
+| 4 | Connection-pool decision, whether in-driver or separate |
+| 5 | Migration-framework decision |
+| 6 | **Verified registry metadata** for every candidate — queried, not recalled |
+| 7 | Dependency licence review against the Apache-2.0 core |
+| 8 | `cargo tree` — a **measured** transitive closure, not an estimate |
+| 9 | `cargo audit` clean, with no open unfixed advisory |
+| 10 | **Windows build** — the primary development machine |
+| 11 | **Linux build** — the deployment target |
+| 12 | [Dependency licence matrix](../dependency-license-matrix.md) updated |
+| 13 | `NOTICE` reviewed and updated where a licence requires attribution |
+
+Gates 6 and 8 exist because every version and licence figure in these
+planning documents was written from knowledge rather than from a registry
+query. They are plausible and they are not evidence. See
+[ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md).
 
 Schema and forward-only migrations for all ten tables; the partial unique
 index; real repository implementations; optimistic concurrency;
@@ -90,6 +125,19 @@ that nothing was notified and nothing was mitigated.
 asserted against an allowlist.
 
 ## Milestone 5D — REST API
+
+**Entry gates**, all required before the first endpoint is written:
+
+| # | Entry gate |
+|---|---|
+| 1 | HTTP framework ADR, under the [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md) criteria |
+| 2 | OpenAPI approach — generated from code, or hand-maintained and tested against the implementation |
+| 3 | TLS boundary — terminated at the service or at a proxy, stated either way |
+| 4 | Authentication seam, so Phase 8 can replace the identity provider without touching the incident domain |
+| 5 | Authorization seam — `PermissionResolver`, per [ADR 0017](../architecture/decisions/0017-incident-community-enterprise-boundary.md) |
+| 6 | Rate-limiting approach and its storage |
+| 7 | API error model — RFC 9457 problem details with stable `error` codes |
+| 8 | Dependency review for the framework and its closure, gates 6–13 of 5B |
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
