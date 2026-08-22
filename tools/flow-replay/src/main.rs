@@ -13,11 +13,20 @@
 //! configured as a local prefix (see
 //! docs/development/flow-replay.md).
 
+mod patterns;
 mod synthetic;
 
+use patterns::Pattern;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use synthetic::IpProtocol;
 use tokio::net::UdpSocket;
+
+/// Data records sent per simulated second when a pattern is running.
+///
+/// Ten is enough that a one-second detection window sees a plausible
+/// flow count rather than a single enormous record, and few enough that
+/// a thirty-second run is three hundred datagrams, not thirty thousand.
+const RECORDS_PER_SECOND: u32 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scenario {
@@ -92,6 +101,15 @@ fn print_usage() {
         "  --sampling-rate N  advertise this sampling rate via an Options Template (default: none)"
     );
     eprintln!();
+    eprintln!("detection-engine patterns (override --count):");
+    eprintln!("  --pattern P        steady | flood | spike | flap | ramp");
+    eprintln!("  --duration-secs N  how long the pattern runs (default 30)");
+    eprintln!("  --peak-bps N       bits/sec the pattern peaks at (default 10000000)");
+    eprintln!();
+    eprintln!("  A pattern varies volume over time and nothing else. Every record is the");
+    eprintln!("  same synthetic, well-formed IPFIX record — no spoofing, no amplification,");
+    eprintln!("  nothing resembling real attack traffic.");
+    eprintln!();
     eprintln!(
         "ONLY point this at a lab/test collector you control — see docs/security-principles.md"
     );
@@ -106,6 +124,9 @@ struct Args {
     protocol: IpProtocol,
     exporters: u32,
     sampling_rate: Option<u32>,
+    pattern: Option<Pattern>,
+    duration_secs: u64,
+    peak_bps: u64,
 }
 
 fn parse_args() -> Option<Args> {
@@ -117,6 +138,9 @@ fn parse_args() -> Option<Args> {
     let mut protocol = IpProtocol::Tcp;
     let mut exporters = 1u32;
     let mut sampling_rate = None;
+    let mut pattern = None;
+    let mut duration_secs = 30u64;
+    let mut peak_bps = 10_000_000u64;
 
     while let Some(flag) = args.next() {
         let value = args.next()?;
@@ -127,6 +151,9 @@ fn parse_args() -> Option<Args> {
             "--protocol" => protocol = parse_protocol(&value)?,
             "--exporters" => exporters = value.parse().ok()?,
             "--sampling-rate" => sampling_rate = Some(value.parse().ok()?),
+            "--pattern" => pattern = Some(Pattern::parse(&value)?),
+            "--duration-secs" => duration_secs = value.parse().ok()?,
+            "--peak-bps" => peak_bps = value.parse().ok()?,
             _ => return None,
         }
     }
@@ -139,7 +166,70 @@ fn parse_args() -> Option<Args> {
         protocol,
         exporters,
         sampling_rate,
+        pattern,
+        duration_secs,
+        peak_bps,
     })
+}
+
+/// Sends one pattern's worth of traffic from one exporter.
+///
+/// Returns the sequence number to continue from, so a multi-exporter run
+/// keeps each exporter's sequence coherent.
+#[allow(clippy::too_many_arguments)]
+async fn send_pattern(
+    socket: &UdpSocket,
+    args: &Args,
+    pattern: Pattern,
+    exporter: u32,
+    observation_domain_id: u32,
+    mut sequence_number: u32,
+) -> std::io::Result<u32> {
+    for second in 0..args.duration_secs {
+        let bps = pattern.bps_at(second, args.peak_bps, args.duration_secs);
+        let plans = patterns::plan_second(bps, RECORDS_PER_SECOND);
+        for (index, plan) in plans.iter().enumerate() {
+            let i = index as u8;
+            let data = if args.ipv6 {
+                let (src, dst) = args.scenario.addrs_v6(i);
+                synthetic::data_message_ipv6(
+                    sequence_number,
+                    observation_domain_id,
+                    src,
+                    dst,
+                    51000,
+                    443,
+                    args.protocol,
+                    plan.bytes,
+                    plan.packets,
+                )
+            } else {
+                let (src, dst) = args.scenario.addrs_v4(i);
+                synthetic::data_message_ipv4(
+                    sequence_number,
+                    observation_domain_id,
+                    src,
+                    dst,
+                    51000,
+                    443,
+                    args.protocol,
+                    plan.bytes,
+                    plan.packets,
+                )
+            };
+            socket.send(&data).await?;
+            sequence_number += 1;
+        }
+        println!(
+            "[exporter {exporter}] second {}/{}: {} records at {} bps",
+            second + 1,
+            args.duration_secs,
+            plans.len(),
+            bps
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    Ok(sequence_number)
 }
 
 #[tokio::main]
@@ -148,6 +238,16 @@ async fn main() -> std::io::Result<()> {
         print_usage();
         std::process::exit(2);
     };
+
+    if let Some(pattern) = args.pattern {
+        println!(
+            "pattern {}: {}s at up to {} bps — expect: {}",
+            pattern.as_str(),
+            args.duration_secs,
+            args.peak_bps,
+            pattern.expectation()
+        );
+    }
 
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     socket.connect(&args.target).await?;
@@ -176,6 +276,20 @@ async fn main() -> std::io::Result<()> {
         socket.send(&template).await?;
         sequence_number += 1;
         println!("[exporter {exporter}] sent template message (observation_domain_id={observation_domain_id})");
+
+        if let Some(pattern) = args.pattern {
+            sequence_number = send_pattern(
+                &socket,
+                &args,
+                pattern,
+                exporter,
+                observation_domain_id,
+                sequence_number,
+            )
+            .await?;
+            let _ = sequence_number;
+            continue;
+        }
 
         for i in 0..args.count {
             let packets = 10 + i as u64;
@@ -220,9 +334,18 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
-    println!(
-        "done — sent traffic from {} exporter(s) to {}",
-        args.exporters, args.target
-    );
+    match args.pattern {
+        Some(pattern) => println!(
+            "done — sent the {} pattern from {} exporter(s) to {}; expect: {}",
+            pattern.as_str(),
+            args.exporters,
+            args.target,
+            pattern.expectation()
+        ),
+        None => println!(
+            "done — sent traffic from {} exporter(s) to {}",
+            args.exporters, args.target
+        ),
+    }
     Ok(())
 }
