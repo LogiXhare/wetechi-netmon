@@ -6,13 +6,64 @@ as it did before Phase 4.
 
 ## Environment variables
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `WETECHINETMON_COLLECTOR_DETECTION_POLICY_FILE` | *(unset)* | Path to a policy document. Unset means detection is off. |
-| `WETECHINETMON_COLLECTOR_DETECTION_WINDOW_SECS` | `5` | How long counters accumulate before evaluation. **Must match the `window` of your policies.** |
-| `WETECHINETMON_COLLECTOR_DETECTION_MAX_SCOPES` | `100000` | Cap on tracked scopes per dimension, and on detection states. |
-| `WETECHINETMON_COLLECTOR_DETECTION_EVENT_BUFFER` | `10000` | Events that may wait for the ClickHouse export tick before the oldest is dropped. |
-| `WETECHINETMON_COLLECTOR_DETECTION_STALE_SECS` | `180` | How long an open detection may go without a snapshot before being force-closed. |
+All are environment variables on `wetechinetmon-collector` — restart
+required to change any of them. Source of truth:
+`crates/collector/src/config.rs`.
+
+### `WETECHINETMON_COLLECTOR_DETECTION_POLICY_FILE`
+
+| Field | Value |
+|---|---|
+| Type | Filesystem path, or unset |
+| Default | Unset — **detection is entirely off** |
+| Security implications | The file is parsed at startup and every bound in [detection-safety.md](../security/detection-safety.md) applies to it. It should be readable only by the collector's service account: it declares which tenants own which prefixes, and whoever can write it controls what the collector alerts on. |
+| Related metrics | None directly — if no `wetechinetmon_detector_*` metric exists, detection did not start |
+| Verification | `curl -s http://<metrics_bind>/metrics \| grep detector_` returns nothing when detection is off |
+| Troubleshooting | A file that cannot be read or compiled disables detection for the run rather than stopping the collector; the reason is logged at `error` level naming the path and the failure |
+
+### `WETECHINETMON_COLLECTOR_DETECTION_WINDOW_SECS`
+
+| Field | Value |
+|---|---|
+| Type | Positive integer (seconds) |
+| Default | `5` |
+| Security implications | A longer window smooths short bursts, so a threshold tuned for a 1s window under-detects at 30s. Changing it without re-tuning thresholds silently changes detection sensitivity. |
+| Related metrics | `wetechinetmon_detector_snapshots_evaluated_total`, `wetechinetmon_detector_snapshots_ignored_total` |
+| Verification | `wetechinetmon_detector_snapshots_evaluated_total` should climb once traffic arrives |
+| Troubleshooting | **Must equal every policy's `window`.** A mismatch means nothing is evaluated, visible as `snapshots_ignored_total{reason="windowMismatch"}` climbing. That counter should be zero always. |
+
+### `WETECHINETMON_COLLECTOR_DETECTION_MAX_SCOPES`
+
+| Field | Value |
+|---|---|
+| Type | Non-negative integer |
+| Default | `100000` |
+| Security implications | Bounds worst-case detector memory against a high-cardinality flood. It is also an availability limit: once the state table is full, a real attack on a newly seen address cannot open a detection — see [detection-safety.md](../security/detection-safety.md). |
+| Related metrics | `wetechinetmon_detector_tracked_scopes`, `wetechinetmon_detector_scopes_in_state`, `wetechinetmon_detector_state_table_full_total` |
+| Verification | `curl -s http://<metrics_bind>/metrics \| grep detector_tracked_scopes` |
+| Troubleshooting | `state_table_full_total` increasing means detections are being dropped — raise this, or find out why the distinct-address count grew. Setting it to `0` rejects everything. |
+
+### `WETECHINETMON_COLLECTOR_DETECTION_EVENT_BUFFER`
+
+| Field | Value |
+|---|---|
+| Type | Non-negative integer |
+| Default | `10000` |
+| Security implications | Bounds memory held between a detection and the ClickHouse export tick. The buffer drops the **oldest** when full: blocking detection until ClickHouse catches up would stop detection during exactly the incident that makes ClickHouse slow. |
+| Related metrics | `wetechinetmon_detector_events_failed_total{sink="clickhouse"}` |
+| Verification | `wetechinetmon_detector_events_published_total` should track `events_total` for non-observe policies |
+| Troubleshooting | Only relevant when ClickHouse export is configured. Persistent drops mean ClickHouse cannot keep up — fix the database, do not just raise this. |
+
+### `WETECHINETMON_COLLECTOR_DETECTION_STALE_SECS`
+
+| Field | Value |
+|---|---|
+| Type | Non-negative integer (seconds) |
+| Default | `180` |
+| Security implications | This is what stops an exporter failing mid-attack from leaving a detection open forever. Set too low, a brief telemetry gap closes a live detection; set too high, a dead exporter's detections linger. |
+| Related metrics | `wetechinetmon_detector_detections_stale_total` |
+| Verification | Stop sending traffic for an open detection and watch the counter after this many seconds |
+| Troubleshooting | A rising count while traffic looks normal usually means an exporter stopped, not that attacks ended — cross-check `wetechinetmon_collector_flow_datagrams_received_total`. Closes carry reason `stale` and a zeroed rate. |
 
 A policy document that cannot be read or compiled **disables detection
 for the run** rather than stopping the collector — decoding,

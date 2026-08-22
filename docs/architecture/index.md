@@ -16,5 +16,11 @@ direction:
 - [Architecture Decision Records](decisions/index.md) — the process and
   template used to formally record each decision once made
 
+Component documentation written so far:
+
+- [Aggregation](aggregation.md) — Phase 3
+- [Direction Classification](direction-classification.md) — Phase 3
+- [Detection Engine](detection-engine.md) — Phase 4
+
 No architecture decision is binding until it exists as a numbered ADR
 under `decisions/`.
