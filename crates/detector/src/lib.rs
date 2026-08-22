@@ -12,6 +12,7 @@
 
 pub mod clock;
 pub mod evaluate;
+pub mod event;
 pub mod input;
 pub mod policy;
 pub mod precedence;
@@ -19,6 +20,10 @@ pub mod state;
 
 pub use clock::{Clock, SystemClock, TestClock};
 pub use evaluate::{evaluate, Evaluation, MatchedReason, SkipReason, SkippedMetric};
+pub use event::{
+    dedup_key, ActionTaken, DetectionEvent, EventFactory, EventKind, EventTarget,
+    EVENT_SCHEMA_VERSION,
+};
 pub use input::{
     AddressFamily, CompletenessFlag, DataCompleteness, DetectionSnapshot, MetricKind, MetricRates,
     MetricUnit, SamplingStatus, ScopeId, ScopeKey, ScopeType, TrafficDirection, ALL_METRIC_KINDS,
@@ -29,6 +34,7 @@ pub use policy::{
 };
 pub use precedence::{Candidate, PolicySet, PrecedenceReason, Selection};
 pub use state::{
-    DetectionState, Expiry, ScopeState, Signal, StateTable, StateTableConfig, StateTableStats,
-    StateTransition, StepIgnored, StepOutcome, Suppression, TransitionReason,
+    DetectionContext, DetectionState, Expiry, ScopeState, Signal, SignalRecord, StateTable,
+    StateTableConfig, StateTableStats, StateTransition, StepIgnored, StepOutcome, Suppression,
+    TransitionReason,
 };

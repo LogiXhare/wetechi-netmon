@@ -27,12 +27,15 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime};
 
+use serde::{Deserialize, Serialize};
+
 use crate::evaluate::{Evaluation, MatchedReason};
 use crate::input::{DetectionSnapshot, ScopeKey};
 use crate::policy::DetectionPolicy;
 
 /// Where one scope stands under its winning policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum DetectionState {
     /// Nothing is happening, and nothing recently was.
     Idle,
@@ -99,7 +102,8 @@ impl DetectionState {
 /// an operator uses to explain an alert. They name the *cause*, never
 /// the destination — "the trigger held for long enough", not "went
 /// active", because the destination is already recorded separately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum TransitionReason {
     /// A threshold was crossed while the scope was idle.
     ThresholdCrossed,
@@ -130,6 +134,10 @@ pub enum TransitionReason {
     Stale,
     /// An operator closed the detection by hand.
     ManualReset,
+    /// Not a move at all: the detection is still open and the periodic
+    /// update fell due. Present so an update event carries the same
+    /// shape as every other event without pretending an edge was taken.
+    StillActive,
 }
 
 impl TransitionReason {
@@ -146,6 +154,7 @@ impl TransitionReason {
             TransitionReason::PolicyWithdrawn => "policyWithdrawn",
             TransitionReason::Stale => "stale",
             TransitionReason::ManualReset => "manualReset",
+            TransitionReason::StillActive => "stillActive",
         }
     }
 }
@@ -177,7 +186,8 @@ pub struct StateTransition {
 /// The state machine decides *when* an event exists; it does not build
 /// one. Keeping the two apart means the event schema can change without
 /// touching a single timer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Signal {
     /// A detection opened.
     Started,
@@ -238,13 +248,53 @@ impl Suppression {
     }
 }
 
+/// What the event layer needs to know about the detection a signal
+/// belongs to, captured at the moment the signal was produced.
+///
+/// It travels with the outcome rather than being read back off the
+/// entry afterwards, because an end signal fires *as* the detection
+/// closes — by the time a caller could look, the entry has already
+/// forgotten when it opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectionContext {
+    /// When the detection opened. Together with the scope key this
+    /// uniquely identifies a detection, since a scope cannot open two
+    /// detections at the same instant.
+    pub started_at: Instant,
+    pub started_wall: SystemTime,
+    /// How many events this detection has already produced. Zero on the
+    /// start event.
+    pub sequence: u64,
+    /// The worst value seen for each crossed metric so far.
+    pub peak: Vec<MatchedReason>,
+    pub snapshots_in_detection: u64,
+}
+
+/// A signal together with everything the event layer needs to turn it
+/// into an event.
+///
+/// The transition is carried here as well as in the outcome-wide audit
+/// list on purpose. A step can record two transitions but produce at
+/// most one signal, and leaving the caller to guess which transition a
+/// signal belongs to is exactly the kind of pairing that goes wrong
+/// silently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalRecord {
+    pub signal: Signal,
+    pub transition: StateTransition,
+    pub detection: DetectionContext,
+}
+
 /// The result of feeding one snapshot to one scope.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StepOutcome {
     /// In order. At most two: a timer expiry followed by an
     /// evaluation-driven move.
     pub transitions: Vec<StateTransition>,
-    pub signals: Vec<Signal>,
+    /// At most one per step. Two would require a detection to open and
+    /// close within a single snapshot, which policy validation makes
+    /// impossible: `triggerFor` is never shorter than the window.
+    pub signal: Option<SignalRecord>,
     /// The state the scope is in after the step, or `None` if the scope
     /// is not tracked at all.
     pub state: Option<DetectionState>,
@@ -261,9 +311,9 @@ impl StepOutcome {
         }
     }
 
-    /// Whether the step opened, updated, or closed a detection.
-    pub fn has_signals(&self) -> bool {
-        !self.signals.is_empty()
+    /// The signal kind, if the step produced one.
+    pub fn signal_kind(&self) -> Option<Signal> {
+        self.signal.as_ref().map(|record| record.signal)
     }
 }
 
@@ -283,6 +333,8 @@ pub struct ScopeState {
     /// so `holdDown` measures from the real start rather than from the
     /// most recent wobble.
     pub active_since: Option<Instant>,
+    /// Wall-clock twin of `active_since`, for display only.
+    pub active_since_wall: Option<SystemTime>,
     /// Newest snapshot applied, or `None` until the first one is.
     /// Guards ordering — it must stay distinct from `entered_at`,
     /// because a transition also lands on the current instant and would
@@ -299,6 +351,9 @@ pub struct ScopeState {
     pub peak_matched: Vec<MatchedReason>,
     /// Snapshots applied since the detection opened.
     pub snapshots_in_detection: u64,
+    /// Events produced since the detection opened, which becomes the
+    /// event's sequence number.
+    pub events_in_detection: u64,
 }
 
 impl ScopeState {
@@ -310,13 +365,32 @@ impl ScopeState {
             state: DetectionState::Idle,
             entered_at: at,
             active_since: None,
+            active_since_wall: None,
             last_snapshot_at: None,
             last_snapshot_wall: None,
             last_event_at: None,
             last_matched: Vec::new(),
             peak_matched: Vec::new(),
             snapshots_in_detection: 0,
+            events_in_detection: 0,
         }
+    }
+
+    /// Builds the context for a signal about the currently open
+    /// detection. `started` must be supplied by the caller when the
+    /// transition being recorded has already closed the detection.
+    fn context(&mut self, started: Option<(Instant, SystemTime)>) -> Option<DetectionContext> {
+        let (started_at, started_wall) =
+            started.or(self.active_since.zip(self.active_since_wall))?;
+        let sequence = self.events_in_detection;
+        self.events_in_detection = self.events_in_detection.saturating_add(1);
+        Some(DetectionContext {
+            started_at,
+            started_wall,
+            sequence,
+            peak: self.peak_matched.clone(),
+            snapshots_in_detection: self.snapshots_in_detection,
+        })
     }
 
     /// How long the machine has been in its current state.
@@ -355,12 +429,15 @@ impl ScopeState {
             DetectionState::Active => {
                 if self.active_since.is_none() {
                     self.active_since = Some(at);
+                    self.active_since_wall = Some(at_wall);
                     self.snapshots_in_detection = 0;
+                    self.events_in_detection = 0;
                     self.peak_matched.clear();
                 }
             }
             DetectionState::Idle | DetectionState::Cooldown => {
                 self.active_since = None;
+                self.active_since_wall = None;
             }
             DetectionState::PendingTrigger | DetectionState::PendingClear => {}
         }
@@ -430,6 +507,8 @@ pub struct Expiry {
     /// closed, so the engine can emit its end event.
     pub transition: Option<StateTransition>,
     pub signal: Option<Signal>,
+    /// Present alongside `signal`.
+    pub detection: Option<DetectionContext>,
 }
 
 /// Counters the engine turns into metrics. Kept here so the state
@@ -566,6 +645,7 @@ impl StateTable {
         if entry.policy_id != policy.id || entry.policy_version != policy.version {
             self.stats.policy_changes += 1;
             let was_open = entry.state.is_open();
+            let opened = entry.active_since.zip(entry.active_since_wall);
             if let Some(transition) = entry.transition(
                 DetectionState::Idle,
                 TransitionReason::PolicyChanged,
@@ -573,10 +653,16 @@ impl StateTable {
                 wall,
                 Vec::new(),
             ) {
-                outcome.transitions.push(transition);
                 if was_open {
-                    outcome.signals.push(Signal::Ended);
+                    if let Some(detection) = entry.context(opened) {
+                        outcome.signal = Some(SignalRecord {
+                            signal: Signal::Ended,
+                            transition: transition.clone(),
+                            detection,
+                        });
+                    }
                 }
+                outcome.transitions.push(transition);
             }
             entry.policy_id = policy.id.clone();
             entry.policy_version = policy.version;
@@ -627,12 +713,18 @@ impl StateTable {
                         wall,
                         matched.clone(),
                     ) {
+                        if to == DetectionState::Active {
+                            entry.record_peaks(&matched);
+                            entry.last_event_at = Some(now);
+                            if let Some(detection) = entry.context(None) {
+                                outcome.signal = Some(SignalRecord {
+                                    signal: Signal::Started,
+                                    transition: transition.clone(),
+                                    detection,
+                                });
+                            }
+                        }
                         outcome.transitions.push(transition);
-                    }
-                    if to == DetectionState::Active {
-                        entry.record_peaks(&matched);
-                        entry.last_event_at = Some(now);
-                        outcome.signals.push(Signal::Started);
                     }
                 }
             }
@@ -646,11 +738,17 @@ impl StateTable {
                             wall,
                             matched.clone(),
                         ) {
+                            entry.record_peaks(&matched);
+                            entry.last_event_at = Some(now);
+                            if let Some(detection) = entry.context(None) {
+                                outcome.signal = Some(SignalRecord {
+                                    signal: Signal::Started,
+                                    transition: transition.clone(),
+                                    detection,
+                                });
+                            }
                             outcome.transitions.push(transition);
                         }
-                        entry.record_peaks(&matched);
-                        entry.last_event_at = Some(now);
-                        outcome.signals.push(Signal::Started);
                     }
                 } else if let Some(transition) = entry.transition(
                     DetectionState::Idle,
@@ -714,14 +812,35 @@ impl StateTable {
         // A still-open detection emits a paced update. Checked after the
         // transitions so a detection that just opened does not also
         // report an update in the same step.
-        if entry.state.is_open() && outcome.signals.is_empty() && over {
+        if entry.state.is_open() && outcome.signal.is_none() && over {
             let due = entry
                 .last_event_at
                 .map(|last| now.saturating_duration_since(last) >= policy.event_update_interval)
                 .unwrap_or(true);
             if due {
                 entry.last_event_at = Some(now);
-                outcome.signals.push(Signal::Updated);
+                // An update is not a transition: the machine has not
+                // moved. The record still needs one, so it reports the
+                // no-op honestly rather than inventing an edge.
+                let transition = StateTransition {
+                    key: entry.key.clone(),
+                    policy_id: entry.policy_id.clone(),
+                    policy_version: entry.policy_version,
+                    from: entry.state,
+                    to: entry.state,
+                    reason: TransitionReason::StillActive,
+                    at: now,
+                    at_wall: wall,
+                    matched: matched.clone(),
+                    time_in_previous: entry.time_in_state(now),
+                };
+                if let Some(detection) = entry.context(None) {
+                    outcome.signal = Some(SignalRecord {
+                        signal: Signal::Updated,
+                        transition,
+                        detection,
+                    });
+                }
             }
         }
 
@@ -743,32 +862,50 @@ impl StateTable {
         } else {
             DetectionState::Cooldown
         };
+        let opened = entry.active_since.zip(entry.active_since_wall);
         if let Some(transition) =
             entry.transition(to, TransitionReason::ClearSustained, now, wall, Vec::new())
         {
-            outcome.transitions.push(transition);
             entry.last_event_at = Some(now);
-            outcome.signals.push(Signal::Ended);
+            if let Some(detection) = entry.context(opened) {
+                outcome.signal = Some(SignalRecord {
+                    signal: Signal::Ended,
+                    transition: transition.clone(),
+                    detection,
+                });
+            }
+            outcome.transitions.push(transition);
         }
     }
 
-    /// Closes a scope by operator request. Returns the transition, or
-    /// `None` if the scope is untracked or already idle.
+    /// Closes a scope by operator request.
+    ///
+    /// Returns the transition and, when a detection was open, the
+    /// context its end event needs. `None` if the scope is untracked or
+    /// already idle.
     pub fn manual_reset(
         &mut self,
         key: &ScopeKey,
         now: Instant,
         wall: SystemTime,
-    ) -> Option<StateTransition> {
+    ) -> Option<(StateTransition, Option<DetectionContext>)> {
         let entry = self.entries.get_mut(key)?;
+        let was_open = entry.state.is_open();
+        let opened = entry.active_since.zip(entry.active_since_wall);
         entry.last_event_at = Some(now);
-        entry.transition(
+        let transition = entry.transition(
             DetectionState::Idle,
             TransitionReason::ManualReset,
             now,
             wall,
             Vec::new(),
-        )
+        )?;
+        let context = if was_open {
+            entry.context(opened)
+        } else {
+            None
+        };
+        Some((transition, context))
     }
 
     /// Drops every scope whose winning policy has gone away.
@@ -797,6 +934,7 @@ impl StateTable {
                 continue;
             };
             let was_open = entry.state.is_open();
+            let opened = entry.active_since.zip(entry.active_since_wall);
             let transition = entry.transition(
                 DetectionState::Idle,
                 TransitionReason::PolicyWithdrawn,
@@ -804,10 +942,12 @@ impl StateTable {
                 wall,
                 Vec::new(),
             );
+            let detection = was_open.then(|| entry.context(opened)).flatten();
             expiries.push(Expiry {
                 key,
                 transition,
                 signal: was_open.then_some(Signal::Ended),
+                detection,
             });
         }
         expiries.sort_by(|a, b| a.key.cmp(&b.key));
@@ -854,11 +994,13 @@ impl StateTable {
                     key,
                     transition: None,
                     signal: None,
+                    detection: None,
                 });
                 continue;
             }
             self.stats.expired_stale += 1;
             let was_open = entry.state.is_open();
+            let opened = entry.active_since.zip(entry.active_since_wall);
             let transition = entry.transition(
                 DetectionState::Idle,
                 TransitionReason::Stale,
@@ -866,10 +1008,12 @@ impl StateTable {
                 wall,
                 Vec::new(),
             );
+            let detection = was_open.then(|| entry.context(opened)).flatten();
             expiries.push(Expiry {
                 key,
                 transition,
                 signal: was_open.then_some(Signal::Ended),
+                detection,
             });
         }
         expiries
@@ -1056,7 +1200,7 @@ mod tests {
             let outcome = feed(&mut table, &policy, start + Duration::from_secs(tick), 10);
             assert_eq!(outcome.state, Some(DetectionState::Idle));
             assert!(outcome.transitions.is_empty());
-            assert!(outcome.signals.is_empty());
+            assert!(outcome.signal.is_none());
         }
     }
 
@@ -1072,12 +1216,12 @@ mod tests {
             first.transitions[0].reason,
             TransitionReason::ThresholdCrossed
         );
-        assert!(first.signals.is_empty());
+        assert!(first.signal.is_none());
 
         let back = feed(&mut table, &policy, start + Duration::from_secs(1), 10);
         assert_eq!(back.state, Some(DetectionState::Idle));
         assert_eq!(back.transitions[0].reason, TransitionReason::TriggerAborted);
-        assert!(back.signals.is_empty());
+        assert!(back.signal.is_none());
     }
 
     #[test]
@@ -1106,7 +1250,7 @@ mod tests {
             opened.transitions[0].reason,
             TransitionReason::TriggerSustained
         );
-        assert_eq!(opened.signals, vec![Signal::Started]);
+        assert_eq!(opened.signal_kind(), Some(Signal::Started));
         assert_eq!(opened.transitions[0].matched.len(), 1);
         assert_eq!(opened.transitions[0].matched[0].metric, MetricKind::Bps);
         assert_eq!(
@@ -1138,7 +1282,7 @@ mod tests {
         let band = feed(&mut table, &policy, start + Duration::from_secs(3), 900_000);
         assert_eq!(band.state, Some(DetectionState::Active));
         assert!(band.transitions.is_empty());
-        assert!(band.signals.is_empty());
+        assert!(band.signal.is_none());
     }
 
     #[test]
@@ -1160,7 +1304,7 @@ mod tests {
             falling.transitions[0].reason,
             TransitionReason::FellBelowClear
         );
-        assert!(falling.signals.is_empty());
+        assert!(falling.signal.is_none());
 
         let still = feed(&mut table, &policy, start + Duration::from_secs(4), 100);
         assert_eq!(still.state, Some(DetectionState::PendingClear));
@@ -1171,7 +1315,7 @@ mod tests {
             closed.transitions[0].reason,
             TransitionReason::ClearSustained
         );
-        assert_eq!(closed.signals, vec![Signal::Ended]);
+        assert_eq!(closed.signal_kind(), Some(Signal::Ended));
     }
 
     #[test]
@@ -1198,7 +1342,7 @@ mod tests {
         assert_eq!(back.state, Some(DetectionState::Active));
         assert_eq!(back.transitions[0].reason, TransitionReason::ClearAborted);
         assert!(
-            back.signals.is_empty(),
+            back.signal.is_none(),
             "a detection that never ended must not start again"
         );
         assert_eq!(
@@ -1235,7 +1379,7 @@ mod tests {
         );
         assert_eq!(suppressed.state, Some(DetectionState::Cooldown));
         assert_eq!(suppressed.suppressed, Some(Suppression::Cooldown));
-        assert!(suppressed.signals.is_empty());
+        assert!(suppressed.signal.is_none());
 
         // Cooldown was entered at t+5 and lasts 10s.
         let expired = feed(
@@ -1297,7 +1441,7 @@ mod tests {
         feed(&mut table, &policy, start + Duration::from_secs(3), 100);
         let closed = feed(&mut table, &policy, start + Duration::from_secs(5), 100);
         assert_eq!(closed.state, Some(DetectionState::Idle));
-        assert_eq!(closed.signals, vec![Signal::Ended]);
+        assert_eq!(closed.signal_kind(), Some(Signal::Ended));
     }
 
     #[test]
@@ -1308,12 +1452,12 @@ mod tests {
         feed(&mut table, &policy, start, 5_000_000);
         let at = start + Duration::from_secs(2);
         let first = feed(&mut table, &policy, at, 5_000_000);
-        assert_eq!(first.signals, vec![Signal::Started]);
+        assert_eq!(first.signal_kind(), Some(Signal::Started));
         let before = table.get(&key()).cloned();
 
         let replay = feed(&mut table, &policy, at, 5_000_000);
         assert_eq!(replay.ignored, Some(StepIgnored::Duplicate));
-        assert!(replay.signals.is_empty());
+        assert!(replay.signal.is_none());
         assert_eq!(table.get(&key()).cloned(), before);
         assert_eq!(table.stats().ignored_duplicate, 1);
     }
@@ -1384,7 +1528,7 @@ mod tests {
             5_000_000,
         );
         assert_eq!(opened.state, Some(DetectionState::Active));
-        assert_eq!(opened.signals, vec![Signal::Started]);
+        assert_eq!(opened.signal_kind(), Some(Signal::Started));
     }
 
     #[test]
@@ -1413,7 +1557,7 @@ mod tests {
             start + Duration::from_secs(2),
             5_000_000,
         );
-        assert_eq!(opened.signals, vec![Signal::Started]);
+        assert_eq!(opened.signal_kind(), Some(Signal::Started));
         assert_eq!(table.len(), 1);
     }
 
@@ -1524,7 +1668,7 @@ mod tests {
             TransitionReason::PolicyChanged
         );
         assert_eq!(outcome.transitions[0].policy_version, 1);
-        assert_eq!(outcome.signals[0], Signal::Ended);
+        assert_eq!(outcome.signal_kind(), Some(Signal::Ended));
         assert_eq!(outcome.state, Some(DetectionState::PendingTrigger));
         assert_eq!(table.stats().policy_changes, 1);
     }
@@ -1569,7 +1713,7 @@ mod tests {
             5_000_000,
         );
 
-        let transition = table
+        let (transition, detection) = table
             .manual_reset(
                 &key(),
                 start + Duration::from_secs(3),
@@ -1578,6 +1722,10 @@ mod tests {
             .expect("reset");
         assert_eq!(transition.reason, TransitionReason::ManualReset);
         assert_eq!(transition.to, DetectionState::Idle);
+        assert!(
+            detection.is_some(),
+            "an open detection needs its end context"
+        );
         assert!(table
             .manual_reset(&key(), start, SystemTime::UNIX_EPOCH)
             .is_none());
@@ -1600,7 +1748,7 @@ mod tests {
             start + Duration::from_secs(2),
             5_000_000,
         );
-        assert_eq!(opened.signals, vec![Signal::Started]);
+        assert_eq!(opened.signal_kind(), Some(Signal::Started));
 
         for tick in 3..12 {
             let outcome = feed(
@@ -1609,10 +1757,7 @@ mod tests {
                 start + Duration::from_secs(tick),
                 5_000_000,
             );
-            assert!(
-                outcome.signals.is_empty(),
-                "no update expected at t+{tick}s"
-            );
+            assert!(outcome.signal.is_none(), "no update expected at t+{tick}s");
         }
         let update = feed(
             &mut table,
@@ -1620,7 +1765,7 @@ mod tests {
             start + Duration::from_secs(12),
             5_000_000,
         );
-        assert_eq!(update.signals, vec![Signal::Updated]);
+        assert_eq!(update.signal_kind(), Some(Signal::Updated));
     }
 
     #[test]

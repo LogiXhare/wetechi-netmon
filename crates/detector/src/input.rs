@@ -188,6 +188,17 @@ pub enum MetricUnit {
     FlowsPerSecond,
 }
 
+impl MetricUnit {
+    /// The short form an operator reads on an event or a graph axis.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MetricUnit::BitsPerSecond => "bps",
+            MetricUnit::PacketsPerSecond => "pps",
+            MetricUnit::FlowsPerSecond => "fps",
+        }
+    }
+}
+
 pub const ALL_METRIC_KINDS: [MetricKind; 15] = [
     MetricKind::Bps,
     MetricKind::Pps,
