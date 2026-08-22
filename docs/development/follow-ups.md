@@ -48,6 +48,18 @@ at.
 | FU-22 | Bulk incident mutation | An authorization design for it | Closing every incident matching a filter is genuinely useful and genuinely dangerous. It needs its own permission and its own audit shape rather than being bolted onto the single-incident commands. |
 | FU-23 | Binary evidence storage and its access model | A decision that it is needed | Phase 5 stores evidence *references* only. Packet samples and exported reports need a storage location, a size bound, and an authorization model on dereference before any of it ships (**R18**). |
 
+## Phase 5 — decision review (2026-08-22)
+
+Raised when BQ-5, BQ-6, and BQ-7 were resolved.
+
+| # | Item | Blocked on | Notes |
+|---|---|---|---|
+| FU-24 | Decide whether the incident number resets annually | Owner preference | [ADR 0013](../architecture/decisions/0013-incident-identity.md) approves UUIDv7 for the internal id but leaves the display sequence open: `WNM-2026-000123` resetting each January, or a continuous per-tenant sequence. Affects a display value, not the primary key, so it does not block 5A. |
+| FU-25 | Select the PostgreSQL driver, with verified evidence | [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md) | BQ-7 approved the *capability*, not a crate. Selection requires verified registry metadata, a measured `cargo tree`, `cargo audit`, and a build on both Windows and Linux. |
+| FU-26 | Select the HTTP framework, with verified evidence | [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md) | As FU-25. The runtime choice must follow from the frameworks, not precede them. |
+| FU-27 | Update FR-5.1 to reference ADR 0014 | Nothing | [FR-5.1](../functional-requirements.md) still specifies a single machine containing mitigation states. BQ-6 resolved that they stay out, so the requirement and the design now disagree in writing until FR-5.1 is amended. |
+| FU-28 | Record close-to-recurrence gap distribution | Phase 5C telemetry | BQ-9's reopen window is currently a judgement. Measuring the gap between a close and the next qualifying event on the same correlation key would let the value be chosen from evidence. |
+
 ## Why these are not GitHub issues yet
 
 The repository's CI cannot run (FU-1), so an issue tracker would be the

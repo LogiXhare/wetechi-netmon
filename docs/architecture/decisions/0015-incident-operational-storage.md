@@ -1,8 +1,9 @@
 # 0015. PostgreSQL Is the Operational Source of Truth for Incidents
 
-Status: Proposed — **blocked on BQ-7**
+Status: **Accepted architecturally** — BQ-7 resolved 2026-08-22. Exact
+crate selection is deferred to [ADR 0018](0018-phase5-dependency-selection.md).
 Date: 2026-08-22
-Deciders: Repository owner (pending review)
+Deciders: Repository owner — decided 2026-08-22
 
 ## Context
 
@@ -108,10 +109,46 @@ use. `sqlx` and `tokio-postgres` are both MIT/Apache-2.0.
 and capacity guidance all need writing before Phase 5 ships — tracked in
 the [acceptance criteria](../../development/phase5-acceptance-criteria.md).
 
+## Owner Decision — 2026-08-22
+
+**BQ-7 approved at the architectural level.** Phase 5 may introduce
+PostgreSQL and HTTP dependencies. What was approved, precisely:
+
+- PostgreSQL as the Phase 5 operational source of truth.
+- The **capability** to add a Rust PostgreSQL client and a Rust HTTP
+  server framework.
+
+**This is approval of capability, not of any crate.** No dependency is
+added by this decision, and none may be added on the strength of it
+alone. Before any crate enters `Cargo.toml`, implementation must:
+
+1. Record a dependency-selection ADR comparing real candidates —
+   see [ADR 0018](0018-phase5-dependency-selection.md) for the criteria
+   and the shortlist.
+2. **Verify actual published package metadata** — version, licence,
+   maintenance, advisories — rather than relying on the values assumed in
+   these planning documents. Several figures quoted here were written
+   from knowledge, not from a registry query, and must be re-checked.
+3. Add a row to
+   [dependency-license-matrix.md](../../dependency-license-matrix.md),
+   and update `NOTICE` where the licence requires it.
+4. Run security and compatibility validation, including a build on both
+   Windows and Linux.
+
+**Security impact.** A database credential and a listening HTTP socket
+are both new attack surface, and the transitive dependency count will
+rise from Phase 4's deliberately small closure. That is the cost of the
+capability and is accepted knowingly. **Operational impact:** a second
+datastore to deploy, secure, back up, and *test the restore of*.
+**Licence impact:** every added crate needs matrix and NOTICE review
+before use.
+
 ## Follow-Up
 
-- [ ] **BQ-7** — owner approves PostgreSQL and its driver.
-- [ ] Choose the driver and migration tool at Milestone 5B.
+- [x] **BQ-7** — resolved 2026-08-22: approved architecturally, crate
+      selection deferred.
+- [ ] **ADR 0018** — select the PostgreSQL driver and HTTP framework
+      before Milestone 5B.
 - [ ] Add rows to the dependency licence matrix.
 - [ ] Write and **test** backup and restore procedures (NFR-2).
 - [ ] Evaluate RLS with Phase 8 (**FU-21**).
