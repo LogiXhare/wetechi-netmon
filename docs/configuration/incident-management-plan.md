@@ -29,18 +29,66 @@ database name only, never the full URL.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `INCIDENT_REOPEN_WINDOW_SECS` | `900` | **BQ-9** |
+| `INCIDENT_REOPEN_WINDOW_SECS` | `900` | 15 min (BQ-9). Range **0–86400**; `0` disables reopening entirely. Boundary is **inclusive** |
 | `INCIDENT_RECOVERY_CONFIRMATION_SECS` | `300` | `Recovering` hold before `Resolved` |
 | `INCIDENT_DETECTOR_SILENCE_SECS` | `0` | `0` means derive: 3 × window, minimum 300 |
-| `INCIDENT_AUTO_CLOSE_ENABLED` | `true` | |
-| `INCIDENT_AUTO_CLOSE_AFTER_SECS` | `86400` | |
-| `INCIDENT_AUTO_CLOSE_MIN_SEVERITY` | `critical` | At or above requires manual close — **BQ-8** |
+| `INCIDENT_AUTOMATIC_CLOSURE_ENABLED` | `true` | Master switch for non-critical auto-close |
+| `INCIDENT_AUTOMATIC_CLOSURE_DELAY_SECS` | `1800` | 30 min. `Resolved` → `Closed` for **non-critical** incidents |
+| `INCIDENT_CRITICAL_MANUAL_CLOSURE_REQUIRED` | `true` | **Secure default.** Critical incidents never auto-close (BQ-8) |
 | `INCIDENT_OBSERVE_MODE_INGEST` | `true` | Ingest `Observe` events for counting; they never open incidents |
 
 `INCIDENT_DETECTOR_SILENCE_SECS = 0` deriving from the detection window
 rather than taking a fixed default is deliberate: a policy with a
 60-second window and one with a 5-second window need different silence
 thresholds, and a single global number would be wrong for one of them.
+
+**Two settings changed on 2026-08-22** when BQ-8 was resolved.
+`INCIDENT_AUTO_CLOSE_MIN_SEVERITY` is gone, replaced by the explicit
+boolean `INCIDENT_CRITICAL_MANUAL_CLOSURE_REQUIRED` — a rule stated
+plainly rather than encoded in a severity comparison. The closure delay
+dropped from 24 hours to 30 minutes: with critical incidents excluded
+from auto-close entirely, the delay now governs only incidents nobody was
+going to review, and a day of those in the queue serves nobody. Both are
+**changes to previously documented defaults**, not new settings, and a
+deployment carrying the old variable names will fail startup validation
+rather than silently ignoring them.
+
+The env-var form above follows the collector's existing convention. The
+owner's decision expressed the same settings as a JSON concept
+(`criticalManualClosureRequired`, `automaticClosureEnabled`,
+`automaticClosureDelay`); the semantics are identical and the naming here
+matches the repository rather than the sketch.
+
+### Overriding critical manual closure
+
+`INCIDENT_CRITICAL_MANUAL_CLOSURE_REQUIRED=false` is a deliberate act, not
+a tuning knob, and the override path has requirements the plain env var
+cannot express on its own:
+
+| Requirement | Meaning |
+|---|---|
+| Explicit | No implicit inheritance; unset is `true`, never `false` |
+| Tenant-aware | Overrides name a tenant; a global override is itself an explicit, separately audited choice |
+| Policy-aware where supported | Per-policy override permitted where policies are modelled; otherwise tenant is the finest grain |
+| Permissioned | Requires `incident.closure_policy.override`, absent from every default operator bundle |
+| Immutably audited | Every override writes an audit record: actor, scope, old value, new value, reason |
+| Visible | Appears in effective-configuration diagnostics |
+
+### Effective-configuration diagnostics
+
+A read-only endpoint and CLI view answering one question directly:
+**"will a critical incident on this tenant auto-close, and why?"**
+
+For each effective setting it reports the value, its source
+(`default`, `environment`, `tenant override`, `policy override`), and
+when an override was last changed and by whom. Requires
+`incident.config.read`. It never returns credentials — the database URL
+is reported as host and database name only, never with its password.
+
+The reason this exists rather than being left to "read the config file"
+is that overrides are layered, and a layered configuration nobody can
+introspect is one where an operator discovers the effective value from an
+incident that closed when they expected it not to.
 
 ## Ingestion
 
@@ -118,7 +166,26 @@ introducing a second URL, so there is one place to change the endpoint.
 ## Validation at startup
 
 Following the collector's existing pattern, an invalid value is a startup
-error, never a silent fallback. Specifically: the database URL must be
+error, never a silent fallback.
+
+Specific to the 2026-08-22 decisions:
+
+- `INCIDENT_REOPEN_WINDOW_SECS` must be **0–86400**. Zero is valid and
+  means recurrence always creates a new incident. Above the maximum is a
+  startup error, not a clamp — a clamped value is one nobody notices is
+  wrong.
+- `INCIDENT_AUTOMATIC_CLOSURE_DELAY_SECS` must be greater than zero when
+  `INCIDENT_AUTOMATIC_CLOSURE_ENABLED` is true.
+- `INCIDENT_CRITICAL_MANUAL_CLOSURE_REQUIRED` must parse as a boolean;
+  an unparseable value fails startup rather than defaulting either way,
+  because defaulting it to false would silently remove a safety property
+  and defaulting it to true would hide a typo.
+- The removed `INCIDENT_AUTO_CLOSE_AFTER_SECS` and
+  `INCIDENT_AUTO_CLOSE_MIN_SEVERITY` are **rejected if present**, so a
+  deployment carrying the old names is told rather than silently running
+  with new defaults.
+
+And generally: the database URL must be
 present and parseable; `recovery_confirmation` must be greater than zero;
 audit retention must be at least incident retention; every limit must be
 greater than zero; `auto_close_after` must exceed

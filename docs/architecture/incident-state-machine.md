@@ -99,9 +99,14 @@ Investigating ───────► Recovering     on: staleness sweep, reaso
 Monitoring ──────────► Recovering     on: staleness sweep, reason detector_silent
 Recovering ──────────► Resolved       on: recovery confirmation window elapsed
 Recovering ──────────► (prior state)  on: new qualifying event — recovery aborted
-Resolved ────────────► Closed         on: auto-close delay, if enabled
+Resolved ────────────► Closed         on: auto-close delay — NOT for critical
+Resolved ────────────► Open           on: qualifying event within reopen window
 Closed ──────────────► Open           on: qualifying event within reopen window
 ```
+
+**`Resolved → Closed` never fires automatically for a `critical`
+incident** under the default configuration. See "Critical incidents close
+by hand" below.
 
 `Recovering → (prior state)` restores the state the incident held before
 recovery began, which is why `state_before_recovering` is stored. An
@@ -116,16 +121,88 @@ What suppression withholds is *attention* — it is the flag a future
 notification phase must consult — and an automatic change to it would
 defeat the point.
 
+### `Resolved` and `Closed` mean different things
+
+This distinction carries the whole of the BQ-8 decision, so it is worth
+stating before the table rather than after it.
+
+| State | Means |
+|---|---|
+| `Resolved` | **The traffic condition recovered.** A statement about the network |
+| `Closed` | **NOC review and operational handling are complete.** A statement about the humans |
+
+They are not two words for finished. An incident can be `Resolved`
+minutes after an attack stops and stay open for review for hours, and
+that gap is exactly where the post-incident work happens. Collapsing them
+would mean a system that cannot tell "the flood stopped" from "somebody
+looked at it".
+
+### Critical incidents close by hand
+
+**Decided 2026-08-22 (BQ-8): a `critical` incident does not auto-close
+under the default configuration.** It still moves automatically to
+`Recovering` when detection clears, and automatically to `Resolved` after
+the recovery confirmation period — automation handles the *network*
+claim. It stops there. The *human* claim requires a human.
+
+The reasoning is that auto-close buys convenience, and at `critical` —
+the severity that implies customer impact — the convenience is worth very
+little against the risk of an incident nobody ever saw. Below `critical`
+the trade runs the other way: nobody would have reviewed those anyway,
+and a queue full of resolved-but-unclosed noise is its own failure.
+
+| Severity | `Recovering` → `Resolved` | `Resolved` → `Closed` |
+|---|---|---|
+| `critical` | Automatic | **Manual only, by default** |
+| `major`, `minor`, `info` | Automatic | Automatic after the closure delay, if enabled |
+
+This is **Community** behaviour. A correctness and safety default is not
+an Enterprise feature, and
+[ADR 0017](decisions/0017-incident-community-enterprise-boundary.md)
+already forbids reserving one.
+
+#### Overriding it
+
+`criticalManualClosureRequired` is configurable, and its secure default
+is `true`. Turning it off is a deliberate act with five requirements,
+none of them optional:
+
+1. **Explicit.** No implicit inheritance and no "unset means false".
+2. **Tenant-aware.** An override applies to a named tenant, never
+   globally by accident.
+3. **Policy-aware where supported.** A per-policy override is permitted
+   where the deployment models policies; absent that, tenant scope is the
+   finest granularity.
+4. **Permissioned.** Requires `incident.closure_policy.override`, which
+   is deliberately *not* in any default operator bundle.
+5. **Audited immutably, and visible.** Every override writes an audit
+   record, and the effective value appears in
+   [effective-configuration diagnostics](../configuration/incident-management-plan.md)
+   so an operator can answer "will this critical auto-close?" without
+   reading source or guessing at precedence.
+
+**No notification and no mitigation is implied by manual closure.**
+Closing an incident sends nothing and does nothing to traffic; it records
+that a human finished with it.
+
 ### Operator transitions
 
-| Command | From | To | Permission |
-|---|---|---|---|
-| `AcknowledgeIncident` | `Open` | `Acknowledged` | `incident.acknowledge` |
-| `BeginInvestigation` | `Open`, `Acknowledged`, `Monitoring` | `Investigating` | `incident.investigate` |
-| `MarkMonitoring` | `Acknowledged`, `Investigating` | `Monitoring` | `incident.investigate` |
-| `ResolveIncident` | `Open`, `Acknowledged`, `Investigating`, `Monitoring`, `Recovering` | `Resolved` | `incident.resolve` |
-| `CloseIncident` | `Resolved` | `Closed` | `incident.close` |
-| `ReopenIncident` | `Closed`, `Resolved` | `Open` | `incident.reopen` |
+Every row writes a timeline entry **and** an audit record inside the same
+transaction as the state change, and increments `version`. There is no
+transition that mutates state without both.
+
+| Command | From | To | Permission | Audit |
+|---|---|---|---|---|
+| `AcknowledgeIncident` | `Open` | `Acknowledged` | `incident.acknowledge` | `allowed`/`denied`, before+after state |
+| `BeginInvestigation` | `Open`, `Acknowledged`, `Monitoring` | `Investigating` | `incident.investigate` | as above |
+| `MarkMonitoring` | `Acknowledged`, `Investigating` | `Monitoring` | `incident.investigate` | as above |
+| `ResolveIncident` | `Open`, `Acknowledged`, `Investigating`, `Monitoring`, `Recovering` | `Resolved` | `incident.resolve` | as above |
+| `CloseIncident` | `Resolved` | `Closed` | `incident.close` | as above, plus `closure_reason` |
+| `ReopenIncident` | `Closed`, `Resolved` | `Open` | `incident.reopen` | as above, plus `reason` and new `reopen_count` |
+
+Automatic transitions are audited too, with `actor_type = system` and
+`actor_id = system:correlator`. An automatic closure that left no audit
+record would be indistinguishable from a manual one afterwards.
 
 Non-transitioning commands, which mutate the incident without changing
 state: `AssignIncident`, `UnassignIncident`, `ClaimIncident`,
@@ -174,18 +251,36 @@ severity change that left no trace would defeat the point of having
 
 ### Illegal transitions
 
-Everything not listed is illegal and returns `409 Conflict` with a
-machine-readable code, never a silent no-op. Specifically:
+Everything not listed as legal is illegal and returns `409 Conflict` with
+a machine-readable code, never a silent no-op. The complete invalid set,
+stated rather than left as "whatever is missing above":
 
-- Nothing transitions **out of** `Closed` except `ReopenIncident` and the
-  automatic reopen. `Closed` is the only terminal state.
-- No transition may skip `Resolved` on the way to `Closed`. Closing
-  directly from `Investigating` would lose the distinction between "we
-  fixed it" and "we gave up".
-- A suppressed incident **may** be resolved and closed. Suppression
+| Attempted | Why refused | Code |
+|---|---|---|
+| `Closed` → anything except `Open` | `Closed` is the only terminal state; the sole exit is a reopen | `incident.illegal_transition` |
+| Any state → `Closed` other than from `Resolved` | Skipping `Resolved` erases the difference between "the traffic recovered" and "we gave up" | `incident.illegal_transition` |
+| `Resolved` → `Closed` automatically, severity `critical`, default config | BQ-8 | `incident.manual_closure_required` |
+| `Open` → `Monitoring` | Monitoring means understood-and-watched; nothing has been understood yet | `incident.illegal_transition` |
+| `Recovering` → `Acknowledged`/`Investigating`/`Monitoring` directly | Recovery either completes to `Resolved` or aborts to its **prior** state; an operator cannot hand-steer it sideways | `incident.illegal_transition` |
+| `Open` → `Open`, and every self-edge | A state does not transition to itself; a repeated command is an idempotency question, not a transition | `incident.state_unchanged` |
+| Any transition on an incident of another tenant | Tenant isolation | `incident.not_found` (404, never 403) |
+| Any transition without `expected_version` | Optimistic concurrency is mandatory for state changes | `incident.validation_failed` |
+| Any transition whose permission the caller lacks | Authorization | `incident.forbidden` |
+
+Two cases that look illegal and are **not**:
+
+- **A suppressed incident may be resolved and closed.** Suppression
   withholds attention; it does not freeze the lifecycle, and forcing an
-  operator to unsuppress before closing known noise is friction with no
-  audit value. Both the suppression and the closure are on the timeline.
+  unsuppress before closing known noise is friction with no audit value.
+  Both events land on the timeline.
+- **A `Resolved` incident may be reopened**, not only a `Closed` one. A
+  recurrence during the review window is the common case, and it should
+  land on the incident somebody is already reviewing.
+
+Following the pattern Phase 4 used for `DetectionState`, an illegal edge
+is **refused by a guard** rather than assigned, so a future edit that
+introduces an unreasoned edge fails loudly instead of silently entering a
+state whose timers mean nothing.
 
 Following the pattern Phase 4 used for `DetectionState`, an illegal edge
 should be **refused by a guard** rather than assigned, so that a future
@@ -212,14 +307,24 @@ clock so tests never sleep:
 | Setting | Default | Meaning |
 |---|---|---|
 | `recovery_confirmation` | 5 min | `Recovering` must hold this long before `Resolved` |
-| `reopen_window` | 15 min | Recurrence within this reopens rather than creating new |
-| `auto_close_after` | 24 h | `Resolved` → `Closed`, if enabled |
-| `auto_close_enabled` | `true` | Master switch |
-| `auto_close_min_severity` | — | Severities at or above this require manual closure |
+| `reopen_window` | **15 min** | Recurrence within this reopens rather than creating new (BQ-9) |
+| `automatic_closure_enabled` | `true` | Master switch for non-critical auto-close |
+| `automatic_closure_delay` | **30 min** | `Resolved` → `Closed` for non-critical incidents |
+| `critical_manual_closure_required` | **`true`** | Critical incidents never auto-close (BQ-8) |
 | `detector_silence_timeout` | 3 × detection window, min 5 min | Silence before `detector_silent` recovery |
 
-**Defaults are recommendations, not decisions.** `reopen_window` is
-**BQ-9**; whether `critical` requires manual closure is **BQ-8**.
+**Two defaults changed on 2026-08-22.** `auto_close_min_severity` — a
+severity threshold — is replaced by the explicit boolean
+`critical_manual_closure_required`, which states the rule instead of
+encoding it in a comparison. And the closure delay moved from 24 hours to
+**30 minutes**: with critical incidents now excluded from auto-close
+entirely, the delay only governs incidents nobody was going to review, and
+a day of those sitting in the queue serves nobody.
+
+**These defaults are now decided, not recommended.** BQ-8 and BQ-9 were
+resolved on 2026-08-22; see
+[blocking questions](../blocking-questions.md) and
+[ADR 0014](decisions/0014-incident-state-machine.md).
 
 The recommended shape, for the owner to accept or change:
 
@@ -228,11 +333,71 @@ The recommended shape, for the owner to accept or change:
 2. `Recovering` held for `recovery_confirmation` moves to `Resolved`.
 3. A new qualifying event during `Recovering` aborts recovery and returns
    the incident to its prior state, with a timeline entry.
-4. `Resolved` incidents auto-close after `auto_close_after`, unless
-   severity is at or above `auto_close_min_severity`.
-5. Manual close is always available from `Resolved`.
-6. Recurrence inside `reopen_window` reopens; outside it, a new incident
+4. Non-critical `Resolved` incidents auto-close after
+   `automatic_closure_delay`, if `automatic_closure_enabled`.
+5. **Critical incidents never auto-close by default** and wait for an
+   operator holding `incident.close`.
+6. Manual close is always available from `Resolved`, at every severity.
+7. Recurrence inside `reopen_window` reopens; outside it, a new incident
    is created that references its predecessor.
+
+### Reopening, precisely
+
+**Decided 2026-08-22 (BQ-9): the default reopen window is 15 minutes**, a
+technical starting value and **not** a legal, regulatory, contractual, or
+SLA requirement. It is configurable.
+
+**The boundary is inclusive.** Elapsed time **≤** `reopen_window`
+reopens; **>** `reopen_window` creates a new incident. Stating which side
+the boundary falls on matters because "15 minutes" otherwise has two
+defensible readings, and a test written against one and code against the
+other passes review and fails in production.
+
+Elapsed time is measured from `resolved_at`, or from `closed_at` when the
+incident was closed without passing through resolution.
+
+| Configuration | Meaning |
+|---|---|
+| Minimum `0` | Recurrence **always** creates a new incident; reopening is off |
+| Default `15m` | The approved starting value |
+| Maximum accepted `24h` | A **validation** bound, not an operational recommendation |
+
+The maximum exists to stop a typo turning into a month-long window, not
+because 24 hours is sensible. A window that long absorbs genuinely
+distinct attacks into one incident, which is the more dangerous direction
+of error — a merged incident hides the second attack, while a split one
+merely annoys.
+
+A reopen does **all** of the following, in the one authoritative
+transaction, or none of it:
+
+- transitions the incident back to `Open`
+- increments `reopen_count`
+- sets `reopened_at`
+- appends an immutable `reopened` timeline entry
+- appends a mandatory audit record
+- links the new detection evidence
+- **preserves all previous timeline entries and evidence** — a reopen
+  adds history, it never rewrites it
+- **preserves the original incident identity** — same `incident_id`, same
+  `incident_number`
+- increments `version`
+- writes the outbox event
+
+**A reopen must never produce two simultaneously active incidents for one
+correlation key.** The partial unique index in
+[persistence](incident-persistence.md) makes that impossible at the
+database rather than merely unlikely in the correlator, so two concurrent
+reopen attempts resolve to one winner and one retry.
+
+Correlation itself is unchanged by this decision and is restated here
+because a reopen is where people expect it to bend:
+`tenant | target_type | target_id | direction | family`. Policy id stays
+out. Category stays out and remains a mutable derived summary. Host and
+parent prefix stay separate — different target type *and* identity.
+Incoming and outgoing stay separate. IPv4 and IPv6 stay separate. And a
+detector restart, which mints a fresh `detection_id`, must not prevent
+recurrence correlating: the key is semantic, never detection-derived.
 
 ### The two silences
 

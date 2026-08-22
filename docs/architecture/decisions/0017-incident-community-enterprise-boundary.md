@@ -79,6 +79,14 @@ state machine, the transaction boundary, tenant isolation enforcement,
 the audit record, and optimistic concurrency. These are invariants, not
 policies.
 
+**Confirmed 2026-08-22:** the BQ-8 critical-manual-closure default is
+Community behaviour, not an Enterprise feature. It is a correctness and
+safety default, and this ADR forbids reserving one. The same applies to
+the reopen-window mechanism from BQ-9, to effective-configuration
+diagnostics, and to the audit of closure-policy overrides — a deployment
+that cannot see or audit its own safety settings is not a cheaper
+deployment, it is a broken one.
+
 ## Consequences
 
 **Easier.** Community is genuinely complete, which is what the licence

@@ -1,8 +1,6 @@
 # 0014. The Incident State Machine Does Not Mirror the Detector's
 
-Status: **Accepted** for the state set and mitigation boundary (BQ-6
-resolved 2026-08-22). Timing defaults remain **open** pending BQ-8 and
-BQ-9.
+Status: **Accepted.** BQ-6, BQ-8, and BQ-9 all resolved 2026-08-22.
 Date: 2026-08-22
 Deciders: Repository owner — decided 2026-08-22
 
@@ -102,10 +100,8 @@ Key sub-decisions:
   emit outbox events; nothing consumes the notification and mitigation
   types in Phase 5.
 
-Timing defaults — 5-minute recovery confirmation, 15-minute reopen
-window, 24-hour auto-close — are **recommendations**. **BQ-8** (must
-critical incidents be closed manually?) and **BQ-9** (default reopen
-window?) are the owner's.
+Timing defaults were resolved on the same date — see the second owner
+decision below.
 
 ## Owner Decision — 2026-08-22
 
@@ -155,6 +151,109 @@ deadline through a missed sweep.
 The mandatory expiry is unchanged: an indefinite suppression is how a
 real attack gets missed.
 
+## Owner Decision — 2026-08-22 (BQ-8): critical incidents close by hand
+
+**Approved: `critical` incidents require manual closure by default.**
+
+**Rationale.** Auto-close is a convenience, and it is reasonable for the
+severities where nobody would have reviewed the incident anyway. At
+`critical` — a severity that implies customer impact — the convenience
+buys very little and risks the one outcome that destroys trust in the
+system: an incident that opened, resolved, and closed with no human ever
+having seen it. The first anyone hears of it is a customer call.
+
+**Semantics.** Automation still handles the *network* claim; a human
+makes the *operational* one:
+
+- `critical` may move automatically to `Recovering` when detection clears.
+- `critical` may move automatically from `Recovering` to `Resolved` after
+  the recovery confirmation period.
+- `critical` **must not** move automatically from `Resolved` to `Closed`.
+- An operator holding `incident.close` closes it.
+- Automatic closure remains available for non-critical severities.
+
+This rests on `Resolved` and `Closed` being **operationally distinct**:
+`Resolved` says the traffic condition recovered, `Closed` says NOC review
+and operational handling are complete. They are not two words for
+finished, and the gap between them is where the post-incident work
+happens.
+
+**Configuration.** `critical_manual_closure_required` defaults to `true`
+— the secure default — and is configurable. This replaces the previous
+`auto_close_min_severity` threshold with a rule stated plainly rather
+than encoded in a comparison. The closure delay for non-critical
+incidents also moved from 24 hours to 30 minutes, since it now governs
+only incidents nobody was going to review.
+
+**Overrides** must be explicit, tenant-aware, policy-aware where
+supported, gated on `incident.closure_policy.override`, immutably
+audited, and visible in effective-configuration diagnostics. Unset means
+`true`; there is no path by which the protection lapses silently.
+
+**Security impact.** Prevents a critical incident closing unseen, and
+composes with suppression — a suppressed critical still cannot auto-close.
+The override permission is deliberately outside every default operator
+bundle, because the ability to make criticals close themselves is exactly
+the capability an attacker with a foothold would want.
+
+**Operational impact.** A resolved-but-unclosed queue now exists and must
+be visible; the existing list filters already answer it, and
+`wetechinetmon_incidents_active{state="resolved"}` makes it alertable.
+
+**This is Community behaviour.** A correctness and safety default is not
+an Enterprise feature, and
+[ADR 0017](0017-incident-community-enterprise-boundary.md) already
+forbids reserving one.
+
+**No notification and no mitigation** is implied by manual closure.
+
+## Owner Decision — 2026-08-22 (BQ-9): 15-minute reopen window
+
+**Approved: 15 minutes, as the initial technical default.** It is
+configurable, and it is **not** a legal, regulatory, contractual, or SLA
+requirement.
+
+**The boundary is inclusive.** Elapsed **≤** window reopens; **>** window
+creates a new incident. Measured from `resolved_at`, or `closed_at` when
+the incident never passed through resolution. Fixing which side the
+boundary falls on matters because "15 minutes" has two defensible
+readings, and a test written against one with code written against the
+other passes review and fails in production.
+
+**Rationale and the two risks.** Too long is the more dangerous
+direction: a genuinely distinct second attack gets absorbed into a
+resolved incident and is **hidden**. Too short is merely annoying: a
+flapping attack becomes a stream of separate incidents, each demanding
+acknowledgement — the alert fatigue hysteresis exists to prevent. Fifteen
+minutes sits closer to the annoying end on purpose.
+
+**Configuration.** Minimum `0` — recurrence always creates a new
+incident, reopening disabled. Default `15m`. Maximum accepted `24h`, a
+**validation** bound to stop a typo becoming a month-long window, not an
+operational recommendation.
+
+**Transaction implications.** A reopen performs ten effects in the one
+authoritative transaction or none of them: transition to `Open`,
+increment `reopen_count`, set `reopened_at`, append an immutable
+`reopened` timeline entry, append a mandatory audit record, link the new
+evidence, preserve all prior timeline and evidence, preserve the original
+incident identity, increment `version`, and write the outbox event.
+
+**A reopen must never yield two simultaneously active incidents for one
+correlation key.** The partial unique index enforces that at the
+database, so concurrent reopens resolve to one winner and one retry.
+
+**Correlation is unchanged**:
+`tenant | target_type | target_id | direction | family`. Policy id
+excluded; category excluded and mutable; host and parent prefix separate;
+incoming and outgoing separate; IPv4 and IPv6 separate. A detector
+restart mints a new `detection_id` and must not prevent recurrence
+correlating — the key is semantic, never detection-derived.
+
+**Observability.** `wetechinetmon_incidents_reopened_total` by severity,
+and the close-to-recurrence gap distribution (**FU-28**) so the value can
+eventually be chosen from evidence rather than judgement.
+
 ## Consequences
 
 **Easier.** One authority for "is traffic abnormal". Every state is
@@ -186,8 +285,12 @@ an incident correctly and closing one that is still happening.
 
 - [x] **BQ-6** — resolved 2026-08-22: mitigation states stay out; a
       read-only reference seam remains.
-- [ ] **BQ-8** — manual closure for critical incidents? **Still open.**
-- [ ] **BQ-9** — default reopen window. **Still open.**
+- [x] **BQ-8** — resolved 2026-08-22: critical incidents require manual
+      closure by default.
+- [x] **BQ-9** — resolved 2026-08-22: 15-minute reopen window, inclusive
+      boundary.
+- [ ] **FU-28** — measure the close-to-recurrence gap so the window can
+      eventually be chosen from evidence rather than judgement.
 - [ ] Update [functional-requirements.md](../../functional-requirements.md)
       FR-5.1 to reference this ADR once approved, so the requirement and
       the design stop disagreeing.

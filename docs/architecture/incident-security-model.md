@@ -88,6 +88,8 @@ permissions are what the code checks.
 | `incident.suppress` | Suppress and unsuppress |
 | `incident.export` | Export |
 | `incident.audit.read` | Read the audit trail |
+| `incident.config.read` | Read effective-configuration diagnostics |
+| `incident.closure_policy.override` | Disable critical manual closure for a tenant or policy |
 | `platform.incident.read_all` | Cross-tenant read — platform only |
 | `platform.incident.admin` | Cross-tenant administration — platform only |
 
@@ -98,8 +100,14 @@ Suggested bundles, deployment-configurable:
 | `viewer` | read, list |
 | `operator` | viewer + acknowledge, assign, investigate, note.create |
 | `senior_operator` | operator + severity.change, priority.change, resolve, close, reopen |
-| `noc_lead` | senior_operator + suppress, export, audit.read |
+| `noc_lead` | senior_operator + suppress, export, audit.read, config.read |
 | `platform_admin` | all, including platform permissions |
+
+`incident.closure_policy.override` appears in **no** default bundle, not
+even `noc_lead`. Turning off manual closure for critical incidents is the
+single most useful configuration change for an attacker who already has a
+foothold — it makes criticals close themselves — so it is granted
+deliberately or not at all.
 
 ### Service accounts are not operators
 
