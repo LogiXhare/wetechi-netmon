@@ -15,6 +15,7 @@ wetechinetmon-common = { path = "../common" }
 wetechinetmon-protocol-ipfix = { path = "../protocol-ipfix" }
 wetechinetmon-classifier = { path = "../classifier" }
 wetechinetmon-aggregator = { path = "../aggregator" }
+wetechinetmon-detector = { path = "../detector" }
 wetechinetmon-storage = { path = "../storage" }
 tokio.workspace = true
 tracing.workspace = true

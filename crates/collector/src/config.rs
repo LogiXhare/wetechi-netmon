@@ -20,6 +20,10 @@ const DEFAULT_MAX_NETWORKS: usize = 50_000;
 const DEFAULT_MAX_HOSTGROUPS: usize = 1_000;
 const DEFAULT_MAX_ASNS: usize = 10_000;
 const DEFAULT_INACTIVITY_TTL_SECS: u64 = 300;
+const DEFAULT_DETECTION_WINDOW_SECS: u64 = 5;
+const DEFAULT_DETECTION_MAX_SCOPES: usize = 100_000;
+const DEFAULT_DETECTION_EVENT_BUFFER: usize = 10_000;
+const DEFAULT_DETECTION_STALE_SECS: u64 = 180;
 
 const BIND_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_BIND";
 const METRICS_BIND_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_METRICS_BIND";
@@ -32,6 +36,11 @@ const MAX_ASNS_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_MAX_ASNS";
 const INACTIVITY_TTL_SECS_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_INACTIVITY_TTL_SECS";
 const SAMPLING_GLOBAL_DEFAULT_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_SAMPLING_GLOBAL_DEFAULT";
 const CLICKHOUSE_URL_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_CLICKHOUSE_URL";
+const DETECTION_POLICY_FILE_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_POLICY_FILE";
+const DETECTION_WINDOW_SECS_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_WINDOW_SECS";
+const DETECTION_MAX_SCOPES_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_MAX_SCOPES";
+const DETECTION_EVENT_BUFFER_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_EVENT_BUFFER";
+const DETECTION_STALE_SECS_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_STALE_SECS";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -61,6 +70,22 @@ pub struct Config {
     /// export is entirely disabled when unset — see
     /// docs/integrations/clickhouse.md.
     pub clickhouse_url: Option<String>,
+    /// Path to a detection policy document. **Detection is entirely off
+    /// when unset** — no policies means nothing to detect against, and
+    /// silently detecting nothing is better expressed as detecting
+    /// nothing on purpose. See docs/configuration/detection-policies.md.
+    pub detection_policy_file: Option<String>,
+    /// How long the detector accumulates per-scope counters before
+    /// evaluating them. Must match the `window` of the policies loaded.
+    pub detection_window_secs: u64,
+    /// Cap on scopes tracked per dimension, and on detection states.
+    pub detection_max_scopes: usize,
+    /// How many detection events may wait for the ClickHouse export
+    /// tick before the oldest is dropped.
+    pub detection_event_buffer: usize,
+    /// How long an open detection may go without a snapshot before it is
+    /// force-closed as stale.
+    pub detection_stale_secs: u64,
 }
 
 impl Config {
@@ -85,6 +110,17 @@ impl Config {
         let sampling_global_default = parse_optional_u32(SAMPLING_GLOBAL_DEFAULT_ENV_VAR)?;
         let local_prefixes = parse_local_prefixes(LOCAL_PREFIXES_ENV_VAR)?;
         let clickhouse_url = env_value(CLICKHOUSE_URL_ENV_VAR)?;
+        let detection_policy_file = env_value(DETECTION_POLICY_FILE_ENV_VAR)?;
+        let detection_window_secs =
+            parse_u64_or_default(DETECTION_WINDOW_SECS_ENV_VAR, DEFAULT_DETECTION_WINDOW_SECS)?;
+        let detection_max_scopes =
+            parse_usize_or_default(DETECTION_MAX_SCOPES_ENV_VAR, DEFAULT_DETECTION_MAX_SCOPES)?;
+        let detection_event_buffer = parse_usize_or_default(
+            DETECTION_EVENT_BUFFER_ENV_VAR,
+            DEFAULT_DETECTION_EVENT_BUFFER,
+        )?;
+        let detection_stale_secs =
+            parse_u64_or_default(DETECTION_STALE_SECS_ENV_VAR, DEFAULT_DETECTION_STALE_SECS)?;
 
         Ok(Config {
             bind,
@@ -98,6 +134,11 @@ impl Config {
             inactivity_ttl_secs,
             sampling_global_default,
             clickhouse_url,
+            detection_policy_file,
+            detection_window_secs,
+            detection_max_scopes,
+            detection_event_buffer,
+            detection_stale_secs,
         })
     }
 }

@@ -9,11 +9,13 @@ publish.workspace = true
 [dependencies]
 wetechinetmon-common = { path = "../common" }
 wetechinetmon-aggregator = { path = "../aggregator" }
+wetechinetmon-detector = { path = "../detector" }
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 clickhouse = { version = "0.13", features = ["time"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 time = "0.3"
 
 [dev-dependencies]

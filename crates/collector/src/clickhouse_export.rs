@@ -23,8 +23,8 @@ use wetechinetmon_aggregator::Aggregator;
 use wetechinetmon_storage::writer::ClickHouseWriter;
 use wetechinetmon_storage::{
     schema::{
-        AsnTrafficRow, ExporterTrafficRow, HostTrafficRow, HostgroupTrafficRow, NetworkTrafficRow,
-        Slash24TrafficRow, TotalTrafficRow,
+        AsnTrafficRow, DetectionEventRow, ExporterTrafficRow, HostTrafficRow, HostgroupTrafficRow,
+        NetworkTrafficRow, Slash24TrafficRow, TotalTrafficRow,
     },
     BatchConfig, Client, RetryConfig,
 };
@@ -38,6 +38,11 @@ pub struct ClickHouseExporters {
     hostgroup: ClickHouseWriter<HostgroupTrafficRow>,
     asn: ClickHouseWriter<AsnTrafficRow>,
     exporter: ClickHouseWriter<ExporterTrafficRow>,
+    /// Detection events. Unlike the traffic writers, this one is not fed
+    /// from a snapshot of current state — events are pushed as they
+    /// happen and drained here, because an event that was true for two
+    /// seconds between snapshots still has to reach the table.
+    detection_events: ClickHouseWriter<DetectionEventRow>,
 }
 
 #[derive(Debug, Default)]
@@ -112,13 +117,29 @@ impl ClickHouseExporters {
                 now,
             ),
             exporter: ClickHouseWriter::new(
-                client,
+                client.clone(),
                 "wetechinetmon_exporter_traffic",
                 batch,
                 retry,
                 now,
             ),
+            detection_events: ClickHouseWriter::new(
+                client,
+                "wetechinetmon_detection_events",
+                batch,
+                retry,
+                now,
+            ),
         }
+    }
+
+    /// Queues one detection event row.
+    ///
+    /// Separate from [`ClickHouseExporters::snapshot`] because an event
+    /// is not a sample of current state — it happened at an instant, and
+    /// a snapshot taken later would miss it entirely.
+    pub fn push_detection_event(&mut self, row: DetectionEventRow) {
+        self.detection_events.push(row);
     }
 
     /// Reads a full snapshot of `aggregator`'s current state and queues
@@ -213,6 +234,7 @@ impl ClickHouseExporters {
         report.merge(self.hostgroup.tick(now).await);
         report.merge(self.asn.tick(now).await);
         report.merge(self.exporter.tick(now).await);
+        report.merge(self.detection_events.tick(now).await);
         report
     }
 }
