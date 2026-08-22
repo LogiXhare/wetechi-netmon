@@ -81,6 +81,12 @@ managed-service deployment adds tenants over time, multiplying every
 series by a number that only grows. Per-tenant figures belong in
 ClickHouse, which is built for exactly that.
 
+Because critical incidents never auto-close (BQ-8), a
+resolved-but-unclosed backlog is now an expected steady state rather than
+an anomaly. `wetechinetmon_incidents_active{state="resolved"}` is what
+makes it visible, and the alert above is what stops it becoming a place
+incidents go to be forgotten.
+
 `wetechinetmon_incident_timeline_pressure` exists because the timeline is
 never truncated: it reports the largest timeline size so an operator is
 alerted before an incident becomes unmanageable, rather than discovering
@@ -168,6 +174,7 @@ recoverable.
 | Storage failures | `repository_failures_total` rate > 0 for 5 min |
 | Ingestion stalled | `events_ingested_total` flat while detections continue |
 | Unacknowledged critical | `oldest_unacknowledged_seconds{severity="critical"}` > 900 |
+| Resolved criticals awaiting closure | `incidents_active{state="resolved",severity="critical"}` > 0 for 24 h |
 | Limit pressure | `limit_reached_total` increases |
 | Conflict storm | `command_conflicts_total` rate spikes |
 

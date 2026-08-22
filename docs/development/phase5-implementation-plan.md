@@ -24,20 +24,17 @@ logic at once.
   proceed once [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md)
   selects crates with verified evidence (**FU-25**, **FU-26**).
 
-**Still open, blocking nothing:**
+- **BQ-8** critical closure → **manual by default**. 5A implements the
+  guard that refuses an automatic `Resolved` → `Closed` for `critical`;
+  5B stores the override; 5D exposes effective-configuration diagnostics.
+- **BQ-9** reopen window → **15 minutes, inclusive boundary**, range
+  0–24 h. 5A implements the boundary comparison and its tests.
 
-- **BQ-8** manual closure for `critical` — a configuration default
-  (`INCIDENT_AUTO_CLOSE_MIN_SEVERITY`), settable before first production
-  use. Recommendation recorded; owner decision pending.
-- **BQ-9** reopen window — a configuration default
-  (`INCIDENT_REOPEN_WINDOW_SECS`). The correlation *mechanism* is decided
-  and unaffected by the number. Recommendation recorded; owner decision
-  pending.
-
-Neither open question changes code that any milestone writes, so
-implementation is not gated on them. What is gated is shipping a
-production default nobody consciously chose, which is why both remain
-recorded as open rather than quietly defaulted.
+**No Phase 5 planning decision remains outstanding.** The only thing
+standing between here and 5B is crate selection under
+[ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md),
+which is implementation work with verification requirements rather than
+an open architectural question (**FU-25**, **FU-26**).
 
 ## Milestone 5A — Domain and state machine
 

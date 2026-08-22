@@ -54,17 +54,21 @@ into "approved".
 | 40 | 403 Rust tests remain green | Verified |
 | 41 | Working tree clean after commits | Verified |
 | 42 | Blocking questions raised, not silently decided | Done — BQ-5 to BQ-9 |
+| 43 | All blocking questions resolved with recorded rationale | **Done 2026-08-22** |
+| 44 | Critical closure policy defined, permissioned, and audited | Done — BQ-8 |
+| 45 | Reopen window defined with an explicit boundary rule | Done — BQ-9 |
 
-**Gate 1 status as of 2026-08-22.** BQ-5, BQ-6, and BQ-7 are **resolved**
-— see [blocking questions](../blocking-questions.md). BQ-8 and BQ-9
-remain open, and neither blocks implementation: both are runtime
-configuration defaults, and the mechanisms they parameterise are already
-decided.
+**Gate 1 is PASSED as of 2026-08-22.** All five blocking questions —
+BQ-5 through BQ-9 — are resolved and recorded with dates, rationale, and
+impact; see [blocking questions](../blocking-questions.md).
 
-Gate 1 is therefore **substantially passed**, with the caveat that two
-production defaults have not yet been consciously chosen. Shipping either
-default unreviewed would be the failure mode this register exists to
-prevent.
+No Phase 5 planning decision remains outstanding. What stands between
+here and Milestone 5B is crate selection under
+[ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md),
+which is implementation work with verification requirements rather than
+an open architectural question.
+
+Milestone 5A may begin once the planning branch is reviewed and merged.
 
 ## Gate 2 — Implementation complete
 

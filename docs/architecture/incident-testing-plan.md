@@ -50,6 +50,55 @@ overwritten by the next event.
   the correct recorded reason, since conflating them is the failure that
   makes an operator close a live incident.
 
+### Closure policy (BQ-8)
+
+- A `critical` incident reaches `Resolved` automatically and **does not**
+  auto-close, under default configuration, however long the clock runs.
+- An operator holding `incident.close` closes a `critical` incident.
+- An operator without `incident.close` is refused.
+- A non-critical incident auto-closes once
+  `automatic_closure_delay` elapses, when closure is enabled.
+- `Resolved` and `Closed` remain distinct: a resolved incident is not
+  reported as closed by any query, metric, or representation.
+- Overriding `critical_manual_closure_required` writes an audit record
+  naming actor, scope, old value, and new value.
+- The override is refused without `incident.closure_policy.override`.
+- Effective-configuration diagnostics report the effective value and its
+  source.
+- A duplicate `CloseIncident` with the same idempotency key replays the
+  original result rather than closing twice.
+- Concurrent `CloseIncident` commands produce exactly one winner and one
+  `409`.
+
+### Reopen window (BQ-9)
+
+Boundary tests use the injectable clock; none of them sleep.
+
+- Recurrence at **14 m 59 s** reopens.
+- Recurrence at **exactly 15 m 00 s** reopens — the boundary is
+  **inclusive**, and this test is the one that pins it.
+- Recurrence at **15 m 01 s** creates a new incident referencing its
+  predecessor.
+- `reopen_window = 0` always creates a new incident.
+- Elapsed time is measured from `closed_at` when the incident never
+  passed through `Resolved`.
+- A reopen links the new detection evidence.
+- `reopen_count` increments and `reopened_at` updates.
+- The timeline remains append-only, and **all prior entries and evidence
+  are unchanged** after a reopen.
+- The incident keeps its original `incident_id` and `incident_number`.
+- A duplicate recurrence event is idempotent — one reopen, not two.
+- **Concurrent reopen attempts leave exactly one active incident** for the
+  correlation key, enforced by the partial unique index rather than by
+  application ordering.
+- Cross-tenant recurrence never correlates.
+- Opposite directions never correlate.
+- Host and parent prefix never correlate.
+- A category change does not split an incident.
+- A policy change does not split an incident.
+- A detector restart, minting a new `detection_id`, still correlates the
+  recurrence onto the existing incident.
+
 ## Persistence tests
 
 Atomicity is the centre of this section, and it must be tested by

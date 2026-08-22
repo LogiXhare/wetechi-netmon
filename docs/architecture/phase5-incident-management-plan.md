@@ -150,16 +150,18 @@ Two remain open, and neither blocks implementation.
 | **BQ-5** | UUID requirement vs the ADR 0009 precedent | **Resolved** — UUIDv7 for internal incident identity, conditional on a dependency and licence review. Phase 4 event IDs unchanged |
 | **BQ-6** | Mitigation states in the incident machine | **Resolved** — excluded, with a read-only reference seam. Also: `Reopened` is a transition, and **`Suppressed` became an attribute**, dropping the lifecycle to seven states |
 | **BQ-7** | PostgreSQL and HTTP dependencies | **Resolved** — approved architecturally. **No crate is chosen**; selection goes through [ADR 0018](decisions/0018-phase5-dependency-selection.md) |
-| **BQ-8** | Manual closure for `critical` | **OPEN** — recommendation recorded; configuration default, blocks nothing |
-| **BQ-9** | Default reopen window | **OPEN** — recommendation recorded; configuration default, blocks nothing |
+| **BQ-8** | Manual closure for `critical` | **Resolved** — required by default. `Resolved` and `Closed` are operationally distinct; overrides are permissioned, audited, and visible. Community, not Enterprise |
+| **BQ-9** | Default reopen window | **Resolved** — 15 minutes, **inclusive** boundary, range 0–24 h. A technical default, not an SLA |
 
 Full wording, options, and reasoning in
 [blocking questions](../blocking-questions.md).
 
-**Milestone 5A is unblocked.** The identity type and the state set — the
-two things that gated it — are decided. BQ-8 and BQ-9 are runtime
-configuration values that can be set before first production use, so
-deferring them costs only that the shipped default may need changing.
+**No Phase 5 planning decision remains outstanding.** All five questions
+were resolved on 2026-08-22. What remains before Milestone 5B is crate
+selection under
+[ADR 0018](decisions/0018-phase5-dependency-selection.md) — an
+implementation task with verification requirements, not an open
+architectural question.
 
 ## Out of scope, explicitly
 

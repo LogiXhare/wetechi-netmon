@@ -1,7 +1,7 @@
 # Blocking Questions
 
-Status: Phase 5 planning — BQ-5, BQ-6, and BQ-7 **resolved** 2026-08-22.
-BQ-8 and BQ-9 remain **OPEN**.
+Status: Phase 5 planning — **all five Phase 5 questions resolved**
+2026-08-22. No Phase 5 decision remains outstanding.
 Last updated: 2026-08-22
 
 ## Decision summary
@@ -15,8 +15,8 @@ Last updated: 2026-08-22
 | BQ-5 | Incident identity (UUID vs ADR 0009) | **Resolved 2026-08-22** — UUIDv7, conditional | Was 5A |
 | BQ-6 | Mitigation states in the incident machine | **Resolved 2026-08-22** — excluded | Was 5A |
 | BQ-7 | PostgreSQL and HTTP dependencies | **Resolved 2026-08-22** — approved architecturally | Was 5B |
-| BQ-8 | Manual closure for critical incidents | **OPEN** | Nothing — configuration default |
-| BQ-9 | Default reopen window | **OPEN** | Nothing — configuration default |
+| BQ-8 | Manual closure for critical incidents | **Resolved 2026-08-22** — required by default | — |
+| BQ-9 | Default reopen window | **Resolved 2026-08-22** — 15 min, inclusive | — |
 
 These are the only questions treated as genuinely blocking for Phase 1+
 architecture and legal posture. Per master prompt §31, minor questions are
@@ -222,16 +222,11 @@ engineering one.
 **Does not block** implementation — it is a configuration default — but
 resolving it alongside BQ-5 to BQ-7 is cheaper than revisiting.
 
-### BQ-8 status — OPEN, owner decision required
+### BQ-8 decision — RESOLVED 2026-08-22
 
-Reviewed 2026-08-22 and **deliberately not decided**, because the
-trade-off is about how the NOC works rather than about engineering, and
-inferring it would conceal a real choice behind a default.
+**Critical incidents require manual closure by default.**
 
-**Blocks:** nothing. Not Milestone 5A. It is a configuration value
-(`INCIDENT_AUTO_CLOSE_MIN_SEVERITY`) read at runtime, so implementation
-can proceed and the value can be set before first production use. The
-only cost of deferring is that the shipped default may need changing.
+Options considered are below; **Option A was approved**.
 
 | Option | Consequence |
 |---|---|
@@ -240,19 +235,44 @@ only cost of deferring is that the shipped default may need changing.
 | **C. Manual closure at `major` and above** | Stricter than A; more manual work; more coverage |
 | **D. Configurable per tenant** | Most flexible. Cost: more configuration surface, and a per-tenant default is one more thing to get wrong |
 
-**Recommendation: Option A.** Auto-close is a convenience, and it is
-reasonable for the severities where nobody would have acted anyway. At
-`critical` the convenience is buying very little and risking the one
-outcome that damages trust in the system — an incident nobody saw. Option
-D is attractive later but adds configuration surface before there is
-evidence anyone needs it.
+**Approved: Option A**, on 2026-08-22.
 
-**Security implication:** auto-closing criticals shortens the window in
-which an operator would notice a genuine attack, and combines badly with
-suppression. **Operational implication:** Option A needs a
-"resolved-but-unclosed critical" view so the backlog is visible; that
-view is already implied by the existing list filters. **Implementation
-cost:** none beyond a default value — the mechanism exists either way.
+**Rationale.** Auto-close is a convenience, reasonable at the severities
+where nobody would have acted anyway. At `critical` it buys very little
+and risks the one outcome that destroys trust — an incident that opened,
+resolved, and closed with nobody having seen it.
+
+**Semantics.** Critical may auto-advance to `Recovering` and then to
+`Resolved`; it may **not** auto-advance to `Closed`. `Resolved` and
+`Closed` are operationally distinct — recovery of the traffic condition
+versus completion of NOC review. Non-critical severities may auto-close.
+
+**Configuration.** `INCIDENT_CRITICAL_MANUAL_CLOSURE_REQUIRED=true`
+(secure default) replaces the previous `INCIDENT_AUTO_CLOSE_MIN_SEVERITY`
+threshold, and `INCIDENT_AUTOMATIC_CLOSURE_DELAY_SECS` drops from 24 h to
+30 min. Overrides must be explicit, tenant-aware, policy-aware where
+supported, gated on `incident.closure_policy.override`, immutably
+audited, and visible in effective-configuration diagnostics.
+
+**Permissions.** Closing requires `incident.close`. Overriding the policy
+requires `incident.closure_policy.override`, which is in **no** default
+bundle — making criticals close themselves is precisely what an attacker
+with a foothold would want.
+
+**Audit.** Every closure and every override writes an immutable record.
+
+**Security impact:** removes the unseen-critical failure mode; composes
+with suppression, since a suppressed critical still cannot auto-close.
+**Operational impact:** a resolved-but-unclosed queue now exists and must
+be watched. **Community, not Enterprise** — a safety default may not be
+a paid feature.
+
+**Required tests** (see the [testing plan](architecture/incident-testing-plan.md)):
+critical resolves but does not auto-close by default; an authorized
+operator can close it; an unauthorized one cannot; the override is
+audited; a non-critical incident auto-closes when configured; `Resolved`
+and `Closed` remain distinct; a duplicate close is idempotent; concurrent
+closes are conflict-safe.
 
 ## BQ-9: What should the default reopen window be?
 
@@ -267,16 +287,12 @@ which is operational knowledge rather than an engineering judgement.
 
 **Does not block** implementation.
 
-### BQ-9 status — OPEN, owner decision required
+### BQ-9 decision — RESOLVED 2026-08-22
 
-Reviewed 2026-08-22 and **deliberately not decided**. As the question
-itself says, the right value depends on observed attack patterns on this
-network, which is operational knowledge this review does not have.
+**15 minutes, as the initial technical default.** Configurable, and
+explicitly **not** a legal, regulatory, contractual, or SLA requirement.
 
-**Blocks:** nothing. Not Milestone 5A. `INCIDENT_REOPEN_WINDOW_SECS` is a
-runtime configuration value. The correlation *mechanism* — reopen inside
-the window, new incident outside it, referencing its predecessor — is
-already decided and is unaffected by the number.
+Options considered are below; **Option A was approved**.
 
 | Option | Consequence |
 |---|---|
@@ -285,23 +301,49 @@ already decided and is unaffected by the number.
 | **C. 60 minutes** | Very few duplicates. Cost: a genuinely distinct second attack within the hour is absorbed into the first and **hidden**, which is the more dangerous direction of error |
 | **D. Scale with severity** | Longer window for critical. Cost: reopen behaviour becomes severity-dependent and harder to reason about during an incident |
 
-**Recommendation: Option A, 15 minutes**, explicitly as a starting value
-to be revisited once real recurrence data exists — not as a considered
-answer to a question that needs data.
+**Approved: Option A, 15 minutes**, on 2026-08-22 — explicitly a starting
+value to be revisited once real recurrence data exists.
 
-**Security implication:** too long is the dangerous direction. A second
-attack merged into a resolved incident may be missed entirely, and the
-threat model's late-event rule (T-18) already prevents a stale event from
-reopening, so a long window widens the window for *genuine* recurrences
-to be absorbed. **Operational implication:** the value directly drives
-incident counts, so changing it later makes historical trend comparisons
-inconsistent — worth setting deliberately before first production use.
-**Implementation cost:** none beyond a default value.
+**The boundary is inclusive.** Elapsed **≤** window reopens; **>** window
+creates a new incident. Measured from `resolved_at`, or `closed_at` when
+the incident never passed through resolution. This is stated because "15
+minutes" has two defensible readings, and a test written against one with
+code against the other passes review and fails in production.
 
-**Suggested follow-up regardless of the value chosen:** record the
-distribution of gaps between a close and the next qualifying event on the
-same correlation key, so the value can eventually be chosen from evidence
-rather than judgement. Tracked as **FU-28**.
+**Configuration.** Minimum `0` (recurrence always creates a new incident,
+reopening disabled), default `900` seconds, maximum accepted `86400`. The
+24-hour maximum is a **validation bound** against typos, not an
+operational recommendation.
+
+**Risk of too long:** a genuinely distinct second attack is absorbed into
+a resolved incident and **hidden**. This is the dangerous direction.
+**Risk of too short:** a flapping attack becomes a stream of separate
+incidents, each demanding acknowledgement — the alert fatigue hysteresis
+exists to prevent. Fifteen minutes sits deliberately closer to the second.
+
+**Transaction implications.** A reopen performs ten effects atomically:
+transition to `Open`, increment `reopen_count`, set `reopened_at`, append
+an immutable timeline entry, append a mandatory audit record, link the new
+evidence, preserve all prior history, preserve the original incident
+identity, increment `version`, and write the outbox event — in the one
+authoritative transaction, or none of them. A reopen may never produce two
+simultaneously active incidents for one correlation key; the partial
+unique index enforces that at the database.
+
+**Observability.** `wetechinetmon_incidents_reopened_total` by severity,
+plus the close-to-recurrence gap distribution (**FU-28**) so the value can
+eventually be chosen from evidence.
+
+**Required tests** (see the [testing plan](architecture/incident-testing-plan.md)):
+recurrence at 14 m 59 s reopens; recurrence at exactly 15 m reopens, per
+the inclusive boundary; recurrence after 15 m creates a new incident; a
+zero-minute configuration always creates a new incident; recurrence links
+new evidence; `reopen_count` increments; `reopened_at` updates; the
+timeline stays append-only; prior history is unchanged; a duplicate
+recurrence event is idempotent; concurrent reopens yield one active
+incident; cross-tenant recurrence never correlates; different directions
+never correlate; host and parent prefix never correlate; a category change
+does not split the incident; a policy change does not split the incident.
 
 ## Non-Blocking Items (explicitly not asked here)
 
