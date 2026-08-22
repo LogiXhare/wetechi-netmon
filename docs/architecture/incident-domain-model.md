@@ -60,7 +60,19 @@ Legend: **I** immutable after creation · **M** mutable via a command ·
 | `severity_source` | D | `TEXT` | `detection` or `operator`, so an operator override is never silently re-overwritten by the next event |
 | `priority` | M, O | `TEXT` | `P1`–`P4`, NOC-assigned, defaulted from severity |
 | `closure_reason` | M, O | `TEXT` | Required when closing; see state machine |
+| `state_before_recovering` | D, O | `TEXT` | Restored when a recovery aborts |
+| `suppressed_until` | M, O | `TIMESTAMPTZ` | Suppression expiry; **mandatory when suppressing** |
+| `suppression_reason` | M, O | `TEXT` ≤ 500 | Mandatory alongside `suppressed_until` |
+| `suppressed_by` | M, O | `TEXT` | Actor reference |
 | `version` | D | `BIGINT` | Optimistic concurrency; increments on every mutation |
+
+**Suppression is an attribute, not a lifecycle state** — decided
+2026-08-22, [ADR 0014](decisions/0014-incident-state-machine.md). It
+governs whether an incident *alerts*, not where the human response has
+reached, so it is orthogonal to `state` and both are independently
+queryable. `suppressed` is derived — `suppressed_until IS NOT NULL AND
+suppressed_until > now()` — rather than stored, so a suppression cannot
+outlive its own expiry through a sweep that failed to run.
 
 Severity and priority are **not** the same field. Severity is the
 technical impact of the traffic; priority is how urgently a human should

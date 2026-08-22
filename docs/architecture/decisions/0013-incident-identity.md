@@ -1,8 +1,9 @@
 # 0013. Incident Identity and the Human-Readable Incident Number
 
-Status: Proposed — **blocked on BQ-5**
+Status: **Accepted (conditional)** — BQ-5 resolved 2026-08-22; crate
+selection and licence review deferred to implementation
 Date: 2026-08-22
-Deciders: Repository owner (pending review)
+Deciders: Repository owner — decided 2026-08-22
 
 ## Context
 
@@ -154,11 +155,45 @@ addressed by the 404-not-403 rule above and tested per the
 **License.** `uuid` is MIT/Apache-2.0, compatible with the Apache-2.0
 core, but must be added to the matrix before use.
 
+## Owner Decision — 2026-08-22
+
+**BQ-5 approved conditionally.** UUIDv7 is approved for Phase 5 internal
+incident identity, **subject to a focused dependency and licence review
+during Phase 5 implementation**. Scope of the approval:
+
+- Phase 4 detection-event identifiers are **unchanged**. ADR 0009 stands
+  as written; this decision does not reopen it, and no Phase 4 event ID
+  is rewritten. The two crates have different constraints and are allowed
+  to answer the question differently.
+- The internal `incident_id` is UUIDv7.
+- The human-readable incident number is a **separate** database-backed
+  display value, never derived from and never substituted for the UUID.
+- Neither identifier is an authentication secret. **Authorization must
+  never depend on ID unpredictability** — every read is authorized
+  against the caller's tenant and permissions, and unpredictability is
+  defence in depth against enumeration, not an access control.
+- The `uuid` crate is **not added by this decision**. Adding it requires
+  its own dependency review under BQ-7, a licence-matrix row, and
+  verification of actual published metadata rather than assumed metadata.
+
+**Still open, and deliberately not decided here:** whether the incident
+number sequence resets annually or runs continuously per tenant. It does
+not block Milestone 5A because it affects a display value rather than the
+primary key. Tracked as **FU-24**.
+
+**Implementation impact.** Milestone 5A may now define the incident
+identity type. **Security impact:** enumeration resistance improves over
+a serial key; the UUIDv7 timestamp leak is immaterial because `opened_at`
+is returned anyway. **Licence impact:** `uuid` is MIT/Apache-2.0, to be
+verified and recorded before use, not assumed.
+
 ## Follow-Up
 
-- [ ] **BQ-5** — owner resolves UUID versus the ADR 0009 precedent.
+- [x] **BQ-5** — resolved 2026-08-22: UUIDv7, conditional on dependency
+      review.
+- [ ] **FU-24** — decide whether the incident number resets annually.
 - [ ] **BQ-7** — owner approves or refuses new dependencies for Phase 5.
 - [ ] Add `uuid` to
       [dependency-license-matrix.md](../../dependency-license-matrix.md)
       if BQ-7 is approved.
-- [ ] Decide whether the incident number resets annually.
+- [ ] Verify `uuid` published metadata and licence before adding it.

@@ -64,7 +64,7 @@ to `wetechinetmon_detector_*`:
 
 | Label | Values |
 |---|---|
-| `state`, `from`, `to` | 8 |
+| `state`, `from`, `to` | 7 |
 | `severity` | 4 |
 | `priority` | 4 |
 | `category` | 10 |

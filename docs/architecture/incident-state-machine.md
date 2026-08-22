@@ -28,8 +28,10 @@ FR-5.1 lists a single machine that includes both — `Normal → Suspected →
 Confirmed → AwaitingApproval → MitigationPending → Mitigating → HoldDown
 → Recovering → Closed / Failed`. Phase 5 implements the operator-facing
 half. The mitigation states are **deferred to Phase 7**, not silently
-dropped: see **BQ-6**, which asks the owner whether they should be absent
-or present-but-unreachable.
+dropped. **BQ-6 was resolved on 2026-08-22**: they are absent, not
+present-but-unreachable, because an enum a client can read still
+advertises a capability that does not exist. FR-5.1 itself still needs
+amending to match — **FU-27**.
 
 ## States
 
@@ -42,7 +44,30 @@ or present-but-unreachable.
 | `Recovering` | Traffic has cleared; confirmation period running | No |
 | `Resolved` | Recovery confirmed or operator-resolved | No |
 | `Closed` | Finished; the only terminal state | **Yes** |
-| `Suppressed` | Known-noise, deliberately muted | No |
+
+**Seven states.** Two things that look like states are deliberately not
+states, decided 2026-08-22 and recorded in
+[ADR 0014](decisions/0014-incident-state-machine.md).
+
+**`Reopened` is a transition, not a state.** A state should describe a
+durable condition, and "was reopened" is an event in the past. An
+incident that has been reopened is `Open` — the fact that it was reopened
+lives in `reopened_at`, `reopen_count`, and a timeline entry. Modelling
+it as a state would mean answering "what does a reopened incident that is
+now being investigated look like?" with either a second state field or a
+lie.
+
+**`Suppressed` is an attribute, not a state.** This was originally
+modelled as a state and the change fixes a real defect rather than
+tidying the diagram. Suppression is orthogonal to lifecycle position: it
+describes whether an incident *alerts*, not where the human response has
+got to. As a state it collided with the lifecycle — `UnsuppressIncident`
+had to send the incident somewhere, and it sent it to `Open`, **silently
+destroying the progress of an incident that had been `Investigating`**.
+That is precisely the bug `Recovering` avoids by storing
+`state_before_recovering`, and needing a second restoration field was the
+signal that the modelling was wrong. As an attribute, the lifecycle state
+is simply never touched, so there is nothing to restore.
 
 `Failed` from FR-5.1 is deliberately **not** an incident state. In FR-5.1
 it means "mitigation failed", which is a Phase 7 concept. An incident
@@ -84,10 +109,12 @@ incident that was `Investigating` when traffic briefly dipped returns to
 `Investigating`, not to `Open` — losing the operator's progress because
 traffic flickered would be a bug.
 
-`Suppressed` is deliberately absent from every automatic transition. A
+Suppression is deliberately absent from every automatic transition. A
 suppressed incident absorbs events silently: they are linked and counted,
-metrics update, and no state changes. That is the entire point of
-suppression, and an automatic transition out of it would defeat it.
+metrics update, and its lifecycle state advances normally underneath.
+What suppression withholds is *attention* — it is the flag a future
+notification phase must consult — and an automatic change to it would
+defeat the point.
 
 ### Operator transitions
 
@@ -97,10 +124,8 @@ suppression, and an automatic transition out of it would defeat it.
 | `BeginInvestigation` | `Open`, `Acknowledged`, `Monitoring` | `Investigating` | `incident.investigate` |
 | `MarkMonitoring` | `Acknowledged`, `Investigating` | `Monitoring` | `incident.investigate` |
 | `ResolveIncident` | `Open`, `Acknowledged`, `Investigating`, `Monitoring`, `Recovering` | `Resolved` | `incident.resolve` |
-| `CloseIncident` | `Resolved`, `Suppressed` | `Closed` | `incident.close` |
+| `CloseIncident` | `Resolved` | `Closed` | `incident.close` |
 | `ReopenIncident` | `Closed`, `Resolved` | `Open` | `incident.reopen` |
-| `SuppressIncident` | `Open`, `Acknowledged`, `Investigating`, `Monitoring` | `Suppressed` | `incident.suppress` |
-| `UnsuppressIncident` | `Suppressed` | `Open` | `incident.suppress` |
 
 Non-transitioning commands, which mutate the incident without changing
 state: `AssignIncident`, `UnassignIncident`, `ClaimIncident`,
@@ -108,7 +133,29 @@ state: `AssignIncident`, `UnassignIncident`, `ClaimIncident`,
 (`incident.note.create`); `ChangeSeverity`
 (`incident.severity.change`); `ChangePriority`
 (`incident.priority.change`); `AddTag` / `RemoveTag`
-(`incident.update`).
+(`incident.update`); and `SuppressIncident` / `UnsuppressIncident`
+(`incident.suppress`), which now set and clear the suppression attribute
+without moving the incident through the lifecycle.
+
+### Suppression as an attribute
+
+Three fields on the incident, none of them the lifecycle state:
+
+| Field | Notes |
+|---|---|
+| `suppressed_until` | `TIMESTAMPTZ`, **mandatory** when suppressing |
+| `suppression_reason` | Mandatory free text |
+| `suppressed_by` | Actor reference |
+
+`suppressed` is derived: `suppressed_until IS NOT NULL AND
+suppressed_until > now()`. Deriving rather than storing a boolean means
+suppression cannot outlive its own expiry through a missed sweep — an
+expired suppression stops applying whether or not anything ran.
+
+An indefinite suppression is how a real attack gets missed, so the expiry
+stays mandatory. Suppression is independently queryable from state:
+`GET /incidents?state=investigating&suppressed=true` is a meaningful and
+answerable question, which it was not while the two shared one field.
 
 Each still increments `version` and writes timeline and audit entries. A
 severity change that left no trace would defeat the point of having
@@ -135,8 +182,10 @@ machine-readable code, never a silent no-op. Specifically:
 - No transition may skip `Resolved` on the way to `Closed`. Closing
   directly from `Investigating` would lose the distinction between "we
   fixed it" and "we gave up".
-- `Suppressed` may not be resolved. Unsuppress first, so the timeline
-  records that someone consciously took it out of suppression.
+- A suppressed incident **may** be resolved and closed. Suppression
+  withholds attention; it does not freeze the lifecycle, and forcing an
+  operator to unsuppress before closing known noise is friction with no
+  audit value. Both the suppression and the closure are on the timeline.
 
 Following the pattern Phase 4 used for `DetectionState`, an illegal edge
 should be **refused by a guard** rather than assigned, so that a future

@@ -1,8 +1,10 @@
 # 0014. The Incident State Machine Does Not Mirror the Detector's
 
-Status: Proposed — **partly blocked on BQ-6, BQ-8, BQ-9**
+Status: **Accepted** for the state set and mitigation boundary (BQ-6
+resolved 2026-08-22). Timing defaults remain **open** pending BQ-8 and
+BQ-9.
 Date: 2026-08-22
-Deciders: Repository owner (pending review)
+Deciders: Repository owner — decided 2026-08-22
 
 ## Context
 
@@ -69,9 +71,9 @@ Define all FR-5.1 states, leave the mitigation ones unreachable.
 **Option B**, with the deviation from FR-5.1 recorded explicitly and
 **BQ-6** raised so the owner can accept it or choose Option C.
 
-Eight states: `Open`, `Acknowledged`, `Investigating`, `Monitoring`,
-`Recovering`, `Resolved`, `Closed`, `Suppressed`. `Closed` is the only
-terminal state. Full matrix in
+**Seven states:** `Open`, `Acknowledged`, `Investigating`, `Monitoring`,
+`Recovering`, `Resolved`, `Closed`. `Closed` is the only terminal state.
+Full matrix in
 [the state machine document](../incident-state-machine.md).
 
 Key sub-decisions:
@@ -105,10 +107,61 @@ window, 24-hour auto-close — are **recommendations**. **BQ-8** (must
 critical incidents be closed manually?) and **BQ-9** (default reopen
 window?) are the owner's.
 
+## Owner Decision — 2026-08-22
+
+**BQ-6 approved.** Mitigation lifecycle stays **outside** the core
+incident state machine. Scope:
+
+- The Phase 5 state machine contains **no** mitigation workflow state —
+  not `AwaitingApproval`, `MitigationPending`, `Mitigating`,
+  `MitigationFailed`, `WithdrawalPending`, `Withdrawing`, or `HoldDown`.
+  They are not present-but-unreachable either; Option C was considered
+  and rejected, because an enum a client can read still advertises a
+  capability that does not exist.
+- The incident carries a **read-only, non-authoritative** mitigation
+  reference seam: a summary field whose Phase 5 value is always `none`,
+  and reserved outbox event types nothing consumes.
+- **Mitigation status must never control the incident lifecycle.** The
+  two are independently queryable, and a future mitigation domain owns
+  its own records, identifiers, and audit history. One incident may
+  eventually have several mitigation operations, which is a second reason
+  a single status field on the incident could never have been
+  authoritative.
+- Phase 5 executes no mitigation and defines no production BGP action.
+
+### Two things that are not states
+
+Also decided 2026-08-22, after review:
+
+**`Reopened` is a transition, not a state.** A state describes a durable
+condition; "was reopened" is a past event. A reopened incident is `Open`,
+with `reopened_at`, `reopen_count`, and a timeline entry carrying the
+history. This was already the design and is now recorded as deliberate.
+
+**`Suppressed` is an attribute, not a state.** This *is* a change, and it
+fixes a defect rather than tidying the diagram. Suppression is orthogonal
+to lifecycle position — it governs whether an incident *alerts*, not
+where the human response has reached. Modelled as a state it collided
+with the lifecycle: `UnsuppressIncident` had to send the incident
+somewhere and sent it to `Open`, **silently discarding the progress of an
+incident that had been `Investigating`**. That is exactly the bug
+`Recovering` avoids by storing `state_before_recovering`, and needing a
+second restoration field was the signal the modelling was wrong. As three
+columns — `suppressed_until`, `suppression_reason`, `suppressed_by` —
+the lifecycle is untouched and there is nothing to restore. `suppressed`
+is *derived* from the expiry, so a suppression cannot outlive its own
+deadline through a missed sweep.
+
+The mandatory expiry is unchanged: an indefinite suppression is how a
+real attack gets missed.
+
 ## Consequences
 
 **Easier.** One authority for "is traffic abnormal". Every state is
-reachable and means something. Operator workflow is modelled on its own
+reachable and means something. The core lifecycle is small and
+operationally unambiguous — seven states, one terminal. Suppression and
+lifecycle are independently queryable, so "show me suppressed incidents
+that are still being investigated" is answerable. Operator workflow is modelled on its own
 terms. Phase 7 adds mitigation states without unpicking anything.
 
 **Harder.** A documented deviation from FR-5.1 that needs approval.
@@ -131,9 +184,10 @@ an incident correctly and closing one that is still happening.
 
 ## Follow-Up
 
-- [ ] **BQ-6** — accept the FR-5.1 deviation, or choose Option C.
-- [ ] **BQ-8** — manual closure for critical incidents?
-- [ ] **BQ-9** — default reopen window.
+- [x] **BQ-6** — resolved 2026-08-22: mitigation states stay out; a
+      read-only reference seam remains.
+- [ ] **BQ-8** — manual closure for critical incidents? **Still open.**
+- [ ] **BQ-9** — default reopen window. **Still open.**
 - [ ] Update [functional-requirements.md](../../functional-requirements.md)
       FR-5.1 to reference this ADR once approved, so the requirement and
       the design stop disagreeing.
