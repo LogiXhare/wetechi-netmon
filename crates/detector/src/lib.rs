@@ -11,6 +11,7 @@
 //! docs/security/detection-safety.md and ADR 0007.
 
 pub mod clock;
+pub mod config;
 pub mod engine;
 pub mod evaluate;
 pub mod event;
@@ -23,6 +24,10 @@ pub mod state;
 pub mod window;
 
 pub use clock::{Clock, SystemClock, TestClock};
+pub use config::{
+    load_policies, CompiledPolicies, ConfigError, Magnitude, PolicyDefaults, PolicyDocument,
+    PolicyEntry, TenantEntry, POLICY_SCHEMA_VERSION,
+};
 pub use engine::{cycle, DetectionEngine, EngineConfig, EngineReport, ThresholdDetectionEngine};
 pub use evaluate::{evaluate, Evaluation, MatchedReason, SkipReason, SkippedMetric};
 pub use event::{

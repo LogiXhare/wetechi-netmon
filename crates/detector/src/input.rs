@@ -128,9 +128,17 @@ impl ScopeType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ScopeId {
-    Host { addr: IpAddr },
-    Network { addr: IpAddr, prefix_len: u8 },
-    Hostgroup { name: String },
+    Host {
+        addr: IpAddr,
+    },
+    Network {
+        addr: IpAddr,
+        #[serde(rename = "prefixLen")]
+        prefix_len: u8,
+    },
+    Hostgroup {
+        name: String,
+    },
 }
 
 impl std::fmt::Display for ScopeId {
