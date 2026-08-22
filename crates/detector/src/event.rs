@@ -299,9 +299,13 @@ impl EventFactory {
             sequence: context.sequence,
             kind,
 
-            policy_id: policy.id.clone(),
+            // Identity comes from the transition, not the policy
+            // argument: the transition records what was actually in
+            // force when the machine moved, which for a close triggered
+            // by a policy rewrite is not the policy now loaded.
+            policy_id: transition.policy_id.clone(),
+            policy_version: transition.policy_version,
             policy_name: policy.name.clone(),
-            policy_version: policy.version,
             severity: policy.severity,
             execution_mode: policy.execution_mode,
             action,
@@ -327,6 +331,87 @@ impl EventFactory {
             sampling: snapshot.sampling,
             flows_observed: snapshot.flows_observed,
             exporters_observed: snapshot.exporters_observed,
+            snapshots_in_detection: context.snapshots_in_detection,
+
+            summary,
+        })
+    }
+
+    /// Builds an end event for a detection that was closed without a
+    /// snapshot — because its data stopped arriving, or because its
+    /// policy went away.
+    ///
+    /// Every observation field is left at its zero value rather than
+    /// carrying the last figures seen. Reporting a stale rate as if it
+    /// were current is how a post-mortem ends up describing traffic that
+    /// had already stopped; the `reason` on the event says what actually
+    /// happened, and `peak` still records how bad it got.
+    pub fn build_closing(
+        &self,
+        record: &SignalRecord,
+        policy: &DetectionPolicy,
+        closed_wall: SystemTime,
+    ) -> Option<DetectionEvent> {
+        let action = ActionTaken::for_mode(policy.execution_mode)?;
+        let transition = &record.transition;
+        let context = &record.detection;
+        let key = &transition.key;
+        let target = EventTarget {
+            tenant: key.tenant.clone(),
+            scope_type: key.scope_type,
+            scope_id: key.scope_id.clone(),
+            display: key.scope_id.to_string(),
+            direction: key.direction,
+            address_family: key.address_family,
+        };
+        let detection_id = self.detection_id(&target, context.started_at);
+        let duration = transition.at.saturating_duration_since(context.started_at);
+        let summary = format!(
+            "ended ({}): {} {} {} after {}s under policy {}",
+            transition.reason.as_str(),
+            target.direction.as_str(),
+            target.scope_type.as_str(),
+            target.display,
+            duration.as_secs(),
+            policy.id
+        );
+
+        Some(DetectionEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            event_id: self.next_event_id(),
+            dedup_key: dedup_key(&detection_id, EventKind::Ended, context.sequence),
+            detection_id,
+            sequence: context.sequence,
+            kind: EventKind::Ended,
+
+            policy_id: transition.policy_id.clone(),
+            policy_version: transition.policy_version,
+            policy_name: policy.name.clone(),
+            severity: policy.severity,
+            execution_mode: policy.execution_mode,
+            action,
+            labels: policy.labels.clone(),
+
+            target,
+
+            previous_state: transition.from,
+            state: transition.to,
+            reason: transition.reason,
+
+            detected_at_ms: unix_millis(context.started_wall),
+            observed_at_ms: unix_millis(closed_wall),
+            duration_ms: duration.as_millis().min(u64::MAX as u128) as u64,
+            window_ms: policy.window.as_millis().min(u64::MAX as u128) as u64,
+
+            matched: Vec::new(),
+            peak: context.peak.clone(),
+            skipped: Vec::new(),
+            rates: MetricRates::default(),
+
+            completeness: DataCompleteness::default(),
+            sampling: SamplingStatus::default(),
+            flows_observed: 0,
+            exporters_observed: 0,
             snapshots_in_detection: context.snapshots_in_detection,
 
             summary,

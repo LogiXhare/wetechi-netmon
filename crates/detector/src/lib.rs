@@ -11,15 +11,19 @@
 //! docs/security/detection-safety.md and ADR 0007.
 
 pub mod clock;
+pub mod engine;
 pub mod evaluate;
 pub mod event;
 pub mod input;
+pub mod metrics;
 pub mod policy;
 pub mod precedence;
+pub mod sink;
 pub mod state;
 pub mod window;
 
 pub use clock::{Clock, SystemClock, TestClock};
+pub use engine::{cycle, DetectionEngine, EngineConfig, EngineReport, ThresholdDetectionEngine};
 pub use evaluate::{evaluate, Evaluation, MatchedReason, SkipReason, SkippedMetric};
 pub use event::{
     dedup_key, ActionTaken, DetectionEvent, EventFactory, EventKind, EventTarget,
@@ -29,11 +33,13 @@ pub use input::{
     AddressFamily, CompletenessFlag, DataCompleteness, DetectionSnapshot, MetricKind, MetricRates,
     MetricUnit, SamplingStatus, ScopeId, ScopeKey, ScopeType, TrafficDirection, ALL_METRIC_KINDS,
 };
+pub use metrics::{CountingMetrics, DetectionMetrics, NoopMetrics};
 pub use policy::{
     ClearPercent, DetectionPolicy, ExecutionMode, PolicyDraft, PolicyError, PolicySelector,
     Severity, TenantPrefixes, Thresholds, WILDCARD_TENANT,
 };
 pub use precedence::{Candidate, PolicySet, PrecedenceReason, Selection};
+pub use sink::{DetectionEventSink, FanOutSink, InMemorySink, NullSink, SinkError, TracingSink};
 pub use state::{
     DetectionContext, DetectionState, Expiry, ScopeState, Signal, SignalRecord, StateTable,
     StateTableConfig, StateTableStats, StateTransition, StepIgnored, StepOutcome, Suppression,

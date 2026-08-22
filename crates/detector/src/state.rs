@@ -908,40 +908,51 @@ impl StateTable {
         Some((transition, context))
     }
 
-    /// Drops every scope whose winning policy has gone away.
+    /// Drops every scope whose winning policy has gone away or been
+    /// rewritten.
     ///
-    /// `still_selected` answers "does any policy still win this scope?".
+    /// `winner` answers "which policy, at which version, wins this scope
+    /// now?". A scope whose answer is `None`, or names a different
+    /// policy or version than the one its state was accumulated under,
+    /// is reset: the timers it accumulated were measured against
+    /// thresholds that no longer exist.
+    ///
+    /// Doing this at swap time rather than on the next snapshot is what
+    /// lets the caller build the end event from the policy that was
+    /// actually in force, which by the next snapshot it no longer has.
+    ///
     /// Open detections are closed with a transition the caller can turn
     /// into an end event; idle ones are simply removed.
-    pub fn withdraw_unselected<F>(
+    pub fn withdraw_stale_selection<F>(
         &mut self,
         now: Instant,
         wall: SystemTime,
-        mut still_selected: F,
+        mut winner: F,
     ) -> Vec<Expiry>
     where
-        F: FnMut(&ScopeKey) -> bool,
+        F: FnMut(&ScopeKey) -> Option<(String, u32)>,
     {
-        let doomed: Vec<ScopeKey> = self
-            .entries
-            .keys()
-            .filter(|key| !still_selected(key))
-            .cloned()
-            .collect();
+        let mut doomed: Vec<(ScopeKey, TransitionReason)> = Vec::new();
+        for (key, entry) in &self.entries {
+            match winner(key) {
+                None => doomed.push((key.clone(), TransitionReason::PolicyWithdrawn)),
+                Some((id, version)) if id != entry.policy_id || version != entry.policy_version => {
+                    doomed.push((key.clone(), TransitionReason::PolicyChanged))
+                }
+                Some(_) => {}
+            }
+        }
         let mut expiries = Vec::new();
-        for key in doomed {
+        for (key, reason) in doomed {
             let Some(mut entry) = self.entries.remove(&key) else {
                 continue;
             };
+            if reason == TransitionReason::PolicyChanged {
+                self.stats.policy_changes += 1;
+            }
             let was_open = entry.state.is_open();
             let opened = entry.active_since.zip(entry.active_since_wall);
-            let transition = entry.transition(
-                DetectionState::Idle,
-                TransitionReason::PolicyWithdrawn,
-                now,
-                wall,
-                Vec::new(),
-            );
+            let transition = entry.transition(DetectionState::Idle, reason, now, wall, Vec::new());
             let detection = was_open.then(|| entry.context(opened)).flatten();
             expiries.push(Expiry {
                 key,
@@ -1686,10 +1697,10 @@ mod tests {
             5_000_000,
         );
 
-        let expiries = table.withdraw_unselected(
+        let expiries = table.withdraw_stale_selection(
             start + Duration::from_secs(3),
             SystemTime::UNIX_EPOCH,
-            |_| false,
+            |_| None,
         );
         assert_eq!(expiries.len(), 1);
         assert_eq!(
@@ -1698,6 +1709,57 @@ mod tests {
         );
         assert_eq!(expiries[0].signal, Some(Signal::Ended));
         assert!(table.is_empty());
+    }
+
+    #[test]
+    fn a_rewritten_policy_resets_the_scope_at_swap_time() {
+        let policy = policy();
+        let mut table = table();
+        let start = Instant::now();
+        feed(&mut table, &policy, start, 5_000_000);
+        feed(
+            &mut table,
+            &policy,
+            start + Duration::from_secs(2),
+            5_000_000,
+        );
+
+        let expiries = table.withdraw_stale_selection(
+            start + Duration::from_secs(3),
+            SystemTime::UNIX_EPOCH,
+            |_| Some(("p-host-bps".to_string(), 2)),
+        );
+        assert_eq!(expiries.len(), 1);
+        let transition = expiries[0].transition.as_ref().expect("closed");
+        assert_eq!(transition.reason, TransitionReason::PolicyChanged);
+        assert_eq!(
+            transition.policy_version, 1,
+            "the transition names the version that was in force"
+        );
+        assert_eq!(table.stats().policy_changes, 1);
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn an_unchanged_selection_leaves_the_scope_alone() {
+        let policy = policy();
+        let mut table = table();
+        let start = Instant::now();
+        feed(&mut table, &policy, start, 5_000_000);
+        feed(
+            &mut table,
+            &policy,
+            start + Duration::from_secs(2),
+            5_000_000,
+        );
+
+        let expiries = table.withdraw_stale_selection(
+            start + Duration::from_secs(3),
+            SystemTime::UNIX_EPOCH,
+            |_| Some(("p-host-bps".to_string(), 1)),
+        );
+        assert!(expiries.is_empty());
+        assert_eq!(table.len(), 1);
     }
 
     #[test]
