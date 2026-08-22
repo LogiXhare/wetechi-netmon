@@ -56,13 +56,14 @@ mitigate. See [ADR 0011](decisions/0011-incident-domain-boundary.md).
 | [Implementation plan](../development/phase5-implementation-plan.md) | Milestones 5A–5F |
 | [Acceptance criteria](../development/phase5-acceptance-criteria.md) | Definition of done |
 
-Seven decision records: [0011](decisions/0011-incident-domain-boundary.md),
+Eight decision records: [0011](decisions/0011-incident-domain-boundary.md),
 [0012](decisions/0012-incident-event-ingestion.md),
 [0013](decisions/0013-incident-identity.md),
 [0014](decisions/0014-incident-state-machine.md),
 [0015](decisions/0015-incident-operational-storage.md),
 [0016](decisions/0016-incident-concurrency-and-idempotency.md),
-[0017](decisions/0017-incident-community-enterprise-boundary.md).
+[0017](decisions/0017-incident-community-enterprise-boundary.md),
+[0018](decisions/0018-phase5-dependency-selection.md).
 
 ## The Phase 4 event model, as it actually exists
 
@@ -139,22 +140,26 @@ during implementation.
    `Critical`. Phase 5 reuses them exactly rather than inventing a
    parallel scale that would need a lossy mapping in both directions.
 
-## Decisions that need the owner, not me
+## Owner decisions
 
-Five questions are genuinely the owner's call, recorded as **BQ-5** to
-**BQ-9** in [blocking questions](../blocking-questions.md). Phase 5
-implementation should not start until they are resolved, because each one
-changes the schema or the state machine rather than just the wording.
+Three of the five blocking questions were resolved on **2026-08-22**.
+Two remain open, and neither blocks implementation.
 
-- **BQ-5** FR-5.2 says persist a **UUID**; ADR 0009 deliberately avoided
-  the `uuid` crate. Which wins for incidents?
-- **BQ-6** FR-5.1 lists mitigation states in the *incident* machine.
-  Phase 5 cannot implement them. Defer them, or model them as states that
-  exist but are unreachable?
-- **BQ-7** May Phase 5 add PostgreSQL and an HTTP framework as
-  dependencies, given the current zero-third-party-crate posture?
-- **BQ-8** Should `Critical` incidents require manual closure?
-- **BQ-9** What is the default reopen window?
+| # | Question | Outcome |
+|---|---|---|
+| **BQ-5** | UUID requirement vs the ADR 0009 precedent | **Resolved** — UUIDv7 for internal incident identity, conditional on a dependency and licence review. Phase 4 event IDs unchanged |
+| **BQ-6** | Mitigation states in the incident machine | **Resolved** — excluded, with a read-only reference seam. Also: `Reopened` is a transition, and **`Suppressed` became an attribute**, dropping the lifecycle to seven states |
+| **BQ-7** | PostgreSQL and HTTP dependencies | **Resolved** — approved architecturally. **No crate is chosen**; selection goes through [ADR 0018](decisions/0018-phase5-dependency-selection.md) |
+| **BQ-8** | Manual closure for `critical` | **OPEN** — recommendation recorded; configuration default, blocks nothing |
+| **BQ-9** | Default reopen window | **OPEN** — recommendation recorded; configuration default, blocks nothing |
+
+Full wording, options, and reasoning in
+[blocking questions](../blocking-questions.md).
+
+**Milestone 5A is unblocked.** The identity type and the state set — the
+two things that gated it — are decided. BQ-8 and BQ-9 are runtime
+configuration values that can be set before first production use, so
+deferring them costs only that the shipped default may need changing.
 
 ## Out of scope, explicitly
 

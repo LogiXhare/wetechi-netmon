@@ -30,6 +30,36 @@ Three layers, in order of reliability:
 confirms the resource exists, which turns any ID into an existence
 oracle. This applies to every endpoint including audit reads.
 
+Concealment is not authorization, and it is worth being blunt that the
+`404` is a *second* line. The first is that the query never selected the
+row: the tenant predicate is applied in the repository, so a cross-tenant
+read finds nothing rather than finding something and then hiding it. If
+the status code were the only control, a single handler that forgot to
+check would leak the body.
+
+For that concealment to hold, five things follow, and each is a test:
+
+| Surface | Rule |
+|---|---|
+| Single fetch | Another tenant's id is indistinguishable from a nonexistent id |
+| **Incident number lookup** | `WNM-2026-000123` resolves within the caller's tenant only, and follows the same rule — numbers are per-tenant, so the same string may exist in two tenants and must resolve to at most the caller's |
+| **List and search** | Filters are applied *after* the tenant predicate, never before, so a count or a page total can never include another tenant's rows |
+| **Export** | Runs through the same tenant-scoped repository as the API; there is no separate export query path to forget the predicate |
+| **Cursors** | Signed and carrying the tenant; a cursor from another tenant is rejected, not honoured |
+
+**Timing.** A cross-tenant lookup and a genuinely-absent lookup should
+take indistinguishable time. Both resolve to the same tenant-scoped query
+returning no rows, so they are naturally similar; the case to avoid is an
+implementation that checks existence first and *then* authorizes, which
+is both slower and observable. Perfect timing equivalence is not claimed
+— it is not achievable against a determined attacker with a database
+underneath — and the residual is accepted and recorded under T-04.
+
+**Platform roles** may legitimately need to distinguish absence across
+tenants, for support. That is a distinct permission
+(`platform.incident.read_all`), never implicit, and every such read is
+audited with the tenant that was crossed.
+
 Cross-tenant assignment is refused: the assignee must belong to the
 incident's tenant, or to a platform-level team explicitly permitted to
 work across tenants. Platform roles are distinct from tenant roles and

@@ -41,7 +41,8 @@ constraints:
 PRIMARY KEY (incident_id)
 UNIQUE (tenant_id, incident_number)
 CHECK (state IN ('open','acknowledged','investigating','monitoring',
-                 'recovering','resolved','closed','suppressed'))
+                 'recovering','resolved','closed'))
+CHECK (suppressed_until IS NULL OR suppression_reason IS NOT NULL)
 CHECK (severity IN ('info','minor','major','critical'))
 CHECK (address_family IN (4,6))
 CHECK (closed_at IS NOT NULL OR state <> 'closed')
@@ -63,8 +64,16 @@ none, and both insert. Enforcing it in application code means enforcing
 it in a race. Enforcing it here means the second insert fails loudly and
 the correlator retries into the update path.
 
+Suppression is three columns — `suppressed_until`, `suppression_reason`,
+`suppressed_by` — and **not** a state, per
+[ADR 0014](decisions/0014-incident-state-machine.md). The `CHECK` above
+makes a suppression without a reason unrepresentable; the mandatory
+expiry is enforced at the command boundary because it is a policy bound
+rather than a data invariant.
+
 Supporting indexes: `(tenant_id, state, opened_at DESC)` for the default
-queue view; `(tenant_id, assigned_user_id) WHERE state <> 'closed'`;
+queue view; `(tenant_id, suppressed_until) WHERE suppressed_until IS NOT
+NULL` so an alerting consumer can find live suppressions cheaply; `(tenant_id, assigned_user_id) WHERE state <> 'closed'`;
 `(tenant_id, target_id)`; `(tenant_id, closed_at DESC)` for reopen-window
 lookups; GIN on `tags`.
 
@@ -155,6 +164,29 @@ live on a timeline. Fields: `audit_id`, `occurred_at`, `tenant_id`,
 `result` (`allowed`, `denied`, `error`), `reason`, `source_ip`,
 `user_agent`, `request_id`, `trace_id`, `before` (JSONB), `after`
 (JSONB), `schema_version`.
+
+### Auditing a command that was denied
+
+A denied command has no incident mutation, so it has no transaction to
+ride along with — and it is exactly the record a security review needs.
+Audit therefore has **two** write paths, and only one of them is the
+mutation transaction:
+
+| Path | When | Transaction |
+|---|---|---|
+| **In-transaction** | The command was authorized and mutated an incident | The same transaction as state, timeline, and outbox. If the audit write fails, the mutation rolls back |
+| **Standalone** | Authorization denied, tenant mismatch, validation rejected, or the resource does not exist | Its own short transaction, committed independently, **before** the response is returned |
+
+The standalone path must not be able to fail silently. If it cannot
+commit, the request returns `503` rather than proceeding unaudited: a
+denial that is not recorded is indistinguishable from one that never
+happened, which is the whole value of the record.
+
+The standalone path records what it can — actor, action, attempted
+resource id, the tenant *of the caller*, result, and reason — and
+deliberately **not** whether the target resource actually exists. Storing
+that would rebuild, inside the audit log, the existence oracle the
+404-not-403 rule exists to prevent.
 
 Append-only, and `source_ip` and `user_agent` are recorded only where
 they are trustworthy — behind a proxy that sets them, with the proxy

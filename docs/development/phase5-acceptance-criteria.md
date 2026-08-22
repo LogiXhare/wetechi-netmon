@@ -55,9 +55,16 @@ into "approved".
 | 41 | Working tree clean after commits | Verified |
 | 42 | Blocking questions raised, not silently decided | Done — BQ-5 to BQ-9 |
 
-**Gate 1 is not passed until the owner resolves BQ-5 through BQ-9.**
-Producing the documents is this session's work; approving them is not
-something this session can do on its own behalf.
+**Gate 1 status as of 2026-08-22.** BQ-5, BQ-6, and BQ-7 are **resolved**
+— see [blocking questions](../blocking-questions.md). BQ-8 and BQ-9
+remain open, and neither blocks implementation: both are runtime
+configuration defaults, and the mechanisms they parameterise are already
+decided.
+
+Gate 1 is therefore **substantially passed**, with the caveat that two
+production defaults have not yet been consciously chosen. Shipping either
+default unreviewed would be the failure mode this register exists to
+prevent.
 
 ## Gate 2 — Implementation complete
 

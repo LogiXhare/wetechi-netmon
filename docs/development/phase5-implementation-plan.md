@@ -13,17 +13,31 @@ logic at once.
 
 ## Before any milestone starts
 
-These block 5A, not just the phase:
+**Resolved 2026-08-22 — 5A and 5B are unblocked:**
 
-- **BQ-5** incident identity — determines the primary key type
-- **BQ-6** FR-5.1 deviation — determines the state set
-- **BQ-7** dependency approval — determines whether 5B is possible at all
-- **BQ-8** manual closure for critical — a state-machine rule
-- **BQ-9** reopen window default — a correlation rule
+- **BQ-5** incident identity → **UUIDv7**, conditional on a dependency and
+  licence review. Determines the primary key type; 5A may proceed.
+- **BQ-6** FR-5.1 deviation → mitigation states **excluded**; seven-state
+  lifecycle; suppression is an attribute. Determines the state set; 5A may
+  proceed.
+- **BQ-7** dependency approval → **approved architecturally**. 5B may
+  proceed once [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md)
+  selects crates with verified evidence (**FU-25**, **FU-26**).
 
-BQ-5, BQ-6, and BQ-7 are hard blockers: each changes code that 5A writes.
-BQ-8 and BQ-9 are configuration defaults and could be deferred to 5C, but
-resolving all five together is cheaper than revisiting.
+**Still open, blocking nothing:**
+
+- **BQ-8** manual closure for `critical` — a configuration default
+  (`INCIDENT_AUTO_CLOSE_MIN_SEVERITY`), settable before first production
+  use. Recommendation recorded; owner decision pending.
+- **BQ-9** reopen window — a configuration default
+  (`INCIDENT_REOPEN_WINDOW_SECS`). The correlation *mechanism* is decided
+  and unaffected by the number. Recommendation recorded; owner decision
+  pending.
+
+Neither open question changes code that any milestone writes, so
+implementation is not gated on them. What is gated is shipping a
+production default nobody consciously chose, which is why both remain
+recorded as open rather than quietly defaulted.
 
 ## Milestone 5A — Domain and state machine
 
@@ -48,7 +62,7 @@ attention goes to the rules rather than to wiring.
 
 ## Milestone 5B — PostgreSQL persistence
 
-**Blocked on BQ-7.**
+**BQ-7 resolved; gated on ADR 0018 crate selection (FU-25, FU-26).**
 
 Schema and forward-only migrations for all ten tables; the partial unique
 index; real repository implementations; optimistic concurrency;
@@ -118,10 +132,11 @@ published; restore tested rather than assumed; acceptance criteria met.
 ## Dependency graph
 
 ```text
-BQ-5, BQ-6, BQ-7 ──► 5A ──► 5B ──► 5C ──► 5D ──► 5E ──► 5F
-                              │                    │
-                              └── 5D may start ────┘
-                                  once 5B lands
+BQ-5, BQ-6 (resolved) ──► 5A ──► 5B ──► 5C ──► 5D ──► 5E ──► 5F
+                                  ▲       │              │
+   BQ-7 (resolved) + ADR 0018 ────┘       └── 5D may ────┘
+   crate selection                            start once
+                                              5B lands
 ```
 
 5D depends on 5B for persistence, not on 5C, so API work can proceed in
