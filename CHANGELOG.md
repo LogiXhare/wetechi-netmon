@@ -8,6 +8,70 @@ once versioned releases begin (see [ROADMAP.md](ROADMAP.md)).
 
 ## [Unreleased]
 
+### Added — Phase 5 incident management planning
+
+- Phase 5 architecture and documentation planning. **No Phase 5 code,
+  schema, migration, or dependency was added** — this is design awaiting
+  review. Twenty-three documents: the
+  [plan](docs/architecture/phase5-incident-management-plan.md), the
+  [domain model](docs/architecture/incident-domain-model.md),
+  [correlation](docs/architecture/incident-correlation.md), the
+  [state machine](docs/architecture/incident-state-machine.md),
+  [persistence](docs/architecture/incident-persistence.md), the
+  [security model](docs/architecture/incident-security-model.md),
+  [API](docs/architecture/incident-api-plan.md) and
+  [CLI](docs/architecture/incident-cli-plan.md) plans,
+  [observability](docs/architecture/incident-observability.md), the
+  [testing plan](docs/architecture/incident-testing-plan.md), a 24-entry
+  [threat model](docs/security/incident-threat-model.md), a
+  [configuration plan](docs/configuration/incident-management-plan.md), an
+  [operations runbook plan](docs/operations/incident-runbook-plan.md), an
+  [API reference plan](docs/api/incident-api-plan.md) with a draft
+  OpenAPI, an
+  [implementation plan](docs/development/phase5-implementation-plan.md),
+  [acceptance criteria](docs/development/phase5-acceptance-criteria.md),
+  and ADRs 0011-0017, all **Proposed**.
+- Five blocking questions raised rather than silently decided: **BQ-5**
+  (FR-5.2 requires a UUID, which contradicts the ADR 0009 precedent),
+  **BQ-6** (FR-5.1 places mitigation states in the incident machine that
+  Phase 5 may not implement), **BQ-7** (Phase 5 needs PostgreSQL and an
+  HTTP framework, changing a zero-third-party-dependency posture),
+  **BQ-8**, and **BQ-9**. Three change code the first milestone would
+  write.
+- Risks **R16**-**R18** and follow-ups **FU-16**-**FU-23**.
+- Documented five gaps between FR-5 and the detection event Phase 4
+  actually produces — most consequentially that `detection_id` is
+  instance-scoped and therefore unusable as a correlation key, since a
+  collector restart mid-attack mints a new one for the same ongoing
+  flood.
+
+### Added — Phase 4 static detection engine
+
+Recorded here after the fact: Phase 4 was merged to `main` on 2026-08-22
+as merge commit `3f0cf3e` (PR #14, 15 signed-off commits) without a
+changelog entry, and this file claims to record all notable changes.
+
+- `crates/detector`: static threshold detection across host, prefix, /24,
+  and hostgroup scopes; direction-aware tumbling-window counters owned by
+  the detector; hysteresis with `triggerFor`, `clearFor`, `holdDown`, and
+  `cooldown`; deterministic policy precedence; strict versioned JSON
+  policies; explainable events with three identifiers and a gapless
+  sequence; observe, alert-only, and dry-run execution modes.
+- ClickHouse `wetechinetmon_detection_events` with 365-day retention,
+  alongside the unchanged 30-day traffic retention.
+- Thirteen `wetechinetmon_detector_*` Prometheus metrics, every label a
+  closed set.
+- Traffic patterns in `flow-replay`, and a full IPFIX-bytes-to-event
+  end-to-end test.
+- ADRs
+  [0007](docs/architecture/decisions/0007-detection-engine-cannot-mitigate.md)-[0010](docs/architecture/decisions/0010-detector-owns-its-windowed-counters.md).
+- **The detection engine cannot mitigate**, structurally rather than by
+  configuration: no crate in its dependency closure can reach a router,
+  and every event carries `executed: false` derived from an exhaustive
+  match. See
+  [detection-safety.md](docs/security/detection-safety.md).
+- 403 tests, no third-party dependency added.
+
 ### Fixed
 
 - `mkdocs build --strict` now exits 0 with zero warnings. It previously

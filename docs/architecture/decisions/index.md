@@ -1,6 +1,7 @@
 # Architecture Decision Records (ADRs)
 
-Status: Phase 4 — ten decisions recorded.
+Status: Phase 5 planning — seventeen decisions recorded; 0011-0017 are
+Proposed and await owner review.
 
 ## Purpose
 
@@ -50,3 +51,10 @@ yet:
 | [0008](0008-detection-policy-configuration.md) | Detection Policy Configuration: JSON, Not YAML | Accepted |
 | [0009](0009-detection-event-identity.md) | Detection Event Identity and Deduplication | Accepted |
 | [0010](0010-detector-owns-its-windowed-counters.md) | The Detector Keeps Its Own Windowed Counters | Accepted |
+| [0011](0011-incident-domain-boundary.md) | The Incident Domain Is Separate From the Detection Domain | Proposed |
+| [0012](0012-incident-event-ingestion.md) | Detection-Event Ingestion: Transactional Outbox, At-Least-Once | Proposed |
+| [0013](0013-incident-identity.md) | Incident Identity and the Human-Readable Incident Number | Proposed |
+| [0014](0014-incident-state-machine.md) | The Incident State Machine Does Not Mirror the Detector's | Proposed |
+| [0015](0015-incident-operational-storage.md) | PostgreSQL Is the Operational Source of Truth for Incidents | Proposed |
+| [0016](0016-incident-concurrency-and-idempotency.md) | Optimistic Concurrency and Fingerprinted Idempotency | Proposed |
+| [0017](0017-incident-community-enterprise-boundary.md) | The Community/Enterprise Seam Is an Extension Point, Not a Limitation | Proposed |

@@ -1,7 +1,7 @@
 # Risk Register
 
-Status: Phase 3
-Last updated: 2026-08-20
+Status: Phase 5 planning
+Last updated: 2026-08-22
 
 Scale: Likelihood (L) and Impact (I) rated Low/Medium/High. This register
 is reviewed and updated at the end of every phase per the master prompt's
@@ -24,6 +24,9 @@ phase-summary requirement.
 | R13 | WeTechi Solutions' own commercial licensing intent (dual-license? proprietary enterprise modules?) is never decided, blocking Phase 1 LICENSE file | M | M | Raised as blocking question; Phase 1 cannot fully complete repository scaffolding without an answer |
 | R14 | Reference lab values (ASNs, IPs, communities in master prompt §4) leak into code as hardcoded defaults instead of configuration | L | M | NFR-7 explicit rule against hardcoding; lab values are reference-only, never defaults baked into binaries |
 | R15 | Long multi-phase project loses coherence across sessions/agents, re-deciding settled questions or drifting from this Phase 0 baseline | M | M | Phase 0 docs act as the durable baseline; every phase must reference and update them rather than restart reasoning from scratch |
+| R16 | Incident tenant isolation is enforced in application code until Phase 8 adds Row-Level Security, so a single missing tenant predicate leaks another tenant's incidents | M | H | Tenant context is a repository constructor argument, making a tenant-less query inexpressible rather than merely discouraged; `tenant_id` on every table so RLS can be enabled without migration; a dedicated cross-tenant isolation suite runs every endpoint as tenant A against tenant B ([threat model](security/incident-threat-model.md) T-05) |
+| R17 | Operator note content is stored verbatim and could execute as stored XSS once a web UI renders it (Phase 6) | M | M | The API returns JSON only and never HTML, and documents notes as untrusted content. Input sanitisation is deliberately **not** used — it destroys the operator's actual words and gives false assurance. Escaping on output is a Phase 6 acceptance requirement (T-08) |
+| R18 | Evidence attachment has no designed access model, because binary evidence storage is out of Phase 5 scope | L | M | Phase 5 stores evidence *references* only, tenant-scoped and authorized on dereference. Binary storage must not ship before its access model is designed (T-22, FU-23) |
 
 ## Review Trigger
 
