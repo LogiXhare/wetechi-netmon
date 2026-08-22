@@ -179,13 +179,29 @@ aborts the clear and returns to `Active`.
 
 ## Restart and staleness
 
-**State is not persisted.** On restart every scope begins at `Idle`, so
-a detection open before the restart is re-derived from live traffic
-rather than resumed from a record that may no longer be true. The
-trade-off is explicit: a restart during an attack costs one `triggerFor`
-of re-detection latency and emits a second start event, which is
-recoverable; resuming a persisted `Active` state that no longer reflects
-reality is not.
+**Runtime state is not persisted.** On restart every scope begins at
+`Idle`, so a detection open before the restart is re-derived from live
+traffic rather than resumed from a record that may no longer be true.
+The trade-off is explicit: a restart during an attack costs one
+`triggerFor` of re-detection latency and emits a second start event,
+which is recoverable; resuming a persisted `Active` state that no longer
+reflects reality is not.
+
+**Detection events are persisted; detector state is not.** These are
+different things and it is worth being blunt about which is which.
+Runtime state — where each scope sits in the state machine, its timers,
+its accumulated peaks — lives only in memory and is deliberately
+disposable, because its only job is to decide what happens next, and
+"what happens next" is better derived from traffic arriving now than
+from a record written before a restart. Detection *events* are the
+opposite: an immutable record of something that was true at an instant,
+written once to `wetechinetmon_detection_events` and never updated.
+Losing runtime state costs one `triggerFor` of latency; losing events
+costs the audit trail. There is deliberately no store abstraction over
+the runtime state, because introducing one would suggest a persistence
+option that is not wanted here — see
+[ADR 0010](decisions/0010-detector-owns-its-windowed-counters.md) for
+where the detector's state lives and why.
 
 **A scope that stops reporting is force-closed.** If no snapshot arrives
 for an open detection for longer than the stale timeout, the detection
