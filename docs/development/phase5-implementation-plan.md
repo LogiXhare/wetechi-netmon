@@ -57,6 +57,21 @@ green.
 **Reviewable because** it is pure logic with no infrastructure, so review
 attention goes to the rules rather than to wiring.
 
+**Status: implemented on `feat/phase5a-incident-domain`, not yet merged.**
+New crate `wetechinetmon-incident`, dependency-free beyond the workspace
+(a path dependency on `wetechinetmon-detector` for its published event
+vocabulary and clock trait only — see the crate's `lib.rs` module doc for
+the exact import boundary and **FU-29** for its current lack of
+mechanical enforcement). Covers domain identities, the seven-state
+lifecycle guard, deterministic correlation with typed target identity,
+category derivation, closure and reopen policy, suppression as an
+attribute, severity/priority, assignment, typed timeline and audit
+records, idempotency with a canonical-bytes fingerprint (not a hash —
+see the crate's `idempotency` module doc), the outbox abstraction, a
+single bounded in-memory `IncidentUnitOfWork`, and a dependency-free
+end-to-end domain test. Awaiting review before merge; Milestone 5B has
+not started.
+
 **5A is database-independent and dependency-free.** It may implement
 incident domain types, the seven-state lifecycle, correlation, reopen
 behaviour, the suppression attribute, severity and priority, assignment

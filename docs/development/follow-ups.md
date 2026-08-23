@@ -59,6 +59,7 @@ Raised when BQ-5, BQ-6, and BQ-7 were resolved.
 | FU-26 | Select the HTTP framework, with verified evidence | [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md) | As FU-25. The runtime choice must follow from the frameworks, not precede them. |
 | FU-27 | Update FR-5.1 to reference ADR 0014 | Nothing | [FR-5.1](../functional-requirements.md) still specifies a single machine containing mitigation states. BQ-6 resolved that they stay out, so the requirement and the design now disagree in writing until FR-5.1 is amended. |
 | FU-28 | Record close-to-recurrence gap distribution | Phase 5C telemetry | BQ-9's reopen window is currently a judgement. Measuring the gap between a close and the next qualifying event on the same correlation key would let the value be chosen from evidence. |
+| FU-29 | Mechanically enforce the incident crate's narrow detector-import boundary | A lint or CI check | [ADR 0011](../architecture/decisions/0011-incident-domain-boundary.md) states `wetechinetmon-incident` may depend on the detector's published event vocabulary and clock only, never `StateTable`, `evaluate`, or policy-matching internals. `wetechinetmon-detector`'s `lib.rs` re-exports both at the same crate root, so nothing in Cargo enforces this today — see `crates/incident/src/lib.rs`'s module doc comment. A grep-based or `cargo-deny`-style check should exist before Milestone 5B adds a second crate the boundary needs to hold for. |
 
 ## Why these are not GitHub issues yet
 
