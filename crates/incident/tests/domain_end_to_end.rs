@@ -10,10 +10,11 @@
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use wetechinetmon_detector::{
-    ActionTaken, AddressFamily, DataCompleteness, DetectionEvent, DetectionState, EventKind,
+    ActionTaken, AddressFamily, Clock, DataCompleteness, DetectionEvent, DetectionState, EventKind,
     EventTarget, ExecutionMode, MatchedReason, MetricKind, MetricRates, SamplingStatus, ScopeId,
     ScopeType, Severity, TestClock, TrafficDirection, TransitionReason,
 };
@@ -23,11 +24,40 @@ use wetechinetmon_incident::authorization::{
 use wetechinetmon_incident::closure::ClosureReason;
 use wetechinetmon_incident::command::Command;
 use wetechinetmon_incident::correlation::TenantId;
+use wetechinetmon_incident::error::IncidentError;
 use wetechinetmon_incident::id::TestIncidentGenerator;
+use wetechinetmon_incident::idempotency::IdempotencyKey;
 use wetechinetmon_incident::incident::NoteVisibility;
 use wetechinetmon_incident::number::InMemoryNumberAllocator;
 use wetechinetmon_incident::state::IncidentState;
+use wetechinetmon_incident::timeline::OperatorCommandKind;
 use wetechinetmon_incident::unit_of_work::{IncidentUnitOfWork, IngestOutcomeKind};
+
+/// Delegates to a shared, externally-advanceable [`TestClock`] so a test
+/// can control elapsed time (reopen windows, auto-close delays) after the
+/// `IncidentUnitOfWork` has already taken ownership of its clock as a
+/// `Box<dyn Clock>`.
+struct SharedClock(Arc<TestClock>);
+
+impl Clock for SharedClock {
+    fn monotonic(&self) -> Instant {
+        self.0.monotonic()
+    }
+
+    fn wall(&self) -> SystemTime {
+        self.0.wall()
+    }
+}
+
+fn uow_with_shared_clock() -> (IncidentUnitOfWork, Arc<TestClock>) {
+    let clock = Arc::new(TestClock::new());
+    let uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(SharedClock(clock.clone())),
+    );
+    (uow, clock)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn event(
@@ -600,17 +630,26 @@ fn duplicate_idempotency_key_replays_and_conflicting_body_conflicts() {
     );
 }
 
+// `failure_injection_documents_the_in_memory_commit_boundary` moved to
+// `crates/incident/src/unit_of_work.rs`'s own `#[cfg(test)] mod tests`:
+// the failure-injection hook it exercises is `pub(crate)` and
+// `cfg(test)`-gated (see M8 in the review), so it is not visible to this
+// separate integration-test compilation unit.
+
+// ---------------------------------------------------------------------
+// B1: a Resolved (not only Closed) incident is a reopen candidate.
+// ---------------------------------------------------------------------
+
 #[test]
-fn atomicity_failure_injection_leaves_no_partial_state() {
-    let mut uow = IncidentUnitOfWork::new(
-        Box::new(TestIncidentGenerator::starting_at(1)),
-        Box::new(InMemoryNumberAllocator::new()),
-        Box::new(TestClock::new()),
-    );
+fn resolved_incident_reopens_within_window_through_ingestion() {
+    let (mut uow, clock) = uow_with_shared_clock();
+    let resolver = FixedBundleResolver;
     let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
-    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 12));
+    let operator = resolver_context(&resolver, "acme", "senior_operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 20));
+
     let started = event(
-        "det-fail",
+        "det-b1a",
         0,
         EventKind::Started,
         "acme",
@@ -619,41 +658,718 @@ fn atomicity_failure_injection_leaves_no_partial_state() {
         5_000_000,
         1_000_000,
     );
-    let incident_id_before = uow
+    let incident_id = uow
         .ingest_detection_event(&correlator, &started)
         .unwrap()
-        .incident_id;
-    assert!(incident_id_before.is_some());
-    let count_before = uow.incident_count();
-    let timeline_before = uow.timeline().len();
+        .incident_id
+        .unwrap();
 
-    uow.inject_failure_after_incident_write(true);
-    let addr2: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 13));
-    let started2 = event(
-        "det-fail-2",
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::ResolveIncident {
+            expected_version: 1,
+            resolution_note: None,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        uow.get(&incident_id).unwrap().state,
+        IncidentState::Resolved
+    );
+
+    // Within the 15-minute default reopen window.
+    clock.advance(Duration::from_secs(5 * 60));
+    let recurrence = event(
+        "det-b1a-recur",
         0,
         EventKind::Started,
         "acme",
-        addr2,
+        addr,
+        MetricKind::Bps,
+        6_000_000,
+        1_000_000,
+    );
+    let result = uow
+        .ingest_detection_event(&correlator, &recurrence)
+        .unwrap();
+    assert_eq!(result.outcome_kind, IngestOutcomeKind::Reopened);
+    assert_eq!(
+        result.incident_id,
+        Some(incident_id),
+        "recurrence must reopen the same incident, not create a second one"
+    );
+    let incident = uow.get(&incident_id).unwrap();
+    assert_eq!(incident.state, IncidentState::Open);
+    assert_eq!(incident.reopen_count, 1);
+    assert_eq!(uow.incident_count(), 1);
+}
+
+#[test]
+fn resolved_incident_recurrence_outside_window_creates_a_new_incident() {
+    let (mut uow, clock) = uow_with_shared_clock();
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "senior_operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 21));
+
+    let started = event(
+        "det-b1b",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
         MetricKind::Bps,
         5_000_000,
         1_000_000,
     );
-    let result = uow.ingest_detection_event(&correlator, &started2);
-    assert!(
-        result.is_err(),
-        "the injected failure must propagate as an error"
+    let first_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+
+    uow.handle_command(
+        &operator,
+        first_id,
+        Command::ResolveIncident {
+            expected_version: 1,
+            resolution_note: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    // Outside the 15-minute default reopen window.
+    clock.advance(Duration::from_secs(16 * 60));
+    let recurrence = event(
+        "det-b1b-recur",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        6_000_000,
+        1_000_000,
     );
-    // The incident map itself is written before the injected failure
-    // point in this in-memory model (there is no real transaction to
-    // roll back), which is exactly why this test exists: it documents
-    // precisely where 5A's atomicity claim currently ends and 5B's real
-    // transaction must begin. See the final report's "known limitations".
+    let result = uow
+        .ingest_detection_event(&correlator, &recurrence)
+        .unwrap();
+    assert_eq!(result.outcome_kind, IngestOutcomeKind::Created);
+    assert_ne!(result.incident_id, Some(first_id));
+    assert_eq!(uow.incident_count(), 2);
     assert_eq!(
-        uow.incident_count(),
-        count_before + 1,
-        "documents the current in-memory boundary: see known limitations"
+        uow.get(&first_id).unwrap().state,
+        IncidentState::Resolved,
+        "the original incident is untouched by a recurrence outside its window"
     );
-    uow.inject_failure_after_incident_write(false);
-    let _ = timeline_before;
 }
+
+#[test]
+fn closed_incident_reopens_within_window_through_ingestion() {
+    let (mut uow, clock) = uow_with_shared_clock();
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "senior_operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 22));
+
+    let started = event(
+        "det-b1c",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        5_000_000,
+        1_000_000,
+    );
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::ResolveIncident {
+            expected_version: 1,
+            resolution_note: None,
+        },
+        None,
+    )
+    .unwrap();
+    clock.advance(Duration::from_secs(60));
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::CloseIncident {
+            expected_version: 2,
+            reason: ClosureReason::Resolved,
+            detail: None,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(uow.get(&incident_id).unwrap().state, IncidentState::Closed);
+
+    // 10 minutes after `closed_at`, still within the 15-minute window.
+    clock.advance(Duration::from_secs(10 * 60));
+    let recurrence = event(
+        "det-b1c-recur",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        6_000_000,
+        1_000_000,
+    );
+    let result = uow
+        .ingest_detection_event(&correlator, &recurrence)
+        .unwrap();
+    assert_eq!(result.outcome_kind, IngestOutcomeKind::Reopened);
+    assert_eq!(result.incident_id, Some(incident_id));
+    assert_eq!(uow.incident_count(), 1);
+    assert_eq!(uow.get(&incident_id).unwrap().reopen_count, 1);
+}
+
+// ---------------------------------------------------------------------
+// B2: `ResolveIncident` must invoke the transition guard.
+// ---------------------------------------------------------------------
+
+#[test]
+fn resolve_from_closed_is_rejected_and_leaves_state_unchanged() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "senior_operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 23));
+
+    let started = event(
+        "det-b2a",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        5_000_000,
+        1_000_000,
+    );
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::ResolveIncident {
+            expected_version: 1,
+            resolution_note: None,
+        },
+        None,
+    )
+    .unwrap();
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::CloseIncident {
+            expected_version: 2,
+            reason: ClosureReason::Resolved,
+            detail: None,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(uow.get(&incident_id).unwrap().state, IncidentState::Closed);
+    let before = uow.get(&incident_id).unwrap().clone();
+
+    let result = uow.handle_command(
+        &operator,
+        incident_id,
+        Command::ResolveIncident {
+            expected_version: 3,
+            resolution_note: None,
+        },
+        None,
+    );
+    assert_eq!(
+        result,
+        Err(IncidentError::InvalidTransition {
+            from: IncidentState::Closed,
+            to: IncidentState::Resolved,
+        })
+    );
+    assert_eq!(
+        uow.get(&incident_id).unwrap(),
+        &before,
+        "a rejected Closed -> Resolved must not mutate the incident"
+    );
+}
+
+#[test]
+fn resolving_an_already_resolved_incident_is_state_unchanged() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "senior_operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 24));
+
+    let started = event(
+        "det-b2b",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        5_000_000,
+        1_000_000,
+    );
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::ResolveIncident {
+            expected_version: 1,
+            resolution_note: None,
+        },
+        None,
+    )
+    .unwrap();
+    let before = uow.get(&incident_id).unwrap().clone();
+
+    let result = uow.handle_command(
+        &operator,
+        incident_id,
+        Command::ResolveIncident {
+            expected_version: 2,
+            resolution_note: None,
+        },
+        None,
+    );
+    assert_eq!(
+        result,
+        Err(IncidentError::StateUnchanged(IncidentState::Resolved))
+    );
+    assert_eq!(
+        uow.get(&incident_id).unwrap(),
+        &before,
+        "a rejected Resolved -> Resolved must not mutate the incident"
+    );
+}
+
+// ---------------------------------------------------------------------
+// H1: transition metadata is command-specific, not hardcoded to
+// Acknowledge for every guarded operator transition.
+// ---------------------------------------------------------------------
+
+#[test]
+fn begin_investigation_and_mark_monitoring_emit_their_own_metadata() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 25));
+
+    let started = event(
+        "det-h1",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        5_000_000,
+        1_000_000,
+    );
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::AcknowledgeIncident {
+            expected_version: 1,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        uow.audit().last().unwrap().permission,
+        Permission::IncidentAcknowledge
+    );
+
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::BeginInvestigation {
+            expected_version: 2,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        uow.audit().last().unwrap().permission,
+        Permission::IncidentInvestigate,
+        "BeginInvestigation must not be audited under IncidentAcknowledge"
+    );
+    match &uow.timeline().last().unwrap().payload {
+        wetechinetmon_incident::timeline::TimelinePayload::StateChanged { cause, .. } => {
+            assert_eq!(
+                *cause,
+                wetechinetmon_incident::timeline::TransitionCause::Operator(
+                    OperatorCommandKind::BeginInvestigation
+                ),
+                "BeginInvestigation must not be recorded as Acknowledge on the timeline"
+            );
+        }
+        other => panic!("expected StateChanged, got {other:?}"),
+    }
+
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::MarkMonitoring {
+            expected_version: 3,
+        },
+        None,
+    )
+    .unwrap();
+    match &uow.timeline().last().unwrap().payload {
+        wetechinetmon_incident::timeline::TimelinePayload::StateChanged { cause, .. } => {
+            assert_eq!(
+                *cause,
+                wetechinetmon_incident::timeline::TransitionCause::Operator(
+                    OperatorCommandKind::MarkMonitoring
+                ),
+                "MarkMonitoring must not be recorded as Acknowledge or BeginInvestigation"
+            );
+        }
+        other => panic!("expected StateChanged, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------
+// H2: automatic-maintenance methods require IncidentIngest, and are not
+// reachable by a caller who holds no permission at all.
+// ---------------------------------------------------------------------
+
+#[test]
+fn unauthorized_context_cannot_drive_automatic_maintenance_methods() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 26));
+    let started = event(
+        "det-h2",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        5_000_000,
+        1_000_000,
+    );
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+
+    let unauthorized = AuthorizationContext::new(
+        TenantId::new("acme"),
+        Actor::Operator {
+            id: "u1".to_string(),
+        },
+        vec![],
+    );
+    let version_before = uow.get(&incident_id).unwrap().version;
+
+    assert_eq!(
+        uow.enter_recovering(
+            &unauthorized,
+            incident_id,
+            wetechinetmon_incident::transition::DetectionEndReason::TrafficCleared,
+        ),
+        Err(IncidentError::Unauthorized)
+    );
+    assert_eq!(
+        uow.confirm_recovery_if_due(&unauthorized, incident_id, Duration::ZERO),
+        Err(IncidentError::Unauthorized)
+    );
+    assert_eq!(
+        uow.abort_recovery(&unauthorized, incident_id),
+        Err(IncidentError::Unauthorized)
+    );
+    assert_eq!(
+        uow.attempt_automatic_closure(&unauthorized, incident_id),
+        Err(IncidentError::Unauthorized)
+    );
+
+    let incident = uow.get(&incident_id).unwrap();
+    assert_eq!(
+        incident.state,
+        IncidentState::Open,
+        "no maintenance call may mutate state"
+    );
+    assert_eq!(
+        incident.version, version_before,
+        "no maintenance call may bump version"
+    );
+    assert_eq!(
+        uow.audit().iter().filter(|a| a.is_denied()).count(),
+        4,
+        "each of the four denied calls must write exactly one denied audit record"
+    );
+
+    // The correlator's own IncidentIngest permission is sufficient — this
+    // proves the four methods are reachable by their intended caller, not
+    // merely locked out entirely.
+    uow.enter_recovering(
+        &correlator,
+        incident_id,
+        wetechinetmon_incident::transition::DetectionEndReason::TrafficCleared,
+    )
+    .unwrap();
+    assert_eq!(
+        uow.get(&incident_id).unwrap().state,
+        IncidentState::Recovering
+    );
+}
+
+// ---------------------------------------------------------------------
+// H3: the idempotency fingerprint is bound to the target incident.
+// ---------------------------------------------------------------------
+
+#[test]
+fn idempotency_key_reused_across_two_incidents_conflicts() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "senior_operator", "u1");
+
+    let addr_a: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 27));
+    let addr_b: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 28));
+    let incident_a = uow
+        .ingest_detection_event(
+            &correlator,
+            &event(
+                "det-h3a",
+                0,
+                EventKind::Started,
+                "acme",
+                addr_a,
+                MetricKind::Bps,
+                5_000_000,
+                1_000_000,
+            ),
+        )
+        .unwrap()
+        .incident_id
+        .unwrap();
+    let incident_b = uow
+        .ingest_detection_event(
+            &correlator,
+            &event(
+                "det-h3b",
+                0,
+                EventKind::Started,
+                "acme",
+                addr_b,
+                MetricKind::Bps,
+                5_000_000,
+                1_000_000,
+            ),
+        )
+        .unwrap()
+        .incident_id
+        .unwrap();
+
+    let key = IdempotencyKey::new("a".repeat(20)).unwrap();
+    let v = uow
+        .handle_command(
+            &operator,
+            incident_a,
+            Command::AcknowledgeIncident {
+                expected_version: 1,
+            },
+            Some(key.clone()),
+        )
+        .unwrap();
+    assert_eq!(v, 2);
+
+    // Same key, same command shape, but a *different* incident — must
+    // conflict, not silently replay incident A's stored success against B.
+    let result = uow.handle_command(
+        &operator,
+        incident_b,
+        Command::AcknowledgeIncident {
+            expected_version: 1,
+        },
+        Some(key),
+    );
+    assert_eq!(result, Err(IncidentError::IdempotencyConflict));
+    assert_eq!(
+        uow.get(&incident_b).unwrap().version,
+        1,
+        "the conflicting call must not have mutated incident B"
+    );
+}
+
+// ---------------------------------------------------------------------
+// H4: replaying a failed command reproduces its original error category,
+// and a transient/injected failure is never persisted as a permanent
+// idempotency outcome.
+// ---------------------------------------------------------------------
+
+#[test]
+fn version_conflict_replays_as_the_same_version_conflict() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 29));
+    let incident_id = uow
+        .ingest_detection_event(
+            &correlator,
+            &event(
+                "det-h4a",
+                0,
+                EventKind::Started,
+                "acme",
+                addr,
+                MetricKind::Bps,
+                5_000_000,
+                1_000_000,
+            ),
+        )
+        .unwrap()
+        .incident_id
+        .unwrap();
+
+    let key = IdempotencyKey::new("b".repeat(20)).unwrap();
+    let first = uow.handle_command(
+        &operator,
+        incident_id,
+        Command::AcknowledgeIncident {
+            expected_version: 999,
+        },
+        Some(key.clone()),
+    );
+    assert!(matches!(first, Err(IncidentError::VersionConflict { .. })));
+
+    let replay = uow.handle_command(
+        &operator,
+        incident_id,
+        Command::AcknowledgeIncident {
+            expected_version: 999,
+        },
+        Some(key),
+    );
+    assert_eq!(
+        first, replay,
+        "a replayed VersionConflict must reproduce the exact original error, not Unauthorized"
+    );
+}
+
+#[test]
+fn capacity_exceeded_replays_as_the_same_capacity_error() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 30));
+    let incident_id = uow
+        .ingest_detection_event(
+            &correlator,
+            &event(
+                "det-h4b",
+                0,
+                EventKind::Started,
+                "acme",
+                addr,
+                MetricKind::Bps,
+                5_000_000,
+                1_000_000,
+            ),
+        )
+        .unwrap()
+        .incident_id
+        .unwrap();
+
+    for i in 0..500 {
+        uow.handle_command(
+            &operator,
+            incident_id,
+            Command::AddNote {
+                body: format!("note {i}"),
+                visibility: NoteVisibility::Internal,
+            },
+            None,
+        )
+        .unwrap();
+    }
+
+    let key = IdempotencyKey::new("c".repeat(20)).unwrap();
+    let first = uow.handle_command(
+        &operator,
+        incident_id,
+        Command::AddNote {
+            body: "one too many".to_string(),
+            visibility: NoteVisibility::Internal,
+        },
+        Some(key.clone()),
+    );
+    assert!(matches!(first, Err(IncidentError::CapacityExceeded(_))));
+
+    let replay = uow.handle_command(
+        &operator,
+        incident_id,
+        Command::AddNote {
+            body: "one too many".to_string(),
+            visibility: NoteVisibility::Internal,
+        },
+        Some(key),
+    );
+    assert_eq!(first, replay);
+    assert_eq!(uow.get(&incident_id).unwrap().notes.len(), 500);
+}
+
+// `injected_failure_does_not_poison_an_idempotency_key` moved to
+// `crates/incident/src/unit_of_work.rs`'s own `#[cfg(test)] mod tests`
+// for the same reason as above.
