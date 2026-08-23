@@ -126,18 +126,19 @@ pub fn evaluate_reopen(
     policy: &ReopenPolicy,
     now: &crate::clock::Timestamp,
 ) -> Result<bool, IncidentError> {
-    if incident.state != IncidentState::Closed && incident.state != IncidentState::Resolved {
+    if !incident.is_reopen_candidate() {
         return Err(IncidentError::InvalidReopen(
             "only a Resolved or Closed incident may reopen".to_string(),
         ));
     }
-    let reference = incident
-        .resolved_at
-        .as_ref()
-        .or(incident.closed_at.as_ref())
-        .ok_or(IncidentError::InternalInvariantViolation(
-            "a Resolved or Closed incident must have resolved_at or closed_at set",
-        ))?;
+    // `resolved_at` when `Resolved`, `closed_at` when `Closed` — not "prefer
+    // resolved_at" — per the state-machine plan's reopen timing rule.
+    let reference =
+        incident
+            .reopen_reference_timestamp()
+            .ok_or(IncidentError::InternalInvariantViolation(
+                "a Resolved or Closed incident must have resolved_at or closed_at set",
+            ))?;
     Ok(policy.reopens(reference, now))
 }
 
