@@ -121,6 +121,29 @@ impl Incident {
         !self.state.is_terminal()
     }
 
+    /// Whether this incident is eligible to be the target of a recurrence
+    /// reopen — `Resolved` or `Closed`. Distinct from "terminal"
+    /// (`Closed` only): a `Resolved` incident is not terminal but is
+    /// removed from the active correlation index the moment it resolves,
+    /// so the reopen-candidate search must use this predicate, not
+    /// `!state.is_terminal()` and not `state.is_terminal()` — see the
+    /// state machine plan's "a `Resolved` incident may be reopened, not
+    /// only a `Closed` one".
+    pub fn is_reopen_candidate(&self) -> bool {
+        matches!(self.state, IncidentState::Resolved | IncidentState::Closed)
+    }
+
+    /// The timestamp a reopen decision measures elapsed time from:
+    /// `resolved_at` when `Resolved`, `closed_at` when `Closed`. `None`
+    /// for any other state, which callers treat as "not eligible".
+    pub fn reopen_reference_timestamp(&self) -> Option<&Timestamp> {
+        match self.state {
+            IncidentState::Resolved => self.resolved_at.as_ref(),
+            IncidentState::Closed => self.closed_at.as_ref(),
+            _ => None,
+        }
+    }
+
     pub fn is_suppressed(&self, now: &Timestamp) -> bool {
         self.suppression.as_ref().is_some_and(|s| s.is_active(now))
     }
