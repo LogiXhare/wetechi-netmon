@@ -69,8 +69,30 @@ attribute, severity/priority, assignment, typed timeline and audit
 records, idempotency with a canonical-bytes fingerprint (not a hash —
 see the crate's `idempotency` module doc), the outbox abstraction, a
 single bounded in-memory `IncidentUnitOfWork`, and a dependency-free
-end-to-end domain test. Awaiting review before merge; Milestone 5B has
-not started.
+end-to-end domain test.
+
+An Opus 5 adversarial review of the initial implementation found two
+blockers (a `Resolved` incident's automatic reopen path was unreachable
+from ingestion; `ResolveIncident` bypassed the transition guard entirely,
+accepting `Closed -> Resolved`) and seven high-severity findings
+(transition metadata misattributed between commands; automatic-maintenance
+methods bypassing authorization; the idempotency fingerprint omitting its
+target incident; failed commands collapsing to a single `Unauthorized` on
+replay instead of preserving their real error; a misleadingly named
+atomicity test that asserted partial state *did* survive while claiming
+to prove otherwise; and a tautological order-independence property test).
+All nine were corrected on the same branch, with regression tests, and
+version/`reopen_count` overflow was hardened with `checked_add` across
+every mutation site (never mutate-then-fail). **5A does not claim
+atomicity or rollback** — every mutation validates everything fallible
+before touching the incident, so a predictable error never mutates
+anything, but the test-only injected-failure checkpoint between the
+incident write and its timeline/audit/outbox writes still exposes genuine
+partial state in this in-memory model; closing that gap for real is
+Milestone 5B's transaction (see FU-31). Medium and low findings from the
+review not fixed on this branch are recorded as FU-30 through FU-37, each
+with its rationale for deferral. Awaiting a second, focused adversarial
+review before merge; Milestone 5B has not started.
 
 **5A is database-independent and dependency-free.** It may implement
 incident domain types, the seven-state lifecycle, correlation, reopen

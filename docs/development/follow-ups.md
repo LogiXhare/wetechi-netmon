@@ -61,6 +61,26 @@ Raised when BQ-5, BQ-6, and BQ-7 were resolved.
 | FU-28 | Record close-to-recurrence gap distribution | Phase 5C telemetry | BQ-9's reopen window is currently a judgement. Measuring the gap between a close and the next qualifying event on the same correlation key would let the value be chosen from evidence. |
 | FU-29 | Mechanically enforce the incident crate's narrow detector-import boundary | A lint or CI check | [ADR 0011](../architecture/decisions/0011-incident-domain-boundary.md) states `wetechinetmon-incident` may depend on the detector's published event vocabulary and clock only, never `StateTable`, `evaluate`, or policy-matching internals. `wetechinetmon-detector`'s `lib.rs` re-exports both at the same crate root, so nothing in Cargo enforces this today — see `crates/incident/src/lib.rs`'s module doc comment. A grep-based or `cargo-deny`-style check should exist before Milestone 5B adds a second crate the boundary needs to hold for. |
 
+## Phase 5A — post-adversarial-review corrections (2026-08-23)
+
+Raised during the Opus 5 adversarial review of `feat/phase5a-incident-domain`
+and its follow-up correction pass. All findings marked Blocker or High from
+that review were fixed and regression-tested on the branch; these are the
+Medium/Low findings deliberately deferred, each because fixing it either
+expands beyond 5A's dependency-free, database-independent scope or is made
+moot by Milestone 5B's real transaction.
+
+| # | Item | Blocked on | Notes |
+|---|---|---|---|
+| FU-30 | Correlation cannot detect a genuinely late/out-of-order event | A decision on which field is authoritative for ordering | `link_event_to_open_incident`'s `is_late` compares the unit-of-work's own clock reading at call time, not any field the event carries (`sequence`, `detected_at_ms`). Since the clock is non-decreasing, an event that is semantically older by its own declared order but arrives later can never be detected as late by the current implementation — `IngestOutcomeKind::LinkedLate`, `EvidenceLinkType::Late`, and `TimelinePayload::LateEventLinked` exist but are unreachable. Needs a design decision (per-`detection_id` high-water `sequence`, most likely) before Milestone 5C's ingestion worker needs genuine reordering safety. |
+| FU-31 | Close the in-memory unit-of-work's partial-write boundary with a staged `MutationPlan` | Milestone 5B | Every mutation method now validates and computes everything fallible (including the version/reopen_count overflow check) before touching `self`'s maps, so a *predictable* error never mutates anything — proven by the `_leaves_the_incident_unmutated` family of tests. What remains open is the test-only injected-failure checkpoint itself: the incident write still happens before that checkpoint, and the timeline/audit/outbox writes after it, so an injected failure between them is genuine partial state (see `unit_of_work::tests::failure_injection_documents_the_in_memory_commit_boundary`). A real PostgreSQL transaction closes this in 5B; a staged plan-then-commit structure would close it in 5A but was judged to expand beyond a correction-scoped change. |
+| FU-32 | Four declared capacity/limit constants are not enforced | Nothing | `TIMELINE_ENTRY_LIMIT`, `SUPPRESSION_REASON_MAX_LEN`, `Incident::policy_refs_at_capacity()`, and `AFFECTED_TARGETS_MAX` are all defined but never checked against on any mutation path, and `TimelinePayload::LimitReached` is never constructed. Evidence, notes, tags, title, description, and note body are all properly enforced; these four are not. |
+| FU-33 | `dedup_seen` and the idempotency store grow without bound | A retention policy | Both are plain `HashMap`s with no size cap or TTL. Unbounded within one process's lifetime; a real concern only once something runs long enough to matter, which nothing in 5A does. |
+| FU-34 | `policy_refs` is written once at creation and never updated | Nothing | An incident matched by a second policy after it opens does not record that policy reference — `last_seen_sequence` stays frozen at the opening event. FU-18's data collection needs this fixed first. |
+| FU-35 | Timeline and audit entries carry no timestamp | Nothing | Both record `sequence` (ordering) but no wall or monotonic reading, so "when" and "how long between" are unrecoverable from the record itself. Cheaper to add before 5B fixes a persistence schema than after. |
+| FU-36 | Manual `ReopenIncident`'s operator-supplied reason is discarded | Nothing | `operator_reopen` accepts `reason: String` and drops it (`let _ = reason;`) rather than recording it on the timeline — the one piece of context a human reopening an incident is most likely to want preserved. |
+| FU-37 | `AddTag`/`RemoveTag` produce no timeline entry; `RemoveTag` audits and version-bumps even when the key was absent | Nothing | Every other mutation appends a timeline entry; these two do not. A reopened incident also keeps its stale `resolved_at`/`closed_at` from the prior cycle rather than clearing them. |
+
 ## Why these are not GitHub issues yet
 
 The repository's CI cannot run (FU-1), so an issue tracker would be the
