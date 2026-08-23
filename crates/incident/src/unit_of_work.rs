@@ -1,14 +1,23 @@
 //! The bounded, in-memory `IncidentUnitOfWork`.
 //!
 //! One store, not many concrete repositories — the approved Phase 5A
-//! shape. Every public mutation method here applies its full effect (the
-//! incident, its timeline entry, its audit entry, its outbox row, its
-//! version bump) or none of it: each method computes everything it needs
-//! before touching `self`'s maps, so a `?` partway through never leaves a
-//! partial write behind. [`IncidentUnitOfWork::inject_failure_after_incident_write`]
-//! exists only for tests, to prove that claim by forcing a failure
-//! between the incident write and the rest of the commit and checking
-//! nothing partial survives.
+//! shape.
+//!
+//! **This is not a transaction, and 5A does not claim rollback.** Every
+//! public mutation method validates everything it can — permission,
+//! tenant, expected version, transition legality, capacity — *before*
+//! touching `self`'s maps, so a predictable, non-injected error never
+//! mutates anything (proven by the `_leaves_state_unchanged` family of
+//! tests). But once a mutation begins, the incident write happens first
+//! and the timeline/audit/outbox writes happen after; a failure between
+//! them — reachable in 5A only through the test-only
+//! [`IncidentUnitOfWork::inject_failure_after_incident_write`] hook —
+//! leaves the incident mutated with no corresponding history. That gap is
+//! real, is exercised by
+//! `failure_injection_documents_the_in_memory_commit_boundary` in
+//! `tests/domain_end_to_end.rs`, and is exactly what Milestone 5B's real
+//! PostgreSQL transaction closes. Treat "exclusive in-process mutation
+//! with pre-validated commands" as 5A's guarantee, not "atomic."
 //!
 //! Denied commands (owner decision 9) are handled by
 //! [`IncidentUnitOfWork::check_permission`], called first in every
@@ -52,7 +61,9 @@ use crate::reopen::ReopenPolicy;
 use crate::severity::{Priority, SeveritySource};
 use crate::state::IncidentState;
 use crate::suppression::Suppression;
-use crate::timeline::{AutomaticCause, TimelineEntry, TimelinePayload, TransitionCause};
+use crate::timeline::{
+    AutomaticCause, OperatorCommandKind, TimelineEntry, TimelinePayload, TransitionCause,
+};
 use crate::transition;
 
 /// Every stored piece of one incident's history, kept together because
@@ -77,11 +88,15 @@ pub struct IncidentUnitOfWork {
     reopen_policy: ReopenPolicy,
     /// Test-support seam: when set, every subsequent mutation's
     /// `maybe_fail` checkpoint returns an error instead of committing
-    /// its timeline/audit/outbox writes. Always compiled (not
-    /// `cfg(test)`-gated) so integration tests in `tests/` — a separate
-    /// compilation unit that does not see the library's own `cfg(test)`
-    /// items — can exercise it too. See the testing plan's "injected
-    /// failure at each commit point" requirement.
+    /// its timeline/audit/outbox writes. `cfg(test)`-gated so it exists
+    /// only in the crate's own test builds and is not part of the public
+    /// production API — a production caller with `&mut
+    /// IncidentUnitOfWork` must not be able to switch every subsequent
+    /// mutation to failure. Exercised by
+    /// `unit_of_work::tests::failure_injection_documents_the_in_memory_commit_boundary`,
+    /// which lives in this module (rather than the separate `tests/`
+    /// integration crate) precisely so it can see this field.
+    #[cfg(test)]
     fail_after_incident_write: bool,
 }
 
@@ -101,6 +116,20 @@ pub enum IngestOutcomeKind {
     Duplicate,
     Quarantined,
     ObserveOnly,
+}
+
+/// The permission an audit record should name for a mutation, given which
+/// actor caused it. An automatic transition is driven by the correlator
+/// (or, eventually, a 5C scheduler) holding only `IncidentIngest` — never
+/// the human-facing permission (`IncidentResolve`, `IncidentClose`, …)
+/// that name describes an *operator* exercising. Auditing an automatic
+/// transition under the operator permission would record a grant that was
+/// never checked and never held.
+fn audited_permission_for(cause: &TransitionCause, operator_permission: Permission) -> Permission {
+    match cause {
+        TransitionCause::Automatic(_) => Permission::IncidentIngest,
+        TransitionCause::Operator(_) => operator_permission,
+    }
 }
 
 impl IncidentUnitOfWork {
@@ -125,6 +154,7 @@ impl IncidentUnitOfWork {
             clock,
             closure_policy: ClosurePolicy::approved_default(),
             reopen_policy: ReopenPolicy::approved_default(),
+            #[cfg(test)]
             fail_after_incident_write: false,
         }
     }
@@ -163,31 +193,40 @@ impl IncidentUnitOfWork {
         Timestamp::now(self.clock.as_ref())
     }
 
+    /// Documented overflow behavior: `saturating_add`, not a wrapping
+    /// `+= 1`. Unlike `version`, these three sequence counters are
+    /// display/ordering values, not an optimistic-concurrency comparison
+    /// — saturating at `u64::MAX` (unreachable in practice; it would
+    /// require that many timeline entries) can duplicate the final
+    /// sequence number rather than wrap to a small one that could collide
+    /// with an early entry.
     fn next_timeline_sequence(&mut self) -> u64 {
         let s = self.timeline_sequence;
-        self.timeline_sequence += 1;
+        self.timeline_sequence = self.timeline_sequence.saturating_add(1);
         s
     }
 
     fn next_audit_sequence(&mut self) -> u64 {
         let s = self.audit_sequence;
-        self.audit_sequence += 1;
+        self.audit_sequence = self.audit_sequence.saturating_add(1);
         s
     }
 
     fn next_outbox_sequence(&mut self) -> u64 {
         let s = self.outbox_sequence;
-        self.outbox_sequence += 1;
+        self.outbox_sequence = self.outbox_sequence.saturating_add(1);
         s
     }
 
     /// Test-support seam (see the field doc comment on
-    /// `fail_after_incident_write`) — not used by any production call
-    /// site in this crate.
-    pub fn inject_failure_after_incident_write(&mut self, enabled: bool) {
+    /// `fail_after_incident_write`). `cfg(test)`-gated: not part of the
+    /// public production API.
+    #[cfg(test)]
+    pub(crate) fn inject_failure_after_incident_write(&mut self, enabled: bool) {
         self.fail_after_incident_write = enabled;
     }
 
+    #[cfg(test)]
     fn maybe_fail(&self) -> Result<(), IncidentError> {
         if self.fail_after_incident_write {
             Err(IncidentError::InternalInvariantViolation(
@@ -196,6 +235,11 @@ impl IncidentUnitOfWork {
         } else {
             Ok(())
         }
+    }
+
+    #[cfg(not(test))]
+    fn maybe_fail(&self) -> Result<(), IncidentError> {
+        Ok(())
     }
 
     /// Checks a permission and, if denied, writes exactly one denied
@@ -324,13 +368,26 @@ impl IncidentUnitOfWork {
             return Ok(result);
         }
 
-        // 5. Not found — look for a recently closed incident to reopen.
+        // 5. Not found — look for a recently resolved or closed incident
+        // to reopen. `is_reopen_candidate()` is deliberately not
+        // `state.is_terminal()` (Closed-only) and not
+        // `is_open_for_correlation()` (excludes Closed): a Resolved
+        // incident is removed from `open_index` the moment it resolves,
+        // so it must still be found here or a recurrence would silently
+        // create a second incident instead of reopening it (BQ-9's
+        // "a Resolved incident may be reopened, not only a Closed one").
+        // Deterministic selection when more than one historical incident
+        // matches this key: the most recently resolved-or-closed one,
+        // using each candidate's own reopen reference timestamp
+        // (`resolved_at` for Resolved, `closed_at` for Closed) rather than
+        // `closed_at` alone, which would treat every Resolved candidate as
+        // equally (un)ranked.
         let reopen_candidate = self
             .incidents
             .values()
-            .filter(|i| i.correlation_key == key && i.state.is_terminal())
+            .filter(|i| i.correlation_key == key && i.is_reopen_candidate())
             .filter(|i| i.tenant_id == tenant)
-            .max_by_key(|i| i.closed_at.map(|t| t.monotonic()));
+            .max_by_key(|i| i.reopen_reference_timestamp().map(|t| t.monotonic()));
 
         if let Some(candidate) = reopen_candidate {
             let now = self.now();
@@ -504,6 +561,9 @@ impl IncidentUnitOfWork {
                 .get_mut(&incident_id)
                 .ok_or(IncidentError::NotFound)?;
             let is_late = observed.monotonic() < incident.last_detected_at.monotonic();
+            let new_version = incident.version.checked_add(1).ok_or(
+                IncidentError::InternalInvariantViolation("incident version overflowed u64"),
+            )?;
 
             for reason in &event.matched {
                 incident.matched_metrics.insert(reason.metric);
@@ -529,7 +589,7 @@ impl IncidentUnitOfWork {
             }
             incident.last_updated_at = now;
             incident.category = new_category;
-            incident.version += 1;
+            incident.version = new_version;
             (
                 evidence_ref,
                 is_late,
@@ -614,11 +674,24 @@ impl IncidentUnitOfWork {
 
         let incident = self
             .incidents
-            .get_mut(&incident_id)
+            .get(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        // Both counters computed before any field is mutated.
+        let new_reopen_count = incident.reopen_count.checked_add(1).ok_or(
+            IncidentError::InternalInvariantViolation("reopen_count overflowed u32"),
+        )?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
+
+        let incident = self.incidents.get_mut(&incident_id).expect("checked above");
         let from_state = incident.state;
         incident.state = IncidentState::Open;
-        incident.reopen_count += 1;
+        incident.reopen_count = new_reopen_count;
         incident.reopened_at = Some(now);
         incident.last_detected_at = now;
         incident.last_updated_at = now;
@@ -635,7 +708,7 @@ impl IncidentUnitOfWork {
             matched_metrics: event.matched.iter().map(|m| m.metric).collect(),
         };
         incident.evidence.record(evidence_ref);
-        incident.version += 1;
+        incident.version = new_version;
         let reopen_count = incident.reopen_count;
         self.maybe_fail()?;
 
@@ -688,12 +761,20 @@ impl IncidentUnitOfWork {
     // Automatic maintenance (recovery entry / confirm / abort, auto-close)
     // ---------------------------------------------------------------
 
+    /// Driven by the correlator (or, from 5C on, a scheduler) holding
+    /// `IncidentIngest` — this is not an operator command, and must not
+    /// be reachable by a caller who lacks even that permission.
     pub fn enter_recovering(
         &mut self,
         auth: &AuthorizationContext,
         incident_id: IncidentId,
         reason: transition::DetectionEndReason,
     ) -> Result<(), IncidentError> {
+        self.check_permission(
+            auth,
+            Permission::IncidentIngest,
+            AttemptedResource::Incident(incident_id),
+        )?;
         let now = self.now();
         let incident = self
             .incidents
@@ -703,13 +784,20 @@ impl IncidentUnitOfWork {
         let _ = transition::enter_recovering(incident, reason)?;
         let from = incident.state;
         let key = incident.correlation_key.clone();
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
 
         let incident = self.incidents.get_mut(&incident_id).expect("checked above");
         incident.state_before_recovering = Some(from);
         incident.state = IncidentState::Recovering;
         incident.recovering_since = Some(now);
         incident.last_updated_at = now;
-        incident.version += 1;
+        incident.version = new_version;
         self.maybe_fail()?;
         // Recovering is still "open" for correlation purposes, so the
         // open_index entry is left untouched (it already points here).
@@ -744,12 +832,18 @@ impl IncidentUnitOfWork {
         Ok(())
     }
 
+    /// Driven by the correlator or scheduler — see [`Self::enter_recovering`].
     pub fn confirm_recovery_if_due(
         &mut self,
         auth: &AuthorizationContext,
         incident_id: IncidentId,
         recovery_confirmation: Duration,
     ) -> Result<bool, IncidentError> {
+        self.check_permission(
+            auth,
+            Permission::IncidentIngest,
+            AttemptedResource::Incident(incident_id),
+        )?;
         let now = self.now();
         let incident = self
             .incidents
@@ -775,11 +869,17 @@ impl IncidentUnitOfWork {
         Ok(true)
     }
 
+    /// Driven by the correlator or scheduler — see [`Self::enter_recovering`].
     pub fn abort_recovery(
         &mut self,
         auth: &AuthorizationContext,
         incident_id: IncidentId,
     ) -> Result<(), IncidentError> {
+        self.check_permission(
+            auth,
+            Permission::IncidentIngest,
+            AttemptedResource::Incident(incident_id),
+        )?;
         let now = self.now();
         let incident = self
             .incidents
@@ -787,13 +887,20 @@ impl IncidentUnitOfWork {
             .ok_or(IncidentError::NotFound)?;
         self.check_tenant(auth, incident)?;
         let restored = transition::abort_recovery(incident)?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
 
         let incident = self.incidents.get_mut(&incident_id).expect("checked above");
         incident.state = restored;
         incident.recovering_since = None;
         incident.state_before_recovering = None;
         incident.last_updated_at = now;
-        incident.version += 1;
+        incident.version = new_version;
         self.maybe_fail()?;
 
         let ts = self.next_timeline_sequence();
@@ -818,11 +925,17 @@ impl IncidentUnitOfWork {
         Ok(())
     }
 
+    /// Driven by the correlator or scheduler — see [`Self::enter_recovering`].
     pub fn attempt_automatic_closure(
         &mut self,
         auth: &AuthorizationContext,
         incident_id: IncidentId,
     ) -> Result<bool, IncidentError> {
+        self.check_permission(
+            auth,
+            Permission::IncidentIngest,
+            AttemptedResource::Incident(incident_id),
+        )?;
         let incident = self
             .incidents
             .get(&incident_id)
@@ -843,6 +956,11 @@ impl IncidentUnitOfWork {
         }
     }
 
+    /// Guarded `-> Resolved`. Every call site — the operator command and
+    /// the automatic recovery-confirmation path — must have its edge
+    /// validated here before any mutation happens; this was previously
+    /// missing, which let `Closed -> Resolved` and `Resolved -> Resolved`
+    /// both succeed unguarded (see the review's B2 finding).
     fn resolve_internal(
         &mut self,
         auth: &AuthorizationContext,
@@ -851,6 +969,36 @@ impl IncidentUnitOfWork {
         resolution_note: Option<String>,
     ) -> Result<(), IncidentError> {
         let now = self.now();
+        let existing = self
+            .incidents
+            .get(&incident_id)
+            .ok_or(IncidentError::NotFound)?;
+        let current_state = existing.state;
+        if current_state == IncidentState::Resolved {
+            return Err(IncidentError::StateUnchanged(current_state));
+        }
+        let legal = match cause {
+            TransitionCause::Automatic(_) => {
+                current_state.can_automatic_transition_to(IncidentState::Resolved)
+            }
+            TransitionCause::Operator(_) => {
+                current_state.can_operator_transition_to(IncidentState::Resolved)
+            }
+        };
+        if !legal {
+            return Err(IncidentError::InvalidTransition {
+                from: current_state,
+                to: IncidentState::Resolved,
+            });
+        }
+        let new_version =
+            existing
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
+
         let (from, correlation_key) = {
             let incident = self
                 .incidents
@@ -862,7 +1010,7 @@ impl IncidentUnitOfWork {
             incident.recovering_since = None;
             incident.state_before_recovering = None;
             incident.last_updated_at = now;
-            incident.version += 1;
+            incident.version = new_version;
             (from, incident.correlation_key.clone())
         };
         self.open_index.remove(&correlation_key);
@@ -894,7 +1042,7 @@ impl IncidentUnitOfWork {
             asq,
             auth.tenant().clone(),
             auth.actor().clone(),
-            Permission::IncidentResolve,
+            audited_permission_for(&cause, Permission::IncidentResolve),
             incident_id,
         ));
         let osq = self.next_outbox_sequence();
@@ -917,14 +1065,22 @@ impl IncidentUnitOfWork {
         let now = self.now();
         let incident = self
             .incidents
-            .get_mut(&incident_id)
+            .get(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
+        let incident = self.incidents.get_mut(&incident_id).expect("checked above");
         let from = incident.state;
         incident.state = IncidentState::Closed;
         incident.closed_at = Some(now);
         incident.closure_reason = Some(reason);
         incident.last_updated_at = now;
-        incident.version += 1;
+        incident.version = new_version;
         self.maybe_fail()?;
 
         let ts = self.next_timeline_sequence();
@@ -943,7 +1099,7 @@ impl IncidentUnitOfWork {
             asq,
             auth.tenant().clone(),
             auth.actor().clone(),
-            Permission::IncidentClose,
+            audited_permission_for(&cause, Permission::IncidentClose),
             incident_id,
         ));
         let osq = self.next_outbox_sequence();
@@ -978,14 +1134,16 @@ impl IncidentUnitOfWork {
         self.check_tenant(auth, incident)?;
 
         if let Some(key) = &idempotency_key {
-            let fingerprint = RequestFingerprint::of(&command);
+            // The fingerprinted value includes `incident_id`: the same
+            // key reused against two different incidents must conflict,
+            // not silently replay the first incident's stored result
+            // against the second.
+            let fingerprint = RequestFingerprint::of(&(incident_id, &command));
             match self.idempotency.check(auth.tenant(), key, &fingerprint) {
                 IdempotencyCheck::Replay(StoredOutcome::Mutated { version, .. }) => {
                     return Ok(version)
                 }
-                IdempotencyCheck::Replay(StoredOutcome::Denied) => {
-                    return Err(IncidentError::Unauthorized)
-                }
+                IdempotencyCheck::Replay(StoredOutcome::Failed(err)) => return Err(err),
                 IdempotencyCheck::Conflict => return Err(IncidentError::IdempotencyConflict),
                 IdempotencyCheck::New => {}
             }
@@ -1005,16 +1163,26 @@ impl IncidentUnitOfWork {
         let result = self.apply_command(auth, incident_id, &command);
 
         if let Some(key) = idempotency_key {
-            let fingerprint = RequestFingerprint::of(&command);
-            let outcome = match &result {
-                Ok(version) => StoredOutcome::Mutated {
-                    incident_id,
-                    version: *version,
-                },
-                Err(_) => StoredOutcome::Denied,
-            };
-            self.idempotency
-                .record(auth.tenant().clone(), key, fingerprint, outcome);
+            match &result {
+                Err(IncidentError::InternalInvariantViolation(_)) => {
+                    // Transient/injected failure: never persisted as a
+                    // permanent idempotency record, so a retry under the
+                    // same key can still succeed once the underlying
+                    // condition clears.
+                }
+                _ => {
+                    let fingerprint = RequestFingerprint::of(&(incident_id, &command));
+                    let outcome = match &result {
+                        Ok(version) => StoredOutcome::Mutated {
+                            incident_id,
+                            version: *version,
+                        },
+                        Err(err) => StoredOutcome::Failed(err.clone()),
+                    };
+                    self.idempotency
+                        .record(auth.tenant().clone(), key, fingerprint, outcome);
+                }
+            }
         }
 
         result
@@ -1031,6 +1199,8 @@ impl IncidentUnitOfWork {
                 auth,
                 incident_id,
                 IncidentState::Acknowledged,
+                command.kind(),
+                command.required_permission(),
                 |i, now| {
                     i.acknowledged_at = Some(now);
                 },
@@ -1039,12 +1209,16 @@ impl IncidentUnitOfWork {
                 auth,
                 incident_id,
                 IncidentState::Investigating,
+                command.kind(),
+                command.required_permission(),
                 |_, _| {},
             ),
             Command::MarkMonitoring { .. } => self.guarded_operator_transition(
                 auth,
                 incident_id,
                 IncidentState::Monitoring,
+                command.kind(),
+                command.required_permission(),
                 |_, _| {},
             ),
             Command::ResolveIncident {
@@ -1106,11 +1280,20 @@ impl IncidentUnitOfWork {
         }
     }
 
+    /// Shared by every operator transition that is a pure state move with
+    /// no other domain effect (`Acknowledge`, `BeginInvestigation`,
+    /// `MarkMonitoring`). `command_kind` and `permission` name the actual
+    /// command driving this call — previously hardcoded to
+    /// `Acknowledge`/`IncidentAcknowledge` for all three, which made the
+    /// timeline and audit records for `BeginInvestigation` and
+    /// `MarkMonitoring` indistinguishable from an acknowledgement.
     fn guarded_operator_transition(
         &mut self,
         auth: &AuthorizationContext,
         incident_id: IncidentId,
         to: IncidentState,
+        command_kind: OperatorCommandKind,
+        permission: Permission,
         extra: impl FnOnce(&mut Incident, Timestamp),
     ) -> Result<u64, IncidentError> {
         let now = self.now();
@@ -1125,10 +1308,19 @@ impl IncidentUnitOfWork {
         if !from.can_operator_transition_to(to) {
             return Err(IncidentError::InvalidTransition { from, to });
         }
+        // Computed before any field is mutated: an overflow must refuse
+        // the whole transition, not apply the state change and then fail.
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         let incident = self.incidents.get_mut(&incident_id).expect("checked above");
         incident.state = to;
         incident.last_updated_at = now;
-        incident.version += 1;
+        incident.version = new_version;
         extra(incident, now);
         self.maybe_fail()?;
 
@@ -1140,7 +1332,7 @@ impl IncidentUnitOfWork {
             TimelinePayload::StateChanged {
                 from,
                 to,
-                cause: TransitionCause::Operator(crate::timeline::OperatorCommandKind::Acknowledge),
+                cause: TransitionCause::Operator(command_kind),
             },
         ));
         let asq = self.next_audit_sequence();
@@ -1148,7 +1340,7 @@ impl IncidentUnitOfWork {
             asq,
             auth.tenant().clone(),
             auth.actor().clone(),
-            Permission::IncidentAcknowledge,
+            permission,
             incident_id,
         ));
         Ok(self.incidents[&incident_id].version)
@@ -1178,13 +1370,25 @@ impl IncidentUnitOfWork {
                 CorrelationConflict::OpenIncidentAlreadyExists(self.open_index[&key]).into(),
             );
         }
+        // Both counters computed before any field is mutated — an
+        // overflow on either must refuse the whole reopen.
+        let new_reopen_count = incident.reopen_count.checked_add(1).ok_or(
+            IncidentError::InternalInvariantViolation("reopen_count overflowed u32"),
+        )?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         let incident = self.incidents.get_mut(&incident_id).expect("checked above");
         incident.state = IncidentState::Open;
-        incident.reopen_count += 1;
+        incident.reopen_count = new_reopen_count;
         incident.reopened_at = Some(now);
         incident.closure_reason = None;
         incident.last_updated_at = now;
-        incident.version += 1;
+        incident.version = new_version;
         let reopen_count = incident.reopen_count;
         self.maybe_fail()?;
         self.open_index.insert(key, incident_id);
@@ -1235,12 +1439,19 @@ impl IncidentUnitOfWork {
             .incidents
             .get_mut(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         incident.suppression = Some(Suppression::new(
             reason.clone(),
             auth.actor().clone(),
             deadline,
         ));
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
 
@@ -1279,8 +1490,15 @@ impl IncidentUnitOfWork {
             .incidents
             .get_mut(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         incident.suppression = None;
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
 
@@ -1320,9 +1538,16 @@ impl IncidentUnitOfWork {
             .incidents
             .get_mut(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         let from = incident.assignment.assignee.clone();
         incident.assignment.assignee = assignee.clone();
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
 
@@ -1369,9 +1594,16 @@ impl IncidentUnitOfWork {
                 "a reason is required when lowering severity".to_string(),
             ));
         }
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         incident.severity = new_severity;
         incident.severity_source = SeveritySource::Operator;
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
 
@@ -1418,9 +1650,16 @@ impl IncidentUnitOfWork {
             .incidents
             .get_mut(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         let from = incident.priority;
         incident.priority = new_priority;
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
 
@@ -1476,6 +1715,13 @@ impl IncidentUnitOfWork {
         if incident.notes_at_capacity() {
             return Err(IncidentError::CapacityExceeded("notes per incident"));
         }
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         let index = incident.notes.len() as u32;
         incident.notes.push(Note {
             index,
@@ -1483,7 +1729,7 @@ impl IncidentUnitOfWork {
             visibility,
             created_by: auth.actor().clone(),
         });
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
 
@@ -1525,8 +1771,15 @@ impl IncidentUnitOfWork {
         if !incident.tags.contains_key(&key) && incident.tags_at_capacity() {
             return Err(IncidentError::CapacityExceeded("tags per incident"));
         }
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         incident.tags.insert(key, value);
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
         let asq = self.next_audit_sequence();
@@ -1551,8 +1804,15 @@ impl IncidentUnitOfWork {
             .incidents
             .get_mut(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let new_version =
+            incident
+                .version
+                .checked_add(1)
+                .ok_or(IncidentError::InternalInvariantViolation(
+                    "incident version overflowed u64",
+                ))?;
         incident.tags.remove(&key);
-        incident.version += 1;
+        incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
         let asq = self.next_audit_sequence();
@@ -1573,3 +1833,365 @@ impl IncidentUnitOfWork {
 /// aggregate itself.
 #[allow(dead_code)]
 const _: usize = AFFECTED_TARGETS_MAX;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authorization::{FixedBundleResolver, PermissionResolver};
+    use crate::clock::TestClock;
+    use crate::id::TestIncidentGenerator;
+    use crate::idempotency::IdempotencyKey;
+    use crate::number::InMemoryNumberAllocator;
+    use std::collections::BTreeMap as StdBTreeMap;
+    use std::net::{IpAddr, Ipv4Addr};
+    use wetechinetmon_detector::{
+        ActionTaken, AddressFamily, DataCompleteness, DetectionState, EventTarget, ExecutionMode,
+        MatchedReason, MetricRates, SamplingStatus, ScopeId, ScopeType, Severity, TrafficDirection,
+        TransitionReason,
+    };
+
+    fn fresh_uow() -> IncidentUnitOfWork {
+        IncidentUnitOfWork::new(
+            Box::new(TestIncidentGenerator::starting_at(1)),
+            Box::new(InMemoryNumberAllocator::new()),
+            Box::new(TestClock::new()),
+        )
+    }
+
+    fn event(detection_id: &str, sequence: u64, addr: IpAddr, observed: u64) -> DetectionEvent {
+        DetectionEvent {
+            schema_version: wetechinetmon_detector::EVENT_SCHEMA_VERSION,
+            event_id: format!("{detection_id}-{sequence}"),
+            detection_id: detection_id.to_string(),
+            sequence,
+            kind: if sequence == 0 {
+                EventKind::Started
+            } else {
+                EventKind::Updated
+            },
+            dedup_key: format!("{detection_id}:updated:{sequence}"),
+            policy_id: "p-host-bps".to_string(),
+            policy_name: "host bps".to_string(),
+            policy_version: 1,
+            severity: Severity::Major,
+            execution_mode: ExecutionMode::AlertOnly,
+            action: ActionTaken::Alerted,
+            labels: StdBTreeMap::new(),
+            target: EventTarget {
+                tenant: "acme".to_string(),
+                scope_type: ScopeType::Host,
+                scope_id: ScopeId::Host { addr },
+                display: addr.to_string(),
+                direction: TrafficDirection::Incoming,
+                address_family: AddressFamily::Ipv4,
+            },
+            previous_state: DetectionState::PendingTrigger,
+            state: DetectionState::Active,
+            reason: TransitionReason::TriggerSustained,
+            detected_at_ms: 1_700_000_000_000 + sequence,
+            observed_at_ms: 1_700_000_000_000 + sequence,
+            duration_ms: sequence,
+            window_ms: 1000,
+            matched: vec![MatchedReason {
+                metric: MetricKind::Bps,
+                observed,
+                threshold: 1_000_000,
+                excess: observed.saturating_sub(1_000_000),
+                ratio_percent: observed * 100 / 1_000_000,
+            }],
+            peak: Vec::new(),
+            skipped: Vec::new(),
+            rates: MetricRates::default(),
+            completeness: DataCompleteness::default(),
+            sampling: SamplingStatus::default(),
+            flows_observed: 1,
+            exporters_observed: 1,
+            snapshots_in_detection: sequence + 1,
+            executed: false,
+            summary: "test".to_string(),
+        }
+    }
+
+    fn senior_operator(tenant: &str) -> AuthorizationContext {
+        let resolver = FixedBundleResolver;
+        AuthorizationContext::new(
+            TenantId::new(tenant),
+            Actor::Operator {
+                id: "u1".to_string(),
+            },
+            resolver.permissions_for("senior_operator"),
+        )
+    }
+
+    /// Documents 5A's actual in-memory commit boundary — not "atomic".
+    /// There is no real transaction in this crate: `create_incident_internal`
+    /// writes the incident into `self.incidents` and *then* checks
+    /// `fail_after_incident_write`. An injected failure at that checkpoint
+    /// therefore leaves the incident present but its timeline/audit/outbox
+    /// entries absent — genuine partial state. This is the honest boundary
+    /// Milestone 5B's real PostgreSQL transaction must close (see the
+    /// module doc above and the review's B/H6 findings). The name states
+    /// what is actually proven: partial persistence survives, not that it
+    /// does not. Lives here, rather than in the `tests/` integration
+    /// crate, because `inject_failure_after_incident_write` is
+    /// `pub(crate)` and `cfg(test)`-gated (M8): a separate compilation
+    /// unit cannot see it.
+    #[test]
+    fn failure_injection_documents_the_in_memory_commit_boundary() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 12));
+        let started = event("det-fail", 0, addr, 5_000_000);
+        let incident_id_before = uow
+            .ingest_detection_event(&correlator, &started)
+            .unwrap()
+            .incident_id;
+        assert!(incident_id_before.is_some());
+        let count_before = uow.incident_count();
+        let timeline_before = uow.timeline().len();
+        let audit_before = uow.audit().len();
+        let outbox_before = uow.outbox().len();
+
+        uow.inject_failure_after_incident_write(true);
+        let addr2: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 13));
+        let started2 = event("det-fail-2", 0, addr2, 5_000_000);
+        let result = uow.ingest_detection_event(&correlator, &started2);
+        assert!(
+            result.is_err(),
+            "the injected failure must propagate as an error"
+        );
+        assert_eq!(
+            uow.incident_count(),
+            count_before + 1,
+            "the in-memory incident map is written before the injected checkpoint"
+        );
+        assert_eq!(
+            uow.timeline().len(),
+            timeline_before,
+            "no timeline entry for the failed incident should have been committed"
+        );
+        assert_eq!(
+            uow.audit().len(),
+            audit_before,
+            "no audit entry for the failed incident should have been committed"
+        );
+        assert_eq!(
+            uow.outbox().len(),
+            outbox_before,
+            "no outbox entry for the failed incident should have been committed"
+        );
+        uow.inject_failure_after_incident_write(false);
+    }
+
+    /// H4: an injected/transient failure must never become a permanent
+    /// idempotency record. See the analogous discussion in the module doc
+    /// and in `failure_injection_documents_the_in_memory_commit_boundary`
+    /// above about what "partial" means in this in-memory model.
+    #[test]
+    fn injected_failure_does_not_poison_an_idempotency_key() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let operator = senior_operator("acme");
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 31));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-h4c", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+
+        let key = IdempotencyKey::new("d".repeat(20)).unwrap();
+        uow.inject_failure_after_incident_write(true);
+        let failed = uow.handle_command(
+            &operator,
+            incident_id,
+            Command::AcknowledgeIncident {
+                expected_version: 1,
+            },
+            Some(key.clone()),
+        );
+        assert_eq!(
+            failed,
+            Err(IncidentError::InternalInvariantViolation(
+                "injected test failure"
+            ))
+        );
+        uow.inject_failure_after_incident_write(false);
+
+        // The partial mutation already landed (state is genuinely
+        // Acknowledged/version 2 now — the same documented boundary as
+        // above), so retrying with the stale expected_version must see
+        // *live* state, not a cached InternalInvariantViolation.
+        let retried_with_stale_version = uow.handle_command(
+            &operator,
+            incident_id,
+            Command::AcknowledgeIncident {
+                expected_version: 1,
+            },
+            Some(key.clone()),
+        );
+        assert_eq!(
+            retried_with_stale_version,
+            Err(IncidentError::VersionConflict {
+                expected: 1,
+                current: 2,
+                current_state: IncidentState::Acknowledged,
+            }),
+            "the key must not replay the stale injected failure"
+        );
+
+        let retried_with_current_version = uow.handle_command(
+            &operator,
+            incident_id,
+            Command::BeginInvestigation {
+                expected_version: 2,
+            },
+            Some(key),
+        );
+        assert_eq!(retried_with_current_version, Ok(3));
+    }
+
+    /// M1 (active-index consistency): reopening an incident must restore
+    /// its `open_index` entry, not merely change its state — otherwise a
+    /// third event on the same key would create a second incident instead
+    /// of linking to the reopened one.
+    #[test]
+    fn reopen_restores_the_active_index_so_a_later_event_links_rather_than_creates() {
+        let (mut uow, clock) = {
+            let clock = std::sync::Arc::new(TestClock::new());
+            struct Shared(std::sync::Arc<TestClock>);
+            impl Clock for Shared {
+                fn monotonic(&self) -> std::time::Instant {
+                    self.0.monotonic()
+                }
+                fn wall(&self) -> std::time::SystemTime {
+                    self.0.wall()
+                }
+            }
+            let uow = IncidentUnitOfWork::new(
+                Box::new(TestIncidentGenerator::starting_at(1)),
+                Box::new(InMemoryNumberAllocator::new()),
+                Box::new(Shared(clock.clone())),
+            );
+            (uow, clock)
+        };
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let operator = senior_operator("acme");
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 40));
+
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-m1", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        uow.handle_command(
+            &operator,
+            incident_id,
+            Command::ResolveIncident {
+                expected_version: 1,
+                resolution_note: None,
+            },
+            None,
+        )
+        .unwrap();
+
+        clock.advance(Duration::from_secs(60));
+        let reopen_result = uow
+            .ingest_detection_event(&correlator, &event("det-m1-recur", 0, addr, 6_000_000))
+            .unwrap();
+        assert_eq!(reopen_result.outcome_kind, IngestOutcomeKind::Reopened);
+
+        // A third event on the same key must now link to the reopened
+        // incident (found via the restored `open_index` entry), not spawn
+        // a second incident.
+        let third = uow
+            .ingest_detection_event(&correlator, &event("det-m1-recur", 1, addr, 6_500_000))
+            .unwrap();
+        assert_eq!(third.outcome_kind, IngestOutcomeKind::Updated);
+        assert_eq!(third.incident_id, Some(incident_id));
+        assert_eq!(uow.incident_count(), 1);
+    }
+
+    /// Version-overflow safety (required correction): a command that
+    /// would push `version` past `u64::MAX` is refused, not silently
+    /// wrapped to zero, and the incident is left unmutated.
+    #[test]
+    fn version_overflow_is_refused_and_leaves_the_incident_unmutated() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let operator = senior_operator("acme");
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 41));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-ovf", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        uow.incidents.get_mut(&incident_id).unwrap().version = u64::MAX;
+
+        let result = uow.handle_command(
+            &operator,
+            incident_id,
+            Command::AcknowledgeIncident {
+                expected_version: u64::MAX,
+            },
+            None,
+        );
+        assert_eq!(
+            result,
+            Err(IncidentError::InternalInvariantViolation(
+                "incident version overflowed u64"
+            ))
+        );
+        let incident = uow.get(&incident_id).unwrap();
+        assert_eq!(incident.version, u64::MAX, "must not wrap to zero");
+        assert_eq!(
+            incident.state,
+            IncidentState::Open,
+            "a refused overflow must not have applied the state change either"
+        );
+    }
+
+    /// `reopen_count` gets the same treatment as `version`.
+    #[test]
+    fn reopen_count_overflow_is_refused() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let operator = senior_operator("acme");
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 42));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-ovf2", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        uow.handle_command(
+            &operator,
+            incident_id,
+            Command::ResolveIncident {
+                expected_version: 1,
+                resolution_note: None,
+            },
+            None,
+        )
+        .unwrap();
+        {
+            let incident = uow.incidents.get_mut(&incident_id).unwrap();
+            incident.reopen_count = u32::MAX;
+        }
+
+        let result = uow.handle_command(
+            &operator,
+            incident_id,
+            Command::ReopenIncident {
+                expected_version: 2,
+                reason: "test".to_string(),
+            },
+            None,
+        );
+        assert_eq!(
+            result,
+            Err(IncidentError::InternalInvariantViolation(
+                "reopen_count overflowed u32"
+            ))
+        );
+        assert_eq!(uow.get(&incident_id).unwrap().reopen_count, u32::MAX);
+    }
+}
