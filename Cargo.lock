@@ -1300,6 +1300,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wetechinetmon-incident"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "wetechinetmon-detector",
+]
+
+[[package]]
 name = "wetechinetmon-protocol-ipfix"
 version = "0.0.0"
 dependencies = [
