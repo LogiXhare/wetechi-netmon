@@ -52,8 +52,16 @@ impl EvidenceLedger {
 
     /// Records one observed link. Retains it if there is room; otherwise
     /// counts it without growing the retained list.
+    ///
+    /// `observed_total` uses `saturating_add`, not a wrapping `+= 1`:
+    /// documented overflow behavior for a counter that has no natural
+    /// upper bound (unlike `retained`, which `EVIDENCE_RETAINED_LIMIT`
+    /// already caps). Saturating at `u64::MAX` — reachable only after
+    /// more observed links than any real incident could ever accumulate
+    /// — can never wrap to a small number and silently understate how
+    /// much evidence was actually observed.
     pub fn record(&mut self, reference: EvidenceReference) {
-        self.observed_total += 1;
+        self.observed_total = self.observed_total.saturating_add(1);
         if self.retained.len() < EVIDENCE_RETAINED_LIMIT {
             self.retained.push(reference);
         }

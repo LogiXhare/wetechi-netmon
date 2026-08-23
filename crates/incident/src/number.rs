@@ -90,7 +90,10 @@ impl NumberAllocator for InMemoryNumberAllocator {
     fn allocate(&self, tenant: &str, allocation_year: u32) -> IncidentNumber {
         let mut counters = self.counters.lock().expect("number allocator poisoned");
         let next = counters.entry(tenant.to_string()).or_insert(0);
-        *next += 1;
+        // Documented overflow behavior: saturating, not wrapping — see
+        // the sequence-counter note in `unit_of_work.rs`. Unreachable in
+        // practice at `u64::MAX`.
+        *next = next.saturating_add(1);
         let seq = *next;
         drop(counters);
         let formatted = if seq <= 999_999 {
