@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::correlation::TenantId;
+use crate::error::IncidentError;
 use crate::id::IncidentId;
 
 pub const IDEMPOTENCY_KEY_MIN_LEN: usize = 16;
@@ -69,13 +70,26 @@ impl RequestFingerprint {
 
 /// What a previously completed command produced, stored so a replay can
 /// return it without re-executing anything.
+///
+/// `Failed` carries the actual [`IncidentError`] the first attempt
+/// returned — not a single collapsed `Denied` marker — so a replay
+/// reproduces the same error category the caller originally saw:
+/// `InvalidTransition` replays as `InvalidTransition`, `VersionConflict`
+/// as `VersionConflict`, `Unauthorized` as `Unauthorized`, and so on. A
+/// deterministic domain outcome is safe to replay exactly. What must
+/// never be stored here is a transient or injected failure —
+/// [`crate::unit_of_work::IncidentUnitOfWork::handle_command`] does not
+/// call [`IdempotencyStore::record`] for
+/// [`IncidentError::InternalInvariantViolation`], so that class of
+/// failure never poisons a key and a retry under the same key can still
+/// succeed once the underlying condition clears.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredOutcome {
     Mutated {
         incident_id: IncidentId,
         version: u64,
     },
-    Denied,
+    Failed(IncidentError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,7 +224,12 @@ mod tests {
         let fp2 = RequestFingerprint::of(&FakeCommand {
             field: "y".to_string(),
         });
-        store.record(tenant.clone(), key.clone(), fp1, StoredOutcome::Denied);
+        store.record(
+            tenant.clone(),
+            key.clone(),
+            fp1,
+            StoredOutcome::Failed(IncidentError::Unauthorized),
+        );
         assert_eq!(store.check(&tenant, &key, &fp2), IdempotencyCheck::Conflict);
     }
 
@@ -244,7 +263,7 @@ mod tests {
             TenantId::new("acme"),
             key.clone(),
             fp.clone(),
-            StoredOutcome::Denied,
+            StoredOutcome::Failed(IncidentError::Unauthorized),
         );
         assert_eq!(
             store.check(&TenantId::new("globex"), &key, &fp),
