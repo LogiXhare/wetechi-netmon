@@ -137,8 +137,30 @@ than configured — see
 Not covered, and deliberately: incident lifecycle (Phase 5),
 notifications (Phase 6), and any form of mitigation (Phase 7).
 
-## Immediately Next: Phase 5 Preview
+## Phase 5: Incident Management — Planned, Not Implemented
 
-Incident lifecycle: grouping related detections into incidents, incident
-state, acknowledgement, and history. **Not started** — requires review of
-Phase 4 first, per master prompt §29.
+Phase 4 was reviewed and merged into `main` on 2026-08-22 (merge commit
+`3f0cf3e`, PR #14). Phase 5 architecture and documentation planning
+followed; **no Phase 5 code exists**.
+
+The plan turns immutable detection events into operator-owned incidents:
+a transactional outbox for durable at-least-once ingestion, deterministic
+scope-based correlation, an operator-facing state machine that
+deliberately does not duplicate the detector's, PostgreSQL as the
+operational source of truth with ClickHouse kept to immutable analytics,
+an append-only timeline, a separate audit log, a REST API, and a CLI.
+
+**No notification and no mitigation.** Those remain Phases 6 and 7.
+Phase 5 plans only the seams they will attach to.
+
+Start at
+[phase5-incident-management-plan.md](architecture/phase5-incident-management-plan.md);
+decisions are ADRs
+[0011](architecture/decisions/0011-incident-domain-boundary.md)-[0017](architecture/decisions/0017-incident-community-enterprise-boundary.md),
+all **Proposed**.
+
+Implementation is blocked on **BQ-5 to BQ-9** in
+[blocking-questions.md](blocking-questions.md) — incident identity, the
+FR-5.1 deviation, dependency approval, manual closure for critical
+incidents, and the reopen window. Three of the five change code that the
+first milestone would write, so none should be guessed at.
