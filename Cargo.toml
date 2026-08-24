@@ -6,6 +6,7 @@ members = [
     "crates/classifier",
     "crates/aggregator",
     "crates/detector",
+    "crates/incident",
     "crates/storage",
     "crates/collector",
     "tools/flow-replay",

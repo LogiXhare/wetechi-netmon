@@ -57,6 +57,55 @@ green.
 **Reviewable because** it is pure logic with no infrastructure, so review
 attention goes to the rules rather than to wiring.
 
+**Status: implemented on `feat/phase5a-incident-domain`, not yet merged.**
+New crate `wetechinetmon-incident`, dependency-free beyond the workspace
+(a path dependency on `wetechinetmon-detector` for its published event
+vocabulary and clock trait only — see the crate's `lib.rs` module doc for
+the exact import boundary and **FU-29** for its current lack of
+mechanical enforcement). Covers domain identities, the seven-state
+lifecycle guard, deterministic correlation with typed target identity,
+category derivation, closure and reopen policy, suppression as an
+attribute, severity/priority, assignment, typed timeline and audit
+records, idempotency with a canonical-bytes fingerprint (not a hash —
+see the crate's `idempotency` module doc), the outbox abstraction, a
+single bounded in-memory `IncidentUnitOfWork`, and a dependency-free
+end-to-end domain test.
+
+An Opus 5 adversarial review of the initial implementation found two
+blockers (a `Resolved` incident's automatic reopen path was unreachable
+from ingestion; `ResolveIncident` bypassed the transition guard entirely,
+accepting `Closed -> Resolved`) and seven high-severity findings
+(transition metadata misattributed between commands; automatic-maintenance
+methods bypassing authorization; the idempotency fingerprint omitting its
+target incident; failed commands collapsing to a single `Unauthorized` on
+replay instead of preserving their real error; a misleadingly named
+atomicity test that asserted partial state *did* survive while claiming
+to prove otherwise; and a tautological order-independence property test).
+All nine were corrected on the same branch, with regression tests, and
+version/`reopen_count` overflow was hardened with `checked_add` across
+every mutation site (never mutate-then-fail). **5A does not claim a
+cross-record transaction** — every mutation validates everything
+fallible before touching the incident, so a predictable error never
+mutates anything. A focused Opus 5 re-review (2026-08-24) confirmed this
+is stronger than first stated: in a `cfg(not(test))` build there is no
+reachable post-write failure at all, since the injected-failure hook
+that exposes genuine partial state is `cfg(test)`-gated and does not
+exist in a production binary (see **FU-31**). The same re-review
+verified both blockers and all seven high findings above were correctly
+and durably fixed, confirmed zero blockers and zero high findings
+remained, and raised twelve further, lower-severity findings — the
+still-tautological monotonicity property test, a stale documentation
+contradiction on the reopen anchor, an unbounded-panic path on
+suppression duration, a severity-downgrade path that could bypass BQ-8's
+manual-closure protection, and several smaller items. All were fixed or
+explicitly deferred with rationale on 2026-08-24; the
+[complete finding register](follow-ups.md#phase-5a-focused-re-review-finding-register-2026-08-24)
+is the authoritative record of what remains outstanding, superseding the
+Medium/low list in **FU-30** through **FU-37** above (kept current, not
+duplicated). Awaiting one brief final sanity review and a mandatory
+MkDocs strict validation before publication; Milestone 5B has not
+started.
+
 **5A is database-independent and dependency-free.** It may implement
 incident domain types, the seven-state lifecycle, correlation, reopen
 behaviour, the suppression attribute, severity and priority, assignment
