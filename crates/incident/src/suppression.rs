@@ -6,15 +6,20 @@
 //! never stored as a separate boolean, so a suppression cannot outlive
 //! its own expiry through a missed sweep.
 //!
-//! The deadline is computed as `suppressed_at.plus(duration)` on the
-//! **monotonic** half of a [`crate::clock::Timestamp`] — a relative
+//! The deadline is computed as `suppressed_at.checked_plus(duration)` on
+//! the **monotonic** half of a [`crate::clock::Timestamp`] — a relative
 //! duration from an operator command, turned into an absolute deadline
 //! immediately, rather than an absolute wall-clock instant accepted from
-//! the caller. This keeps expiry evaluation immune to a wall-clock
-//! correction, matching the detector's own monotonic-only philosophy for
-//! every timer that drives a decision (see `crates/detector/src/clock.rs`).
-//! An indefinite suppression is how a real attack gets missed, so the
-//! expiry is mandatory — there is no constructor that omits it.
+//! the caller. The checked form is required because `duration` is
+//! operator-supplied and unbounded: `IncidentUnitOfWork::suppress`
+//! rejects with a validation error before any mutation if it would
+//! overflow, rather than panicking (`Timestamp::plus`, the unchecked
+//! form, is for fixed trusted durations only — see its own doc). This
+//! keeps expiry evaluation immune to a wall-clock correction, matching
+//! the detector's own monotonic-only philosophy for every timer that
+//! drives a decision (see `crates/detector/src/clock.rs`). An indefinite
+//! suppression is how a real attack gets missed, so the expiry is
+//! mandatory — there is no constructor that omits it.
 //!
 //! [`Suppression`] itself is not `Serialize` — it carries a
 //! process-local [`Timestamp`], which (like the detector's own
