@@ -19,6 +19,8 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::IncidentError;
+
 /// A bounded, opaque, tenant-scoped display value.
 ///
 /// Never derived from and never substituted for an [`crate::id::IncidentId`].
@@ -57,8 +59,10 @@ pub trait NumberAllocator: Send + Sync {
     /// Allocates the next number for `tenant`, tagging it with
     /// `allocation_year` for display. Allocation must be effectively
     /// atomic per tenant — two calls for the same tenant must never
-    /// return the same number.
-    fn allocate(&self, tenant: &str, allocation_year: u32) -> IncidentNumber;
+    /// return the same number. Refuses with `Err(CapacityExceeded)`
+    /// rather than repeating a number already issued for `tenant`.
+    fn allocate(&self, tenant: &str, allocation_year: u32)
+        -> Result<IncidentNumber, IncidentError>;
 }
 
 /// A per-tenant continuous counter, held in memory.
@@ -87,14 +91,24 @@ impl Default for InMemoryNumberAllocator {
 }
 
 impl NumberAllocator for InMemoryNumberAllocator {
-    fn allocate(&self, tenant: &str, allocation_year: u32) -> IncidentNumber {
+    fn allocate(
+        &self,
+        tenant: &str,
+        allocation_year: u32,
+    ) -> Result<IncidentNumber, IncidentError> {
         let mut counters = self.counters.lock().expect("number allocator poisoned");
         let next = counters.entry(tenant.to_string()).or_insert(0);
-        // Documented overflow behavior: saturating, not wrapping — see
-        // the sequence-counter note in `unit_of_work.rs`. Unreachable in
-        // practice at `u64::MAX`.
-        *next = next.saturating_add(1);
-        let seq = *next;
+        // `checked_add`, not `saturating_add`: this counter feeds
+        // directly into the returned `IncidentNumber`, so saturating
+        // would hand out the same number to every allocation past
+        // `u64::MAX` for one tenant. Refusing leaves the counter
+        // untouched, so a retry (there is nothing sensible to retry with
+        // in-process, but a future persistent allocator inherits the same
+        // contract) does not get a fresh chance to collide either.
+        let seq = next.checked_add(1).ok_or(IncidentError::CapacityExceeded(
+            "incident number counter exhausted",
+        ))?;
+        *next = seq;
         drop(counters);
         let formatted = if seq <= 999_999 {
             format!("WNM-{allocation_year}-{seq:06}")
@@ -105,7 +119,7 @@ impl NumberAllocator for InMemoryNumberAllocator {
             // different problem than formatting.
             format!("WNM-{allocation_year}-{seq}")
         };
-        IncidentNumber::new_unchecked(formatted)
+        Ok(IncidentNumber::new_unchecked(formatted))
     }
 }
 
@@ -116,8 +130,8 @@ mod tests {
     #[test]
     fn allocates_sequentially_per_tenant() {
         let allocator = InMemoryNumberAllocator::new();
-        let first = allocator.allocate("acme", 2026);
-        let second = allocator.allocate("acme", 2026);
+        let first = allocator.allocate("acme", 2026).unwrap();
+        let second = allocator.allocate("acme", 2026).unwrap();
         assert_eq!(first.as_str(), "WNM-2026-000001");
         assert_eq!(second.as_str(), "WNM-2026-000002");
     }
@@ -125,9 +139,9 @@ mod tests {
     #[test]
     fn tenants_do_not_share_a_counter() {
         let allocator = InMemoryNumberAllocator::new();
-        allocator.allocate("acme", 2026);
-        allocator.allocate("acme", 2026);
-        let other = allocator.allocate("globex", 2026);
+        allocator.allocate("acme", 2026).unwrap();
+        allocator.allocate("acme", 2026).unwrap();
+        let other = allocator.allocate("globex", 2026).unwrap();
         assert_eq!(other.as_str(), "WNM-2026-000001");
     }
 
@@ -136,8 +150,8 @@ mod tests {
         // Documents the provisional decision explicitly: allocating with
         // a different `allocation_year` does not reset the counter.
         let allocator = InMemoryNumberAllocator::new();
-        let first = allocator.allocate("acme", 2026);
-        let second = allocator.allocate("acme", 2027);
+        let first = allocator.allocate("acme", 2026).unwrap();
+        let second = allocator.allocate("acme", 2027).unwrap();
         assert_eq!(first.as_str(), "WNM-2026-000001");
         assert_eq!(second.as_str(), "WNM-2027-000002");
     }
@@ -145,8 +159,31 @@ mod tests {
     #[test]
     fn never_produces_a_duplicate_number_across_many_allocations() {
         let allocator = InMemoryNumberAllocator::new();
-        let numbers: std::collections::BTreeSet<IncidentNumber> =
-            (0..500).map(|_| allocator.allocate("acme", 2026)).collect();
+        let numbers: std::collections::BTreeSet<IncidentNumber> = (0..500)
+            .map(|_| allocator.allocate("acme", 2026).unwrap())
+            .collect();
         assert_eq!(numbers.len(), 500);
+    }
+
+    /// Identity-counter exhaustion (section 10 of the publication
+    /// corrections): at the boundary, allocation must refuse rather than
+    /// repeat a number already issued for the tenant.
+    #[test]
+    fn refuses_rather_than_repeats_a_number_at_counter_exhaustion() {
+        let allocator = InMemoryNumberAllocator::new();
+        allocator
+            .counters
+            .lock()
+            .unwrap()
+            .insert("acme".to_string(), u64::MAX - 1);
+        let last = allocator.allocate("acme", 2026).unwrap();
+        let refused = allocator.allocate("acme", 2026);
+        assert_eq!(
+            refused,
+            Err(IncidentError::CapacityExceeded(
+                "incident number counter exhausted"
+            ))
+        );
+        assert_ne!(Ok(last), refused);
     }
 }

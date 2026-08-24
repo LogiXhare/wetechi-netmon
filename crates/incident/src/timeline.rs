@@ -114,9 +114,22 @@ pub enum TimelinePayload {
     Reopened {
         reopen_count: u32,
         previous_incident_id: Option<IncidentId>,
+        /// The operator-supplied reason (FU-36), when this reopen was an
+        /// operator command. `None` for an automatic recurrence reopen,
+        /// which carries no human-authored reason to preserve.
+        reason: Option<String>,
     },
     LimitReached {
         limit_name: String,
+    },
+    /// FU-37: `add_tag` and `remove_tag` previously mutated the incident
+    /// with no timeline record at all — every other mutation appends one.
+    TagAdded {
+        key: String,
+        value: String,
+    },
+    TagRemoved {
+        key: String,
     },
 }
 
@@ -139,6 +152,8 @@ impl TimelinePayload {
             TimelinePayload::Unsuppressed => "unsuppressed",
             TimelinePayload::Reopened { .. } => "reopened",
             TimelinePayload::LimitReached { .. } => "limit_reached",
+            TimelinePayload::TagAdded { .. } => "tag_added",
+            TimelinePayload::TagRemoved { .. } => "tag_removed",
         }
     }
 }
@@ -197,6 +212,7 @@ mod tests {
         let payload = TimelinePayload::Reopened {
             reopen_count: 2,
             previous_incident_id: None,
+            reason: Some("recurring attack pattern".to_string()),
         };
         let entry = TimelineEntry::new(
             0,

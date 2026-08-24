@@ -41,15 +41,31 @@ impl Timestamp {
         }
     }
 
-    /// A timestamp `duration` after this one, computed on the monotonic
-    /// half only. Used to turn a relative policy duration (a suppression
-    /// length, a closure delay) into an absolute deadline without ever
-    /// touching the wall clock.
+    /// A timestamp `duration` after this one. Panics on overflow (via
+    /// `Instant`'s and `SystemTime`'s `Add` impls), so this is only for
+    /// fixed, trusted durations known not to overflow — a test fixture, a
+    /// short constant. Any duration that originates from an operator
+    /// command or configuration (a suppression length, a closure delay)
+    /// must go through [`Self::checked_plus`] instead and reject the
+    /// operation before mutating anything, rather than risk a panic on
+    /// attacker- or operator-controlled input.
     pub fn plus(&self, duration: Duration) -> Timestamp {
         Timestamp {
             monotonic: self.monotonic + duration,
             wall: self.wall + duration,
         }
+    }
+
+    /// A timestamp `duration` after this one, or `None` if adding it would
+    /// overflow either clock half. The checked counterpart to
+    /// [`Self::plus`] — use this for any duration that is not a fixed,
+    /// trusted constant, so an operator- or config-supplied duration can be
+    /// rejected as a validation error instead of panicking.
+    pub fn checked_plus(&self, duration: Duration) -> Option<Timestamp> {
+        Some(Timestamp {
+            monotonic: self.monotonic.checked_add(duration)?,
+            wall: self.wall.checked_add(duration)?,
+        })
     }
 
     /// How long has elapsed from `self` to `later`, saturating at zero
@@ -119,6 +135,29 @@ mod tests {
         let start = Timestamp::now(&clock);
         let deadline = start.plus(Duration::from_secs(900));
         assert_eq!(deadline.elapsed_since(&start), Duration::from_secs(900));
+    }
+
+    #[test]
+    fn checked_plus_matches_plus_for_a_normal_duration() {
+        let clock = TestClock::new();
+        let start = Timestamp::now(&clock);
+        let via_checked = start.checked_plus(Duration::from_secs(900)).unwrap();
+        let via_plus = start.plus(Duration::from_secs(900));
+        assert_eq!(via_checked, via_plus);
+    }
+
+    #[test]
+    fn checked_plus_accepts_zero_duration() {
+        let clock = TestClock::new();
+        let start = Timestamp::now(&clock);
+        assert_eq!(start.checked_plus(Duration::ZERO).unwrap(), start);
+    }
+
+    #[test]
+    fn checked_plus_returns_none_on_overflow() {
+        let clock = TestClock::new();
+        let start = Timestamp::now(&clock);
+        assert_eq!(start.checked_plus(Duration::MAX), None);
     }
 
     #[test]

@@ -10,6 +10,7 @@ use crate::closure::ClosurePolicy;
 use crate::error::IncidentError;
 use crate::incident::Incident;
 use crate::reopen::ReopenPolicy;
+use crate::severity::Severity;
 use crate::state::IncidentState;
 use crate::timeline::AutomaticCause;
 
@@ -109,7 +110,15 @@ pub fn attempt_automatic_closure(
             to: IncidentState::Closed,
         });
     }
-    if !policy.allows_automatic_closure(incident.severity) {
+    // Decided from `ever_critical`, not the live `severity`: BQ-8's
+    // protection must not lapse just because the incident was later
+    // downgraded (see the field's doc on `Incident`).
+    let effective_severity = if incident.ever_critical {
+        Severity::Critical
+    } else {
+        incident.severity
+    };
+    if !policy.allows_automatic_closure(effective_severity) {
         return Err(IncidentError::ManualClosureRequired);
     }
     Ok(())
@@ -169,7 +178,9 @@ mod tests {
         );
         Incident {
             incident_id: IncidentId::from_bytes([1; 16]),
-            incident_number: crate::number::InMemoryNumberAllocator::new().allocate("acme", 2026),
+            incident_number: crate::number::InMemoryNumberAllocator::new()
+                .allocate("acme", 2026)
+                .unwrap(),
             schema_version: crate::incident::INCIDENT_SCHEMA_VERSION,
             tenant_id: TenantId::new("acme"),
             correlation_key: key,
@@ -183,6 +194,7 @@ mod tests {
             state,
             severity: Severity::Major,
             severity_source: SeveritySource::Detection,
+            ever_critical: false,
             priority: Priority::default_for(Severity::Major),
             closure_reason: None,
             state_before_recovering: if state == IncidentState::Recovering {
@@ -235,6 +247,7 @@ mod tests {
         let clock = TestClock::new();
         let mut incident = bare_incident(IncidentState::Resolved, &clock);
         incident.severity = Severity::Critical;
+        incident.ever_critical = true;
         let result = attempt_automatic_closure(&incident, &ClosurePolicy::approved_default());
         assert_eq!(result, Err(IncidentError::ManualClosureRequired));
     }
@@ -244,6 +257,39 @@ mod tests {
         let clock = TestClock::new();
         let mut incident = bare_incident(IncidentState::Resolved, &clock);
         incident.severity = Severity::Major;
+        assert!(attempt_automatic_closure(&incident, &ClosurePolicy::approved_default()).is_ok());
+    }
+
+    /// BQ-8 closure-bypass regression: an incident that reached `Critical`
+    /// and was later downgraded to a lower severity — the ordinary
+    /// `IncidentSeverityChange` path, not the specially-gated
+    /// `incident.closure_policy.override` — must still refuse automatic
+    /// closure. Before `ever_critical` existed, this exact sequence
+    /// (downgrade a Resolved Critical, then let the automatic-closure
+    /// sweep run) silently unlocked automatic closure.
+    #[test]
+    fn automatic_closure_is_refused_after_a_downgrade_from_critical() {
+        let clock = TestClock::new();
+        let mut incident = bare_incident(IncidentState::Resolved, &clock);
+        incident.severity = Severity::Major;
+        incident.ever_critical = true;
+        let result = attempt_automatic_closure(&incident, &ClosurePolicy::approved_default());
+        assert_eq!(
+            result,
+            Err(IncidentError::ManualClosureRequired),
+            "a severity downgrade must not unlock automatic closure for a formerly critical incident"
+        );
+    }
+
+    /// The converse: an incident that never reached `Critical` and is
+    /// currently non-critical still auto-closes normally after the
+    /// approved delay — the fix must not over-restrict.
+    #[test]
+    fn automatic_closure_still_succeeds_for_never_critical_non_critical() {
+        let clock = TestClock::new();
+        let mut incident = bare_incident(IncidentState::Resolved, &clock);
+        incident.severity = Severity::Minor;
+        assert!(!incident.ever_critical);
         assert!(attempt_automatic_closure(&incident, &ClosurePolicy::approved_default()).is_ok());
     }
 

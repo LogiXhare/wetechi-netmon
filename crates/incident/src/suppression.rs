@@ -31,6 +31,20 @@ use crate::clock::Timestamp;
 
 pub const SUPPRESSION_REASON_MAX_LEN: usize = 500;
 
+/// Validates a suppression reason against its bound, matching
+/// [`crate::incident::validate_note_body`] and
+/// [`crate::incident::validate_title`]'s pattern (FU-32): checked before
+/// any mutation, so an oversized reason refuses the whole command instead
+/// of being stored truncated or unbounded.
+pub fn validate_reason(reason: &str) -> Result<(), crate::error::IncidentError> {
+    if reason.chars().count() > SUPPRESSION_REASON_MAX_LEN {
+        return Err(crate::error::IncidentError::ValidationError(format!(
+            "suppression reason exceeds {SUPPRESSION_REASON_MAX_LEN} characters"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Suppression {
     deadline: Timestamp,
@@ -133,5 +147,17 @@ mod tests {
         let display = suppression.to_display();
         assert_eq!(display.until_wall, deadline.wall());
         assert_eq!(display.reason, "test");
+    }
+
+    #[test]
+    fn a_reason_at_exactly_the_bound_is_valid() {
+        let reason: String = "a".repeat(SUPPRESSION_REASON_MAX_LEN);
+        assert!(validate_reason(&reason).is_ok());
+    }
+
+    #[test]
+    fn a_reason_one_over_the_bound_is_rejected() {
+        let reason: String = "a".repeat(SUPPRESSION_REASON_MAX_LEN + 1);
+        assert!(validate_reason(&reason).is_err());
     }
 }

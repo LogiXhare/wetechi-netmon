@@ -32,6 +32,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::IncidentError;
+
 /// An opaque, 16-byte incident identifier.
 ///
 /// Canonical byte order matches RFC 4122's big-endian field layout — the
@@ -120,7 +122,11 @@ impl<'de> Deserialize<'de> for IncidentId {
 /// is behind it, which is exactly the point: the type system, not
 /// discipline, is what keeps a test generator out of a production path.
 pub trait IncidentGenerator: Send + Sync {
-    fn generate(&self) -> IncidentId;
+    /// Produces the next id, or `Err(CapacityExceeded)` if doing so would
+    /// require repeating one already issued by this generator instance —
+    /// checked before the counter moves, never after, so a caller never
+    /// observes a duplicate `IncidentId`. See [`crate::error::IncidentError`].
+    fn generate(&self) -> Result<IncidentId, IncidentError>;
 }
 
 /// The Phase 5A production generator.
@@ -161,9 +167,19 @@ impl Default for PlaceholderIncidentGenerator {
 }
 
 impl IncidentGenerator for PlaceholderIncidentGenerator {
-    fn generate(&self) -> IncidentId {
-        let seq = self.counter.fetch_add(1, Ordering::Relaxed);
-        IncidentId::from_bytes(mix(self.salt, seq))
+    fn generate(&self) -> Result<IncidentId, IncidentError> {
+        // `fetch_update` with `checked_add` rather than `fetch_add`:
+        // `fetch_add` wraps silently on overflow, which for an identity
+        // generator means repeating a byte-for-byte identical
+        // `IncidentId` — a real collision in `self.incidents`, not a
+        // display artifact. `fetch_update` refuses instead, leaving the
+        // counter untouched, so the next call refuses again rather than
+        // ever handing out a duplicate.
+        let seq = self
+            .counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+            .map_err(|_| IncidentError::CapacityExceeded("incident identity counter exhausted"))?;
+        Ok(IncidentId::from_bytes(mix(self.salt, seq)))
     }
 }
 
@@ -188,11 +204,16 @@ impl TestIncidentGenerator {
 }
 
 impl IncidentGenerator for TestIncidentGenerator {
-    fn generate(&self) -> IncidentId {
-        let seq = self.counter.fetch_add(1, Ordering::Relaxed);
+    fn generate(&self) -> Result<IncidentId, IncidentError> {
+        let seq = self
+            .counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+            .map_err(|_| {
+                IncidentError::CapacityExceeded("test incident identity counter exhausted")
+            })?;
         let mut bytes = [0u8; 16];
         bytes[8..16].copy_from_slice(&seq.to_be_bytes());
-        IncidentId::from_bytes(bytes)
+        Ok(IncidentId::from_bytes(bytes))
     }
 }
 
@@ -272,7 +293,7 @@ mod tests {
     fn the_placeholder_generator_never_repeats_within_one_instance() {
         let gen = PlaceholderIncidentGenerator::new();
         let ids: std::collections::BTreeSet<IncidentId> =
-            (0..1000).map(|_| gen.generate()).collect();
+            (0..1000).map(|_| gen.generate().unwrap()).collect();
         assert_eq!(ids.len(), 1000);
     }
 
@@ -280,19 +301,41 @@ mod tests {
     fn two_placeholder_generators_do_not_share_a_salt() {
         let a = PlaceholderIncidentGenerator::new();
         let b = PlaceholderIncidentGenerator::new();
-        assert_ne!(a.generate(), b.generate());
+        assert_ne!(a.generate().unwrap(), b.generate().unwrap());
     }
 
     #[test]
     fn the_test_generator_is_strictly_increasing_and_reproducible() {
         let gen = TestIncidentGenerator::starting_at(7);
-        let first = gen.generate();
-        let second = gen.generate();
+        let first = gen.generate().unwrap();
+        let second = gen.generate().unwrap();
         assert_ne!(first, second);
 
         let replay = TestIncidentGenerator::starting_at(7);
-        assert_eq!(replay.generate(), first);
-        assert_eq!(replay.generate(), second);
+        assert_eq!(replay.generate().unwrap(), first);
+        assert_eq!(replay.generate().unwrap(), second);
+    }
+
+    /// The regression this crate's `version` overflow handling already
+    /// covers for a different counter: an identity generator at the very
+    /// edge of its counter space must refuse rather than repeat. Seeded
+    /// one below `u64::MAX` so the first call consumes the last
+    /// representable value and the second call must refuse instead of
+    /// wrapping back to an id it already issued.
+    #[test]
+    fn the_test_generator_refuses_rather_than_repeats_at_counter_exhaustion() {
+        let gen = TestIncidentGenerator::starting_at(u64::MAX - 1);
+        let last = gen.generate().unwrap();
+        let refused = gen.generate();
+        assert_eq!(
+            refused,
+            Err(IncidentError::CapacityExceeded(
+                "test incident identity counter exhausted"
+            ))
+        );
+        // Confirms it truly refused rather than silently wrapping back to
+        // an id already issued.
+        assert_ne!(Ok(last), refused);
     }
 
     #[test]

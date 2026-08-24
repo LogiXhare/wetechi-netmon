@@ -1,10 +1,21 @@
 //! The `Incident` aggregate.
 //!
-//! Every field here is either immutable after creation, mutable only
-//! through [`crate::transition`]'s guarded functions, or derived. There
-//! is no public setter that bypasses a guard, a version bump, a timeline
-//! entry, and an audit entry together — the aggregate's own API does not
-//! offer a way to do only one of those.
+//! Every field is `pub`, so this is discipline, not a type-system
+//! guarantee: nothing here stops code that already holds `&mut Incident`
+//! from setting a field directly and skipping a guard, a version bump, a
+//! timeline entry, and an audit entry. What *does* hold is narrower than
+//! that — no code outside this crate can ever obtain `&mut Incident` in
+//! the first place, because [`crate::unit_of_work::IncidentUnitOfWork`]
+//! keeps its incident map private and its only public accessor,
+//! [`crate::unit_of_work::IncidentUnitOfWork::get`], returns `&Incident`.
+//! Every external mutation path is therefore forced through a typed
+//! command and [`crate::transition`]'s guards. Within the crate,
+//! [`crate::unit_of_work`] is the only module that takes `&mut Incident`
+//! with intent to change it, and each of its mutation sites is expected
+//! to pair the field write with a version bump, a timeline entry, and an
+//! audit entry — but that pairing is convention, verified by tests, not
+//! something the compiler enforces (see FU-30's sibling entries in
+//! `docs/development/follow-ups.md` for the specific sites reviewed).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -81,6 +92,18 @@ pub struct Incident {
     pub state: IncidentState,
     pub severity: Severity,
     pub severity_source: SeveritySource,
+    /// Whether this incident has ever reached `Critical`, tracked
+    /// independently of the current, operator-mutable `severity` field.
+    /// BQ-8's manual-closure protection is decided from this, not from
+    /// `severity` directly: the approved decision states "there is no
+    /// path by which the protection lapses silently", so a routine
+    /// severity downgrade — which only requires `IncidentSeverityChange`,
+    /// not the specially-gated `incident.closure_policy.override` — must
+    /// not be able to quietly unlock automatic closure for an incident
+    /// that was, at some point, `Critical`. Set on creation and on every
+    /// severity change that reaches `Critical`; never cleared in 5A, since
+    /// no permissioned override exists yet to clear it safely (5B).
+    pub ever_critical: bool,
     pub priority: Priority,
     pub closure_reason: Option<ClosureReason>,
     pub(crate) state_before_recovering: Option<IncidentState>,

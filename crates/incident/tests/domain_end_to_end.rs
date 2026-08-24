@@ -360,9 +360,10 @@ fn detection_to_incident_full_lifecycle_end_to_end() {
         "recovery confirmation period has not elapsed yet"
     );
 
-    // 9. Critical incidents never auto-close; force severity to Critical
-    // to prove the guard, then resolve for real and check auto-close is
-    // refused, then close manually.
+    // 9. Force severity to Critical partway through this lifecycle so
+    // `ever_critical` latches; the actual auto-close-refused-then-manual-
+    // close-works assertions live in
+    // `critical_incident_does_not_auto_close_but_manual_close_works`.
     let incident = uow.get(&incident_id).unwrap();
     let version = uow
         .handle_command(
@@ -483,6 +484,105 @@ fn critical_incident_does_not_auto_close_but_manual_close_works() {
             "no mitigation event type may appear: {name}"
         );
     }
+}
+
+/// BQ-8 closure-bypass regression, end to end through `handle_command`
+/// rather than the unit-level `attempt_automatic_closure` test in
+/// `transition.rs`: an incident that reached `Critical`, was resolved,
+/// and was then downgraded through the ordinary `ChangeSeverity` command
+/// (which only requires `IncidentSeverityChange`, not the specially-gated
+/// `incident.closure_policy.override`) must still refuse automatic
+/// closure. Before `ever_critical` existed, this exact operator sequence
+/// silently unlocked automatic closure for a formerly critical incident.
+#[test]
+fn severity_downgrade_does_not_unlock_automatic_closure_for_a_formerly_critical_incident() {
+    let mut uow = IncidentUnitOfWork::new(
+        Box::new(TestIncidentGenerator::starting_at(1)),
+        Box::new(InMemoryNumberAllocator::new()),
+        Box::new(TestClock::new()),
+    );
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let operator = resolver_context(&resolver, "acme", "senior_operator", "u1");
+    let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+
+    let mut started = event(
+        "det-crit-downgrade",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        9_000_000,
+        1_000_000,
+    );
+    started.severity = Severity::Critical;
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+    assert!(uow.get(&incident_id).unwrap().ever_critical);
+
+    uow.enter_recovering(
+        &correlator,
+        incident_id,
+        wetechinetmon_incident::transition::DetectionEndReason::TrafficCleared,
+    )
+    .unwrap();
+    assert!(uow
+        .confirm_recovery_if_due(&correlator, incident_id, Duration::ZERO)
+        .unwrap());
+    assert_eq!(
+        uow.get(&incident_id).unwrap().state,
+        IncidentState::Resolved
+    );
+
+    // Ordinary severity downgrade — not the closure-policy override.
+    let version = uow.get(&incident_id).unwrap().version;
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::ChangeSeverity {
+            expected_version: version,
+            new_severity: Severity::Major,
+            reason: Some("recovered, downgrading".to_string()),
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(uow.get(&incident_id).unwrap().severity, Severity::Major);
+    assert!(
+        uow.get(&incident_id).unwrap().ever_critical,
+        "ever_critical must not be cleared by an ordinary severity change"
+    );
+
+    let auto_closed = uow
+        .attempt_automatic_closure(&correlator, incident_id)
+        .unwrap();
+    assert!(
+        !auto_closed,
+        "a formerly critical incident must not auto-close after a mere severity downgrade"
+    );
+    assert_eq!(
+        uow.get(&incident_id).unwrap().state,
+        IncidentState::Resolved
+    );
+
+    // Manual closure still works.
+    let version = uow.get(&incident_id).unwrap().version;
+    uow.handle_command(
+        &operator,
+        incident_id,
+        Command::CloseIncident {
+            expected_version: version,
+            reason: ClosureReason::Resolved,
+            detail: None,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(uow.get(&incident_id).unwrap().state, IncidentState::Closed);
 }
 
 #[test]
@@ -704,6 +804,13 @@ fn resolved_incident_reopens_within_window_through_ingestion() {
     assert_eq!(incident.state, IncidentState::Open);
     assert_eq!(incident.reopen_count, 1);
     assert_eq!(uow.incident_count(), 1);
+    // FU-37: a reopened, active incident must not carry a stale
+    // `resolved_at` from the prior cycle — that history lives in the
+    // timeline's `StateChanged` entries instead.
+    assert_eq!(
+        incident.resolved_at, None,
+        "resolved_at must be cleared on reopen, not left stale from the prior cycle"
+    );
 }
 
 #[test]
@@ -833,6 +940,16 @@ fn closed_incident_reopens_within_window_through_ingestion() {
     assert_eq!(result.incident_id, Some(incident_id));
     assert_eq!(uow.incident_count(), 1);
     assert_eq!(uow.get(&incident_id).unwrap().reopen_count, 1);
+    // FU-37: same guarantee for the closed-then-reopened path.
+    let incident = uow.get(&incident_id).unwrap();
+    assert_eq!(
+        incident.resolved_at, None,
+        "resolved_at must be cleared on reopen"
+    );
+    assert_eq!(
+        incident.closed_at, None,
+        "closed_at must be cleared on reopen, not left stale from the prior cycle"
+    );
 }
 
 // ---------------------------------------------------------------------

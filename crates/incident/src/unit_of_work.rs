@@ -54,7 +54,7 @@ use crate::idempotency::{
 use crate::incident::{
     validate_note_body, Incident, Note, NoteVisibility, INCIDENT_SCHEMA_VERSION,
 };
-use crate::limits::{AFFECTED_TARGETS_MAX, TAG_KEY_MAX_LEN, TAG_VALUE_MAX_LEN};
+use crate::limits::{AFFECTED_TARGETS_MAX, POLICY_REFS_MAX, TAG_KEY_MAX_LEN, TAG_VALUE_MAX_LEN};
 use crate::number::NumberAllocator;
 use crate::outbox::{OutboxEvent, OutboxMessage};
 use crate::reopen::ReopenPolicy;
@@ -83,6 +83,15 @@ pub struct IncidentUnitOfWork {
     outbox_sequence: u64,
     incident_generator: Box<dyn IncidentGenerator>,
     number_allocator: Box<dyn NumberAllocator>,
+    /// The display year tagged onto every [`crate::number::IncidentNumber`]
+    /// this unit-of-work allocates. Deliberately not derived from a wall
+    /// clock — that would be a time dependency this crate does not need —
+    /// and deliberately not hardcoded at the call site either, so a test
+    /// or a future caller can supply an explicit, deterministic period.
+    /// Provisional in the same sense as the rest of `IncidentNumber`'s
+    /// display format (FU-24): this is a display value, not a domain rule,
+    /// and 5A implements no year-reset semantics.
+    number_allocation_year: u32,
     clock: Box<dyn Clock>,
     closure_policy: ClosurePolicy,
     reopen_policy: ReopenPolicy,
@@ -132,6 +141,11 @@ fn audited_permission_for(cause: &TransitionCause, operator_permission: Permissi
     }
 }
 
+/// The placeholder display year used until a caller configures a real one
+/// via [`IncidentUnitOfWork::with_number_allocation_year`]. Not a domain
+/// rule — see the field doc on `number_allocation_year` and FU-24.
+const PROVISIONAL_DEFAULT_ALLOCATION_YEAR: u32 = 2026;
+
 impl IncidentUnitOfWork {
     pub fn new(
         incident_generator: Box<dyn IncidentGenerator>,
@@ -151,12 +165,21 @@ impl IncidentUnitOfWork {
             outbox_sequence: 0,
             incident_generator,
             number_allocator,
+            number_allocation_year: PROVISIONAL_DEFAULT_ALLOCATION_YEAR,
             clock,
             closure_policy: ClosurePolicy::approved_default(),
             reopen_policy: ReopenPolicy::approved_default(),
             #[cfg(test)]
             fail_after_incident_write: false,
         }
+    }
+
+    /// Overrides the display year tagged onto every subsequently allocated
+    /// [`crate::number::IncidentNumber`]. See the `number_allocation_year`
+    /// field doc — this is a display value, not a time dependency.
+    pub fn with_number_allocation_year(mut self, year: u32) -> Self {
+        self.number_allocation_year = year;
+        self
     }
 
     pub fn with_policies(
@@ -433,11 +456,16 @@ impl IncidentUnitOfWork {
             );
         }
         let now = self.now();
-        let incident_id = self.incident_generator.generate();
-        let allocation_year = 2026; // wall-clock year derivation is a display concern; fixed here since Timestamp carries no calendar API without a new dependency, and the number is provisional (FU-24) regardless.
+        let incident_id = self.incident_generator.generate()?;
+        // Wall-clock year derivation is a display concern; `Timestamp`
+        // carries no calendar API without a new dependency, so the value
+        // comes from `self.number_allocation_year` (configurable via
+        // `with_number_allocation_year`, defaulting to a documented
+        // placeholder) rather than a literal — see that field's doc and
+        // FU-24 for why the number itself stays provisional regardless.
         let incident_number = self
             .number_allocator
-            .allocate(tenant.as_str(), allocation_year);
+            .allocate(tenant.as_str(), self.number_allocation_year)?;
 
         let mut matched_metrics: BTreeSet<MetricKind> = BTreeSet::new();
         for reason in &event.matched {
@@ -475,6 +503,7 @@ impl IncidentUnitOfWork {
             state: IncidentState::Open,
             severity: event.severity,
             severity_source: SeveritySource::Detection,
+            ever_critical: event.severity == wetechinetmon_detector::Severity::Critical,
             priority: Priority::default_for(event.severity),
             closure_reason: None,
             state_before_recovering: None,
@@ -567,6 +596,33 @@ impl IncidentUnitOfWork {
 
             for reason in &event.matched {
                 incident.matched_metrics.insert(reason.metric);
+            }
+            // FU-34: record every distinct policy that ever matched, not
+            // only the one that opened the incident — otherwise a second
+            // policy matching a later event leaves no trace anywhere on
+            // the aggregate. Bounded the same way evidence is (stops
+            // growing new distinct entries past the cap, per the
+            // documented asymmetry in `crate::limits`), rather than
+            // refusing the whole event link over policy bookkeeping.
+            match incident
+                .policy_refs
+                .iter()
+                .position(|p| p.policy_id == event.policy_id)
+            {
+                Some(idx) => {
+                    let existing = &mut incident.policy_refs[idx];
+                    existing.last_seen_sequence = event.sequence;
+                    existing.policy_version = event.policy_version;
+                }
+                None if incident.policy_refs.len() < POLICY_REFS_MAX => {
+                    incident.policy_refs.push(crate::incident::PolicyRef {
+                        policy_id: event.policy_id.clone(),
+                        policy_version: event.policy_version,
+                        first_seen_sequence: event.sequence,
+                        last_seen_sequence: event.sequence,
+                    });
+                }
+                None => {}
             }
             let new_category = derive_category(&incident.matched_metrics);
             let old_category = incident.category;
@@ -696,6 +752,13 @@ impl IncidentUnitOfWork {
         incident.last_detected_at = now;
         incident.last_updated_at = now;
         incident.closure_reason = None;
+        // FU-37: `resolved_at`/`closed_at` are current-state fields, not
+        // historical ones — the prior cycle's values are already
+        // preserved immutably in the timeline's `StateChanged` entries.
+        // Leaving them set here would let a now-active, reopened incident
+        // display a stale "resolved"/"closed" timestamp.
+        incident.resolved_at = None;
+        incident.closed_at = None;
         for reason in &event.matched {
             incident.matched_metrics.insert(reason.metric);
         }
@@ -733,6 +796,7 @@ impl IncidentUnitOfWork {
             TimelinePayload::Reopened {
                 reopen_count,
                 previous_incident_id: None,
+                reason: None,
             },
         ));
         let asq = self.next_audit_sequence();
@@ -770,10 +834,12 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         reason: transition::DetectionEndReason,
     ) -> Result<(), IncidentError> {
+        // Not yet resolved or tenant-checked — `Unresolved` (L4), same
+        // rationale as `handle_command`'s permission check.
         self.check_permission(
             auth,
             Permission::IncidentIngest,
-            AttemptedResource::Incident(incident_id),
+            AttemptedResource::Unresolved(incident_id.to_string()),
         )?;
         let now = self.now();
         let incident = self
@@ -839,10 +905,12 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         recovery_confirmation: Duration,
     ) -> Result<bool, IncidentError> {
+        // Not yet resolved or tenant-checked — `Unresolved` (L4), same
+        // rationale as `handle_command`'s permission check.
         self.check_permission(
             auth,
             Permission::IncidentIngest,
-            AttemptedResource::Incident(incident_id),
+            AttemptedResource::Unresolved(incident_id.to_string()),
         )?;
         let now = self.now();
         let incident = self
@@ -875,10 +943,12 @@ impl IncidentUnitOfWork {
         auth: &AuthorizationContext,
         incident_id: IncidentId,
     ) -> Result<(), IncidentError> {
+        // Not yet resolved or tenant-checked — `Unresolved` (L4), same
+        // rationale as `handle_command`'s permission check.
         self.check_permission(
             auth,
             Permission::IncidentIngest,
-            AttemptedResource::Incident(incident_id),
+            AttemptedResource::Unresolved(incident_id.to_string()),
         )?;
         let now = self.now();
         let incident = self
@@ -931,10 +1001,12 @@ impl IncidentUnitOfWork {
         auth: &AuthorizationContext,
         incident_id: IncidentId,
     ) -> Result<bool, IncidentError> {
+        // Not yet resolved or tenant-checked — `Unresolved` (L4), same
+        // rationale as `handle_command`'s permission check.
         self.check_permission(
             auth,
             Permission::IncidentIngest,
-            AttemptedResource::Incident(incident_id),
+            AttemptedResource::Unresolved(incident_id.to_string()),
         )?;
         let incident = self
             .incidents
@@ -1124,8 +1196,12 @@ impl IncidentUnitOfWork {
         idempotency_key: Option<IdempotencyKey>,
     ) -> Result<u64, IncidentError> {
         let permission = command.required_permission();
-        let resource = AttemptedResource::Incident(incident_id);
-        self.check_permission(auth, permission, resource.clone())?;
+        // Not yet resolved against `self.incidents` or checked against the
+        // caller's tenant — this is only what the caller supplied, so a
+        // denial here uses `Unresolved` (L4), matching `AttemptedResource`'s
+        // own documented rule for a denial before (or instead of) a lookup.
+        let resource = AttemptedResource::Unresolved(incident_id.to_string());
+        self.check_permission(auth, permission, resource)?;
 
         let incident = self
             .incidents
@@ -1387,6 +1463,11 @@ impl IncidentUnitOfWork {
         incident.reopen_count = new_reopen_count;
         incident.reopened_at = Some(now);
         incident.closure_reason = None;
+        // FU-37: see the analogous comment in the automatic-recurrence
+        // reopen path — these are current-state fields, not historical
+        // ones.
+        incident.resolved_at = None;
+        incident.closed_at = None;
         incident.last_updated_at = now;
         incident.version = new_version;
         let reopen_count = incident.reopen_count;
@@ -1412,9 +1493,9 @@ impl IncidentUnitOfWork {
             TimelinePayload::Reopened {
                 reopen_count,
                 previous_incident_id: None,
+                reason: Some(reason),
             },
         ));
-        let _ = reason;
         let asq = self.next_audit_sequence();
         self.audit.push(AuditEntry::allowed(
             asq,
@@ -1433,8 +1514,13 @@ impl IncidentUnitOfWork {
         reason: String,
         duration: Duration,
     ) -> Result<u64, IncidentError> {
+        crate::suppression::validate_reason(&reason)?;
         let now = self.now();
-        let deadline = now.plus(duration);
+        let deadline = now
+            .checked_plus(duration)
+            .ok_or(IncidentError::ValidationError(
+                "suppression duration is too large to represent as a deadline".to_string(),
+            ))?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -1602,6 +1688,11 @@ impl IncidentUnitOfWork {
                     "incident version overflowed u64",
                 ))?;
         incident.severity = new_severity;
+        // Latches on reaching Critical; never cleared by an ordinary
+        // severity change — see the field's doc on `Incident`.
+        if new_severity == wetechinetmon_detector::Severity::Critical {
+            incident.ever_critical = true;
+        }
         incident.severity_source = SeveritySource::Operator;
         incident.version = new_version;
         incident.last_updated_at = now;
@@ -1778,10 +1869,17 @@ impl IncidentUnitOfWork {
                 .ok_or(IncidentError::InternalInvariantViolation(
                     "incident version overflowed u64",
                 ))?;
-        incident.tags.insert(key, value);
+        incident.tags.insert(key.clone(), value.clone());
         incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
+        let ts = self.next_timeline_sequence();
+        self.timeline.push(TimelineEntry::new(
+            ts,
+            incident_id,
+            auth.actor().clone(),
+            TimelinePayload::TagAdded { key, value },
+        ));
         let asq = self.next_audit_sequence();
         self.audit.push(AuditEntry::allowed(
             asq,
@@ -1815,6 +1913,13 @@ impl IncidentUnitOfWork {
         incident.version = new_version;
         incident.last_updated_at = now;
         self.maybe_fail()?;
+        let ts = self.next_timeline_sequence();
+        self.timeline.push(TimelineEntry::new(
+            ts,
+            incident_id,
+            auth.actor().clone(),
+            TimelinePayload::TagRemoved { key },
+        ));
         let asq = self.next_audit_sequence();
         self.audit.push(AuditEntry::allowed(
             asq,
@@ -2193,5 +2298,416 @@ mod tests {
             ))
         );
         assert_eq!(uow.get(&incident_id).unwrap().reopen_count, u32::MAX);
+    }
+
+    /// R1: a genuine, non-tautological regression test for
+    /// `last_detected_at` monotonicity. `TestClock` deliberately has no
+    /// rewind (mirroring the production `SystemClock` guarantee), so a
+    /// "late" delivery — the incident's stored `last_detected_at` reading
+    /// ahead of the next call's observed clock reading — cannot occur
+    /// through ordinary sequential calls with a forward-only clock; see
+    /// the FU-30 module doc in `tests/properties.rs`. Reaching that branch
+    /// for a test therefore requires manufacturing the stored state
+    /// directly, the same established idiom `version_overflow_is_refused`
+    /// and `reopen_count_overflow_is_refused` above already use via
+    /// `uow.incidents.get_mut(...)`. This asserts the actual stored field,
+    /// not a saturating comparison that can never fail.
+    #[test]
+    fn last_detected_at_does_not_regress_on_a_late_event() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 70));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-late", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+
+        // Manufacture a stored `last_detected_at` strictly ahead of the
+        // clock the unit-of-work will next read from — the only way a
+        // forward-only clock can produce `observed < stored`.
+        let future = uow
+            .get(&incident_id)
+            .unwrap()
+            .last_detected_at
+            .plus(Duration::from_secs(3600));
+        uow.incidents
+            .get_mut(&incident_id)
+            .unwrap()
+            .last_detected_at = future;
+
+        let result = uow
+            .ingest_detection_event(&correlator, &event("det-late", 1, addr, 5_500_000))
+            .unwrap();
+        assert_eq!(result.outcome_kind, IngestOutcomeKind::LinkedLate);
+
+        let stored = uow.get(&incident_id).unwrap().last_detected_at;
+        assert_eq!(
+            stored, future,
+            "a late event must never move last_detected_at backward from its stored value"
+        );
+        assert!(matches!(
+            uow.timeline().last().unwrap().payload,
+            TimelinePayload::LateEventLinked { .. }
+        ));
+    }
+
+    /// The positive counterpart: a strictly newer event (the clock has
+    /// genuinely advanced) must advance `last_detected_at`, driven through
+    /// a real `SharedClock` advance rather than field manipulation.
+    #[test]
+    fn last_detected_at_advances_on_a_strictly_newer_event() {
+        let clock = std::sync::Arc::new(TestClock::new());
+        struct Shared(std::sync::Arc<TestClock>);
+        impl Clock for Shared {
+            fn monotonic(&self) -> std::time::Instant {
+                self.0.monotonic()
+            }
+            fn wall(&self) -> std::time::SystemTime {
+                self.0.wall()
+            }
+        }
+        let mut uow = IncidentUnitOfWork::new(
+            Box::new(TestIncidentGenerator::starting_at(1)),
+            Box::new(InMemoryNumberAllocator::new()),
+            Box::new(Shared(clock.clone())),
+        );
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 71));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-newer", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        let before = uow.get(&incident_id).unwrap().last_detected_at;
+
+        clock.advance(Duration::from_secs(5));
+        uow.ingest_detection_event(&correlator, &event("det-newer", 1, addr, 5_500_000))
+            .unwrap();
+        let after = uow.get(&incident_id).unwrap().last_detected_at;
+
+        assert!(
+            after.elapsed_since(&before) == Duration::from_secs(5),
+            "a strictly newer observation must advance last_detected_at by exactly the clock advance"
+        );
+        assert!(matches!(
+            uow.timeline().last().unwrap().payload,
+            TimelinePayload::EventLinked { .. }
+        ));
+    }
+
+    /// The boundary case: an event observed at exactly the same clock
+    /// reading as the stored `last_detected_at` (no clock advance between
+    /// calls) is not "late" — `is_late` uses a strict `<` — so it must be
+    /// treated as a normal update, not regress, and not be misclassified.
+    #[test]
+    fn last_detected_at_is_stable_on_an_equal_timestamp_event() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 72));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-equal", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        let before = uow.get(&incident_id).unwrap().last_detected_at;
+
+        // No clock advance: the next observed reading equals `before`.
+        uow.ingest_detection_event(&correlator, &event("det-equal", 1, addr, 5_500_000))
+            .unwrap();
+        let after = uow.get(&incident_id).unwrap().last_detected_at;
+
+        assert_eq!(
+            after, before,
+            "an equal-timestamp event must not regress last_detected_at"
+        );
+        assert!(
+            matches!(
+                uow.timeline().last().unwrap().payload,
+                TimelinePayload::EventLinked { .. }
+            ),
+            "an equal-timestamp event is an on-time update, not late"
+        );
+    }
+
+    /// FU-37: `AddTag` and `RemoveTag` must each append a timeline entry,
+    /// matching every other mutation.
+    #[test]
+    fn add_and_remove_tag_each_append_a_timeline_entry() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let resolver = crate::authorization::FixedBundleResolver;
+        let platform_admin = AuthorizationContext::new(
+            TenantId::new("acme"),
+            Actor::Operator {
+                id: "u1".to_string(),
+            },
+            resolver.permissions_for("platform_admin"),
+        );
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 78));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-tag", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        let timeline_before = uow.timeline().len();
+
+        uow.handle_command(
+            &platform_admin,
+            incident_id,
+            Command::AddTag {
+                key: "team".to_string(),
+                value: "network".to_string(),
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(uow.timeline().len(), timeline_before + 1);
+        assert!(matches!(
+            uow.timeline().last().unwrap().payload,
+            TimelinePayload::TagAdded { .. }
+        ));
+
+        uow.handle_command(
+            &platform_admin,
+            incident_id,
+            Command::RemoveTag {
+                key: "team".to_string(),
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(uow.timeline().len(), timeline_before + 2);
+        assert!(matches!(
+            uow.timeline().last().unwrap().payload,
+            TimelinePayload::TagRemoved { .. }
+        ));
+    }
+
+    /// FU-34: a second event matching under a different policy than the
+    /// one that opened the incident must be recorded in `policy_refs`,
+    /// not silently omitted.
+    #[test]
+    fn a_later_event_under_a_different_policy_is_recorded_in_policy_refs() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 77));
+        let started = event("det-policy", 0, addr, 5_000_000);
+        assert_eq!(started.policy_id, "p-host-bps");
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &started)
+            .unwrap()
+            .incident_id
+            .unwrap();
+        assert_eq!(uow.get(&incident_id).unwrap().policy_refs.len(), 1);
+
+        let mut second = event("det-policy", 1, addr, 5_500_000);
+        second.policy_id = "p-other-policy".to_string();
+        second.policy_version = 2;
+        uow.ingest_detection_event(&correlator, &second).unwrap();
+
+        let policy_refs = &uow.get(&incident_id).unwrap().policy_refs;
+        assert_eq!(
+            policy_refs.len(),
+            2,
+            "a second distinct policy must be recorded, not silently omitted"
+        );
+        let other = policy_refs
+            .iter()
+            .find(|p| p.policy_id == "p-other-policy")
+            .expect("the second policy must appear in policy_refs");
+        assert_eq!(other.policy_version, 2);
+        assert_eq!(other.first_seen_sequence, 1);
+        assert_eq!(other.last_seen_sequence, 1);
+    }
+
+    /// FU-37: a manual operator reopen must also clear the stale
+    /// `resolved_at` from the prior cycle, not only the ingestion-driven
+    /// automatic recurrence path (covered separately in
+    /// `tests/domain_end_to_end.rs`).
+    #[test]
+    fn manual_reopen_clears_the_stale_resolved_at() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let operator = senior_operator("acme");
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 76));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-manual-reopen", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        uow.handle_command(
+            &operator,
+            incident_id,
+            Command::ResolveIncident {
+                expected_version: 1,
+                resolution_note: None,
+            },
+            None,
+        )
+        .unwrap();
+        assert!(uow.get(&incident_id).unwrap().resolved_at.is_some());
+
+        uow.handle_command(
+            &operator,
+            incident_id,
+            Command::ReopenIncident {
+                expected_version: 2,
+                reason: "test".to_string(),
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(uow.get(&incident_id).unwrap().resolved_at, None);
+    }
+
+    /// FU-36: an operator-supplied reopen reason must be preserved on the
+    /// timeline, not discarded.
+    #[test]
+    fn operator_reopen_reason_is_preserved_on_the_timeline() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let operator = senior_operator("acme");
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 75));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-reopen-reason", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        uow.handle_command(
+            &operator,
+            incident_id,
+            Command::ResolveIncident {
+                expected_version: 1,
+                resolution_note: None,
+            },
+            None,
+        )
+        .unwrap();
+
+        uow.handle_command(
+            &operator,
+            incident_id,
+            Command::ReopenIncident {
+                expected_version: 2,
+                reason: "customer confirmed traffic resumed".to_string(),
+            },
+            None,
+        )
+        .unwrap();
+
+        let reopened_entry = uow
+            .timeline()
+            .iter()
+            .rev()
+            .find(|e| matches!(e.payload, TimelinePayload::Reopened { .. }))
+            .expect("a Reopened timeline entry must exist");
+        match &reopened_entry.payload {
+            TimelinePayload::Reopened { reason, .. } => {
+                assert_eq!(
+                    reason.as_deref(),
+                    Some("customer confirmed traffic resumed")
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// FU-32: an oversized suppression reason must refuse the whole
+    /// command before any mutation, matching the treatment `add_note` and
+    /// the title/description validators already receive.
+    #[test]
+    fn oversized_suppression_reason_is_refused_and_leaves_the_incident_unmutated() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let resolver = crate::authorization::FixedBundleResolver;
+        let noc_lead = AuthorizationContext::new(
+            TenantId::new("acme"),
+            Actor::Operator {
+                id: "u1".to_string(),
+            },
+            resolver.permissions_for("noc_lead"),
+        );
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 74));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-suppress-len", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        let version_before = uow.get(&incident_id).unwrap().version;
+
+        let result = uow.handle_command(
+            &noc_lead,
+            incident_id,
+            Command::SuppressIncident {
+                expected_version: version_before,
+                reason: "a".repeat(crate::suppression::SUPPRESSION_REASON_MAX_LEN + 1),
+                duration: Duration::from_secs(3600),
+            },
+            None,
+        );
+        assert!(
+            matches!(result, Err(IncidentError::ValidationError(_))),
+            "expected ValidationError, got {result:?}"
+        );
+        assert_eq!(uow.get(&incident_id).unwrap().version, version_before);
+        assert!(uow.get(&incident_id).unwrap().suppression.is_none());
+    }
+
+    /// L2: `with_number_allocation_year` is honored, and is deterministic
+    /// (not derived from any wall-clock reading) — a config-provided
+    /// value, not a hardcoded literal.
+    #[test]
+    fn number_allocation_year_is_configurable_and_not_wall_clock_derived() {
+        let mut uow_2030 = fresh_uow().with_number_allocation_year(2030);
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 73));
+        let incident_id = uow_2030
+            .ingest_detection_event(&correlator, &event("det-year", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        let number = uow_2030.get(&incident_id).unwrap().incident_number.as_str();
+        assert!(
+            number.contains("2030"),
+            "configured allocation year must appear in the display number: {number}"
+        );
+        assert!(
+            !number.contains("2026"),
+            "the placeholder default must not leak through once overridden: {number}"
+        );
+    }
+
+    /// L4: a permission denial on `handle_command`, before the target
+    /// incident has been looked up or tenant-checked, must record
+    /// `AttemptedResource::Unresolved` (what the caller supplied), never
+    /// `Incident` (which the crate's own doc reserves for a resource the
+    /// audit path has actually resolved). Targets a nonexistent incident
+    /// id on purpose — precisely because this check runs before any
+    /// lookup, existence must not matter to the outcome.
+    #[test]
+    fn a_denied_command_records_unresolved_not_incident() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let bogus_id = crate::id::IncidentId::from_bytes([9; 16]);
+
+        let result = uow.handle_command(
+            &correlator,
+            bogus_id,
+            Command::AcknowledgeIncident {
+                expected_version: 1,
+            },
+            None,
+        );
+        assert_eq!(result, Err(IncidentError::Unauthorized));
+
+        let entry = uow.audit().last().unwrap();
+        assert!(entry.is_denied());
+        match &entry.resource {
+            AttemptedResource::Unresolved(id) => assert_eq!(id, &bogus_id.to_string()),
+            AttemptedResource::Incident(_) => {
+                panic!("a pre-lookup denial must use Unresolved, not Incident")
+            }
+        }
     }
 }
