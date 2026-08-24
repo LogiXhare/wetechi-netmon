@@ -183,11 +183,34 @@ proptest! {
         }
     }
 
-    /// Property 12: `last_detected_at` never moves backwards, driven
-    /// through genuine, test-controlled clock advances (via
-    /// [`SharedClock`]) rather than the event's unconsumed `sequence`
-    /// field — see the module doc's FU-30 note on why `sequence` alone
-    /// cannot exercise this path.
+    /// Property 12: `last_detected_at` tracks the clock exactly across an
+    /// arbitrary sequence of advances (including a zero advance, the
+    /// equal-timestamp boundary), driven through genuine, test-controlled
+    /// clock advances (via [`SharedClock`]) rather than the event's
+    /// unconsumed `sequence` field — see the module doc's FU-30 note on
+    /// why `sequence` alone cannot exercise this path.
+    ///
+    /// **R1 correction:** the previous version of this property asserted
+    /// `elapsed_since(...) >= Duration::ZERO`, which — because
+    /// `elapsed_since` is built on
+    /// [`Instant::saturating_duration_since`] and `Duration` is
+    /// unsigned — cannot fail for *any* implementation, including one
+    /// that silently regressed `last_detected_at`. This version compares
+    /// [`Timestamp::monotonic`] directly (a real `Instant` ordering, with
+    /// no saturating clamp to hide a regression) and additionally asserts
+    /// the exact expected value, so a bug that assigned any timestamp
+    /// other than the fresh clock reading — regressed, stale, or simply
+    /// wrong — fails the property. The complementary "an older event is
+    /// delivered after a newer one" case is deliberately not modeled
+    /// here: with a forward-only clock (`TestClock` has no rewind, by
+    /// design, matching production `SystemClock`), that ordering cannot
+    /// be produced through the public ingestion API — see this module's
+    /// own FU-30 note above. It is instead proven, by directly
+    /// manufacturing the stored state, in
+    /// `unit_of_work::tests::last_detected_at_does_not_regress_on_a_late_event`
+    /// (crate-internal, since only crate-internal code can reach
+    /// `IncidentUnitOfWork`'s private incident map to set that scenario
+    /// up) — alongside its equal-timestamp and strictly-newer siblings.
     #[test]
     fn last_detected_at_is_monotonic_as_the_clock_advances(
         advances_ms in proptest::collection::vec(0u64..5_000, 1..8)
@@ -210,8 +233,13 @@ proptest! {
             uow.ingest_detection_event(&correlator, &updated).unwrap();
             let now = uow.get(&incident_id).unwrap().last_detected_at;
             prop_assert!(
-                now.elapsed_since(&last) >= Duration::ZERO,
-                "last_detected_at must never regress as the clock only ever advances"
+                now.monotonic() >= last.monotonic(),
+                "last_detected_at's stored reading moved backward: a real, non-saturating regression"
+            );
+            prop_assert_eq!(
+                now.monotonic(),
+                last.monotonic() + Duration::from_millis(*ms),
+                "a newer or equal-timestamp observation must advance last_detected_at by exactly the clock advance, not by more, less, or not at all"
             );
             last = now;
         }
