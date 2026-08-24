@@ -353,8 +353,14 @@ the boundary falls on matters because "15 minutes" otherwise has two
 defensible readings, and a test written against one and code against the
 other passes review and fails in production.
 
-Elapsed time is measured from `resolved_at`, or from `closed_at` when the
-incident was closed without passing through resolution.
+Elapsed time is measured from `resolved_at` while the incident is
+`Resolved`, and from `closed_at` once it is `Closed` — the anchor moves
+with the state, not with how the incident arrived there. (`Closed` is
+reachable only from `Resolved` under either guard, so "closed without
+passing through resolution" cannot occur; anchoring on `resolved_at` even
+after closure would put an incident closed after its automatic closure
+delay outside the reopen window before an operator could ever see it —
+the same unreachability the state-anchored rule exists to avoid.)
 
 | Configuration | Meaning |
 |---|---|

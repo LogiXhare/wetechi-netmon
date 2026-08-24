@@ -83,16 +83,28 @@ atomicity test that asserted partial state *did* survive while claiming
 to prove otherwise; and a tautological order-independence property test).
 All nine were corrected on the same branch, with regression tests, and
 version/`reopen_count` overflow was hardened with `checked_add` across
-every mutation site (never mutate-then-fail). **5A does not claim
-atomicity or rollback** — every mutation validates everything fallible
-before touching the incident, so a predictable error never mutates
-anything, but the test-only injected-failure checkpoint between the
-incident write and its timeline/audit/outbox writes still exposes genuine
-partial state in this in-memory model; closing that gap for real is
-Milestone 5B's transaction (see FU-31). Medium and low findings from the
-review not fixed on this branch are recorded as FU-30 through FU-37, each
-with its rationale for deferral. Awaiting a second, focused adversarial
-review before merge; Milestone 5B has not started.
+every mutation site (never mutate-then-fail). **5A does not claim a
+cross-record transaction** — every mutation validates everything
+fallible before touching the incident, so a predictable error never
+mutates anything. A focused Opus 5 re-review (2026-08-24) confirmed this
+is stronger than first stated: in a `cfg(not(test))` build there is no
+reachable post-write failure at all, since the injected-failure hook
+that exposes genuine partial state is `cfg(test)`-gated and does not
+exist in a production binary (see **FU-31**). The same re-review
+verified both blockers and all seven high findings above were correctly
+and durably fixed, confirmed zero blockers and zero high findings
+remained, and raised twelve further, lower-severity findings — the
+still-tautological monotonicity property test, a stale documentation
+contradiction on the reopen anchor, an unbounded-panic path on
+suppression duration, a severity-downgrade path that could bypass BQ-8's
+manual-closure protection, and several smaller items. All were fixed or
+explicitly deferred with rationale on 2026-08-24; the
+[complete finding register](follow-ups.md#phase-5a-focused-re-review-finding-register-2026-08-24)
+is the authoritative record of what remains outstanding, superseding the
+Medium/low list in **FU-30** through **FU-37** above (kept current, not
+duplicated). Awaiting one brief final sanity review and a mandatory
+MkDocs strict validation before publication; Milestone 5B has not
+started.
 
 **5A is database-independent and dependency-free.** It may implement
 incident domain types, the seven-state lifecycle, correlation, reopen

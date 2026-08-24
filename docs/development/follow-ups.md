@@ -65,21 +65,167 @@ Raised when BQ-5, BQ-6, and BQ-7 were resolved.
 
 Raised during the Opus 5 adversarial review of `feat/phase5a-incident-domain`
 and its follow-up correction pass. All findings marked Blocker or High from
-that review were fixed and regression-tested on the branch; these are the
-Medium/Low findings deliberately deferred, each because fixing it either
-expands beyond 5A's dependency-free, database-independent scope or is made
-moot by Milestone 5B's real transaction.
+that review were fixed and regression-tested on the branch. **Updated
+2026-08-24** — see the register below for what changed in the focused
+re-review's correction pass; the rows here are kept current rather than
+duplicated.
 
-| # | Item | Blocked on | Notes |
+| # | Item | Status | Notes |
 |---|---|---|---|
-| FU-30 | Correlation cannot detect a genuinely late/out-of-order event | A decision on which field is authoritative for ordering | `link_event_to_open_incident`'s `is_late` compares the unit-of-work's own clock reading at call time, not any field the event carries (`sequence`, `detected_at_ms`). Since the clock is non-decreasing, an event that is semantically older by its own declared order but arrives later can never be detected as late by the current implementation — `IngestOutcomeKind::LinkedLate`, `EvidenceLinkType::Late`, and `TimelinePayload::LateEventLinked` exist but are unreachable. Needs a design decision (per-`detection_id` high-water `sequence`, most likely) before Milestone 5C's ingestion worker needs genuine reordering safety. |
-| FU-31 | Close the in-memory unit-of-work's partial-write boundary with a staged `MutationPlan` | Milestone 5B | Every mutation method now validates and computes everything fallible (including the version/reopen_count overflow check) before touching `self`'s maps, so a *predictable* error never mutates anything — proven by the `_leaves_the_incident_unmutated` family of tests. What remains open is the test-only injected-failure checkpoint itself: the incident write still happens before that checkpoint, and the timeline/audit/outbox writes after it, so an injected failure between them is genuine partial state (see `unit_of_work::tests::failure_injection_documents_the_in_memory_commit_boundary`). A real PostgreSQL transaction closes this in 5B; a staged plan-then-commit structure would close it in 5A but was judged to expand beyond a correction-scoped change. |
-| FU-32 | Four declared capacity/limit constants are not enforced | Nothing | `TIMELINE_ENTRY_LIMIT`, `SUPPRESSION_REASON_MAX_LEN`, `Incident::policy_refs_at_capacity()`, and `AFFECTED_TARGETS_MAX` are all defined but never checked against on any mutation path, and `TimelinePayload::LimitReached` is never constructed. Evidence, notes, tags, title, description, and note body are all properly enforced; these four are not. |
-| FU-33 | `dedup_seen` and the idempotency store grow without bound | A retention policy | Both are plain `HashMap`s with no size cap or TTL. Unbounded within one process's lifetime; a real concern only once something runs long enough to matter, which nothing in 5A does. |
-| FU-34 | `policy_refs` is written once at creation and never updated | Nothing | An incident matched by a second policy after it opens does not record that policy reference — `last_seen_sequence` stays frozen at the opening event. FU-18's data collection needs this fixed first. |
-| FU-35 | Timeline and audit entries carry no timestamp | Nothing | Both record `sequence` (ordering) but no wall or monotonic reading, so "when" and "how long between" are unrecoverable from the record itself. Cheaper to add before 5B fixes a persistence schema than after. |
-| FU-36 | Manual `ReopenIncident`'s operator-supplied reason is discarded | Nothing | `operator_reopen` accepts `reason: String` and drops it (`let _ = reason;`) rather than recording it on the timeline — the one piece of context a human reopening an incident is most likely to want preserved. |
-| FU-37 | `AddTag`/`RemoveTag` produce no timeline entry; `RemoveTag` audits and version-bumps even when the key was absent | Nothing | Every other mutation appends a timeline entry; these two do not. A reopened incident also keeps its stale `resolved_at`/`closed_at` from the prior cycle rather than clearing them. |
+| FU-30 | Correlation cannot detect a genuinely late/out-of-order event | Open | `link_event_to_open_incident`'s `is_late` compares the unit-of-work's own clock reading at call time, not any field the event carries (`sequence`, `detected_at_ms`). Since the clock is non-decreasing, an event that is semantically older by its own declared order but arrives later can never be detected as late by the current implementation — `IngestOutcomeKind::LinkedLate`, `EvidenceLinkType::Late`, and `TimelinePayload::LateEventLinked` exist but are unreachable through the public ingestion API. **2026-08-24:** the property test that exercises this area no longer has a tautological assertion (see R1 in the register below) — it now compares `Timestamp::monotonic()` directly and asserts the exact expected value, so it would fail if `last_detected_at` regressed. The underlying design gap this entry tracks is unchanged: a genuine reordering-detection design (most likely a per-`detection_id` high-water `sequence`) is still needed before Milestone 5C's ingestion worker needs real reordering safety. |
+| FU-31 | Close the in-memory unit-of-work's partial-write boundary with a staged `MutationPlan` | Open, stronger baseline | **2026-08-24 (re-review-confirmed):** in a `cfg(not(test))` build, `maybe_fail()` is unconditionally `Ok(())`, and every fallible check (permission, tenant, version, transition legality, capacity, `checked_add` on every counter) is hoisted before the first field write across all mutation sites. **No production error path can leave partial state.** The only place a partial write is reachable at all is the `cfg(test)`-gated `inject_failure_after_incident_write` hook, which does not exist in a production binary, or `InternalInvariantViolation` (an already-mutated-then-detected-impossible condition, not a predictable input error). Do not describe 5A as claiming atomicity or a transaction — a real cross-record, multi-write transaction is still Milestone 5B's (a real PostgreSQL transaction). |
+| FU-32 | Capacity/limit constants not enforced | Partially fixed 2026-08-24 | `SUPPRESSION_REASON_MAX_LEN` is now enforced by `crate::suppression::validate_reason`, called before any mutation in `suppress()` (regression: `suppression::tests::a_reason_one_over_the_bound_is_rejected`, `unit_of_work::tests::oversized_suppression_reason_is_refused_and_leaves_the_incident_unmutated`). Three remain unenforced: **`TIMELINE_ENTRY_LIMIT`** — enforcing it would require threading a fallible capacity check through all ~18 mutation methods that call `next_timeline_sequence`, the same class of wide, atomicity-sensitive change deliberately not made to the sequence counters themselves (see FU-39); an authorized actor could in principle grow one incident's timeline past 50,000 entries by looping a permitted command indefinitely, but this requires standing authorization, not an unauthenticated attacker, and 5A is explicitly not a long-running production store (FU-33). **`Incident::policy_refs_at_capacity()`** — now reachable in principle since FU-34's fix lets `policy_refs` grow past one entry, but is bounded by `POLICY_REFS_MAX` (64) directly in the same fix rather than through this helper; nothing currently calls `policy_refs_at_capacity()`, which is dead code pending a caller that needs to check capacity before deciding to attempt a mutation rather than after. **`AFFECTED_TARGETS_MAX`** — guards a collection (`affected_targets`) that does not exist as an `Incident` field in 5A's domain model at all; the constant is a placeholder for a future multi-target incident shape, not an unenforced bound on live data. |
+| FU-33 | `dedup_seen` and the idempotency store grow without bound | Open | Both are plain `HashMap`s with no size cap or TTL. **5A is explicitly not suitable as a long-running production store** for this reason among others (also FU-32's timeline growth) — it is an in-memory domain proof, not a deployable service. A retention policy belongs to Milestone 5B (bounded by real persistence and TTL-backed cleanup) or 5C (bounded by the ingestion worker's own lifecycle). |
+| FU-34 | `policy_refs` is written once at creation and never updated | **Fixed 2026-08-24** | `link_event_to_open_incident` now updates the matching `PolicyRef`'s `last_seen_sequence`/`policy_version` on every linked event, or appends a new `PolicyRef` for a previously-unseen `policy_id` (bounded by `POLICY_REFS_MAX`, matching the evidence ledger's stops-growing-keeps-counting asymmetry rather than refusing the whole event link). Regression: `unit_of_work::tests::a_later_event_under_a_different_policy_is_recorded_in_policy_refs`. |
+| FU-35 | Timeline and audit entries carry no timestamp | Open | Both record `sequence` (ordering) but no wall or monotonic reading, so "when" and "how long between" are unrecoverable from the record itself. Cheaper to add before 5B fixes a persistence schema than after. Out of scope for the 2026-08-24 correction pass, which was scoped to the focused re-review's findings. |
+| FU-36 | Manual `ReopenIncident`'s operator-supplied reason is discarded | **Fixed 2026-08-24** | `TimelinePayload::Reopened` now carries `reason: Option<String>` — `Some(reason)` for an operator reopen, `None` for an automatic recurrence reopen (which has no human-authored reason). Regression: `unit_of_work::tests::operator_reopen_reason_is_preserved_on_the_timeline`. |
+| FU-37 | `AddTag`/`RemoveTag` produce no timeline entry; a reopened incident keeps stale `resolved_at`/`closed_at` | **Fixed 2026-08-24** | Two independent fixes. (1) `TimelinePayload::TagAdded`/`TagRemoved` now recorded on every tag mutation (regression: `unit_of_work::tests::add_and_remove_tag_each_append_a_timeline_entry`). `RemoveTag` still bumps `version` and writes an audit entry even when the key was absent — treated as intentional (a confirmed-absent state change is still a real audited event), not a defect, and left as is. (2) Both reopen paths (automatic recurrence and manual operator) now clear `resolved_at`/`closed_at` to `None` — they are current-state fields, and the prior cycle's values are already preserved immutably in the timeline's `StateChanged` entries. Regression: `domain_end_to_end::resolved_incident_reopens_within_window_through_ingestion`, `domain_end_to_end::closed_incident_reopens_within_window_through_ingestion`, `unit_of_work::tests::manual_reopen_clears_the_stale_resolved_at`. |
+| FU-38 | `close_internal` and `reopen_incident_internal` are guarded only by caller discipline | Open, Low, optional | Neither calls a transition guard itself — correct today only because every reachable call site already checks legality before calling in (`close_internal`'s two callers both check `state == Resolved`; `reopen_incident_internal`'s single caller reaches it only via `is_reopen_candidate()` + `evaluate_reopen()`). This is the same shape that produced the original B2 finding (`resolve_internal` bypassing its own guard) before B2 was fixed by moving the guard inside the function. The cheapest structural defence against a B2-class regression is to do the same here: move a cause-dispatched `can_automatic_transition_to`/`can_operator_transition_to` check inside each function, matching `resolve_internal`'s current shape. Deliberately not done in the 2026-08-24 correction pass — both functions sit inside the reopen/close code paths that B1/B2's fixes and their regression tests already cover, and restructuring them without a specific defect to fix risked reintroducing exactly the class of bug this correction pass was verifying was fixed. |
+| FU-39 | Three timeline/audit/outbox sequence counters and — historically — the identity generators all used `saturating_add`/wrapping `fetch_add` | Open (sequence counters only) | **2026-08-24:** the two generators that produce an actual primary key were fixed — `PlaceholderIncidentGenerator`/`TestIncidentGenerator::generate()` and `InMemoryNumberAllocator::allocate()` now use `fetch_update`/`checked_add` and return `Result<_, IncidentError::CapacityExceeded>`, refusing before ever handing out a repeated `IncidentId` or `IncidentNumber` (regression: `id::tests::the_test_generator_refuses_rather_than_repeats_at_counter_exhaustion`, `number::tests::refuses_rather_than_repeats_a_number_at_counter_exhaustion`). `next_timeline_sequence`, `next_audit_sequence`, and `next_outbox_sequence` still use `saturating_add` and were deliberately left as is: unlike the two fixed generators, these are called from ~18 mutation methods each, all *after* the incident's own version `checked_add` and (for many of them) after the incident field write itself — making them fallible would either require threading `Result` through every one of those call sites (reintroducing exactly the kind of post-write failure path FU-31 confirms does not currently exist in production) or hoisting all three sequence numbers to the pre-mutation checkpoint across ~20 methods, a change disproportionate to a risk that requires retaining `u64::MAX` (~1.8×10¹⁹) timeline/audit/outbox entries in memory — impossible by roughly nineteen orders of magnitude before memory exhaustion, and the entries are process-lifetime allocations that never shrink. If closed for rigor rather than reachability, the fix is `checked_add` returning `InternalInvariantViolation`, matching `version`'s existing treatment — one line at each of the three counter-increment sites, deferred to whenever 5B's real PostgreSQL sequences replace these in-memory counters (which have their own, unrelated overflow semantics). |
+
+## Phase 5A — focused re-review finding register (2026-08-24)
+
+The focused Opus 5 re-review verified the 2026-08-23 correction pass fixed
+both blockers and all seven high findings, then raised twelve further
+findings (R1–R10, three of which — R5 — bundle three items). This is the
+complete register the re-review's own instructions required: every
+remaining finding, fixed or deferred, with why. Six of the twelve had
+been fixed on the branch by neither code nor the FU table above before
+this pass; all twelve are accounted for below.
+
+**R1 — Medium — `tests/properties.rs`,
+`last_detected_at_is_monotonic_as_the_clock_advances`.** Observed: the
+property's assertion, `elapsed_since(...) >= Duration::ZERO`, could never
+fail for any implementation — `elapsed_since` is built on
+`Instant::saturating_duration_since`, which clamps a negative gap to
+zero rather than reporting it. Risk: the property was documentation of
+intent, not a functioning regression guard against a real
+`last_detected_at` regression. **Fixed 2026-08-24** — the assertion now
+compares `Timestamp::monotonic()` directly (`>=`, a real, non-saturating
+`Instant` ordering) and additionally asserts the exact expected value
+(`last.monotonic() + Duration::from_millis(*ms)`), so it fails under the
+prior defective behavior. The complementary "older event delivered
+later" and "equal timestamp" cases cannot be produced through the public
+ingestion API with a forward-only clock (see FU-30's note); they are
+proven instead by directly manufacturing the stored state in
+`unit_of_work::tests::last_detected_at_does_not_regress_on_a_late_event`
+and `..._is_stable_on_an_equal_timestamp_event`, crate-internal tests
+with access to `IncidentUnitOfWork`'s private incident map. Target
+milestone: none — closed. Implementation gate: none remaining.
+
+**R2 — Medium — `docs/architecture/incident-state-machine.md:356–357`
+vs. `Incident::reopen_reference_timestamp()`.** Observed: the document
+said elapsed time is measured from `resolved_at`, "or from `closed_at`
+when the incident was closed without passing through resolution" — a
+clause describing a state transition (`Closed` without ever having been
+`Resolved`) that cannot occur under either transition guard, so the
+documented rule always selected `resolved_at`, contradicting the
+implemented, state-anchored rule the B1 fix relies on. **Fixed
+2026-08-24** — amended to state the implemented rule plainly (anchor
+moves with current state: `resolved_at` while `Resolved`, `closed_at`
+once `Closed`) and to explain why: anchoring on `resolved_at` even after
+closure would put an incident closed after its 30-minute automatic
+closure delay outside a 15-minute reopen window before an operator could
+ever see it reopen — the original B1 unreachability, recreated. No test
+required; behavior already covered by
+`closed_incident_reopens_within_window_through_ingestion`.
+
+**R3 — Medium — `Timestamp::plus`, `IncidentUnitOfWork::suppress`.**
+Observed: `Timestamp::plus` panics on overflow (`Instant + Duration`
+panics), and `suppress`'s deadline computation was the one production
+call site fed an unbounded, operator-supplied `Duration` with no upper
+bound validation anywhere. Risk: an operator (or, once 5D exists, an API
+caller) supplying a very large suppression duration could panic the
+process. **Fixed 2026-08-24** — added `Timestamp::checked_plus`,
+returning `Option`; `suppress()` now uses it and refuses with
+`IncidentError::ValidationError` before any mutation on overflow.
+`Timestamp::plus` itself is retained, undocumented-panic risk narrowed
+via a doc comment restricting it to fixed, trusted durations (tests,
+short constants) — its only remaining callers. Regression:
+`clock::tests::checked_plus_returns_none_on_overflow`,
+`clock::tests::checked_plus_accepts_zero_duration`,
+`clock::tests::checked_plus_matches_plus_for_a_normal_duration`.
+
+**R4 — Medium — `change_severity`,
+`ClosurePolicy::allows_automatic_closure`.** Observed: `change_severity`
+imposed no state restriction, and closure eligibility read the
+incident's *current* severity — a `Resolved` critical incident could be
+downgraded to a lower severity (with a reason and full audit trail, but
+without `IncidentClosurePolicyOverride`) and then close automatically,
+with no human closure decision and no record it was ever critical.
+**Fixed 2026-08-24** — added `Incident::ever_critical: bool`, set on
+creation and on any `change_severity` call that reaches `Critical`,
+never cleared by 5A (no permissioned override exists yet to clear it
+safely). `transition::attempt_automatic_closure` now evaluates the
+closure policy against `Critical` whenever `ever_critical` is set,
+regardless of the live `severity` value. The re-review's suggested fix
+was a `peak_severity` field; a boolean is used instead because BQ-8's
+closure decision is binary (only `Critical` requires manual closure), so
+tracking the exact peak severity is unneeded generality. Regression:
+`transition::tests::automatic_closure_is_refused_after_a_downgrade_from_critical`,
+`transition::tests::automatic_closure_still_succeeds_for_never_critical_non_critical`,
+`domain_end_to_end::severity_downgrade_does_not_unlock_automatic_closure_for_a_formerly_critical_incident`.
+
+**R5 — Low (three findings) — `create_incident_internal`,
+`handle_command` + four maintenance methods, `incident.rs` module doc.**
+**L2** — `allocation_year = 2026` was a bare literal. **Fixed
+2026-08-24** — moved to a `number_allocation_year: u32` field on
+`IncidentUnitOfWork`, defaulting to a named, documented
+`PROVISIONAL_DEFAULT_ALLOCATION_YEAR` constant, overridable via the new
+`with_number_allocation_year` builder method. Regression:
+`unit_of_work::tests::number_allocation_year_is_configurable_and_not_wall_clock_derived`.
+**L4** — `AttemptedResource::Incident(incident_id)` was used in
+`handle_command` and all four maintenance methods
+(`enter_recovering`, `confirm_recovery_if_due`, `abort_recovery`,
+`attempt_automatic_closure`) for a permission-denial resource that had
+not yet been looked up or tenant-checked — the `Unresolved` variant
+exists for exactly that case. **Fixed 2026-08-24** — all five call sites
+now use `AttemptedResource::Unresolved(incident_id.to_string())` for the
+pre-lookup denial. Regression:
+`unit_of_work::tests::a_denied_command_records_unresolved_not_incident`.
+**L6** — `incident.rs`'s module doc claimed "no public setter that
+bypasses a guard" while every mutable field is `pub`. **Fixed
+2026-08-24** — rewritten to state the real guarantee: no code outside
+this crate can ever hold `&mut Incident` (the only accessor,
+`IncidentUnitOfWork::get`, returns `&Incident`), so every *external*
+mutation is forced through a command and a guard; within the crate, the
+field-write/version-bump/timeline/audit pairing is convention verified
+by tests, not compiler-enforced.
+
+**R6 — Low — `tests/domain_end_to_end.rs:363–379`.** Observed: the step-9
+comment described work ("force severity to Critical to prove the guard,
+then resolve for real and check auto-close is refused, then close
+manually") the test itself does not do — that scenario is proven
+properly by the separate
+`critical_incident_does_not_auto_close_but_manual_close_works` test.
+Coverage was never missing; only the comment was stale. **Fixed
+2026-08-24** — trimmed to describe what the step actually does and
+cross-reference the test that proves the full scenario.
+
+**R7 — Low — `close_internal`, `reopen_incident_internal`.** Deferred;
+see FU-38 above for the full rationale (not repeated here to keep one
+authoritative copy).
+
+**R8 — Low — identity and sequence counters.** Deferred/partially fixed;
+see FU-39 above for the full rationale (not repeated here).
+
+**R9 — Informational — `ingest_detection_event` step 5's reopen-candidate
+`max_by_key` scan.** Observed: ties break arbitrarily (`HashMap`
+iteration order is not stable), which can only happen if two historical
+candidates for one key resolved or closed at the identical `Instant` —
+unreachable in production (nanosecond `Instant` resolution), reachable
+only under a frozen `TestClock`. No action required; the doc comment's
+determinism claim is true in every case that can actually occur, just
+stated more broadly than it strictly holds. A tie-break on `incident_id`
+would make the comment's claim locally true rather than true-by-
+unreachability, but nothing depends on it.
+
+**R10 — Informational — `close_internal` does not remove the incident
+from `open_index`.** No action required — `Closed` is not
+`is_open_for_correlation()`, so the index entry (already absent by that
+point in every reachable path, since `Resolved`, the only state
+`close_internal` is reachable from, already removed it) has no
+correctness consequence; informational only.
 
 ## Why these are not GitHub issues yet
 
