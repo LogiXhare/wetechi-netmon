@@ -70,6 +70,56 @@ an open architectural question.
 
 Milestone 5A may begin once the planning branch is reviewed and merged.
 
+**Milestone 5A implementation is complete** — merged to `main` via PR #16,
+merge commit `2cd116d`, 2026-08-24, after two Opus 5 adversarial review
+cycles (2 Blocker + 7 High found and fixed, then a focused re-review
+finding 0 Blocker/0 High) and a final pre-merge review (0 Blocker/High/
+Medium, 1 new Low finding recorded as FU-41, 1 wording correction).
+
+## Gate 1B — Phase 5B planning complete
+
+The deliverable of the Phase 5B Stage A/B planning session
+(2026-08-24). Mirrors Gate 1's structure for the persistence layer
+specifically.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Phase 5A's actual persistence seam verified from source, not assumed from the Phase 5A planning documents | Done — found no repository trait exists; [ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md) |
+| 2 | Repository/unit-of-work seam extraction designed | Done — [ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md), Milestone 5B-0 |
+| 3 | Aggregate reconstitution designed, no arbitrary `Deserialize` into `Incident` | Done — [ADR 0030](../architecture/decisions/0030-phase5b-aggregate-reconstitution.md) |
+| 4 | Durable time semantics designed; `Instant` never persisted | Done — [ADR 0031](../architecture/decisions/0031-phase5b-durable-time.md) |
+| 5 | UUIDv7 identity generation selected with verified evidence | Done, conditional — [ADR 0019](../architecture/decisions/0019-phase5b-uuidv7-identity-generation.md), **FU-25**-adjacent |
+| 6 | PostgreSQL client selected with verified evidence | Done, conditional — [ADR 0020](../architecture/decisions/0020-phase5b-postgresql-client.md), **FU-25** |
+| 7 | Async runtime boundary defined | Done — [ADR 0021](../architecture/decisions/0021-phase5b-async-runtime-boundary.md) |
+| 8 | Connection pool selected with verified evidence | Done, conditional — [ADR 0022](../architecture/decisions/0022-phase5b-connection-pool.md) |
+| 9 | TLS strategy selected with verified evidence | Done, conditional — [ADR 0023](../architecture/decisions/0023-phase5b-postgresql-tls.md) |
+| 10 | Migration framework selected with verified evidence | Done, conditional — [ADR 0024](../architecture/decisions/0024-phase5b-migration-framework.md) |
+| 11 | PostgreSQL support range defined | Done — [ADR 0025](../architecture/decisions/0025-phase5b-postgresql-version-support.md) |
+| 12 | Transaction isolation model and operation matrix defined | Done — [ADR 0026](../architecture/decisions/0026-phase5b-transaction-isolation.md) |
+| 13 | Durable record identity defined (timeline/audit/outbox) | Done — [ADR 0027](../architecture/decisions/0027-phase5b-durable-record-identity.md) |
+| 14 | Durable idempotency fingerprint defined | Done — [ADR 0028](../architecture/decisions/0028-phase5b-idempotency-fingerprint.md) |
+| 15 | Active-incident invariant corrected (Resolved is not active) | Done — [incident-persistence.md](../architecture/incident-persistence.md) |
+| 16 | Tenant isolation and RLS readiness formalized | Done — [ADR 0032](../architecture/decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md) |
+| 17 | Transactional outbox and dead-letter claim mechanics defined | Done — [ADR 0033](../architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md) |
+| 18 | Dependency-selection evidence verified live (registry, advisories, upstream activity), dated | Done — 2026-08-24, [dependency-license-matrix.md](../dependency-license-matrix.md) rows 32–37 |
+| 19 | FU-31, FU-32, FU-33, FU-35, FU-38, FU-39 each given an explicit disposition | Done — see [follow-ups.md](follow-ups.md) |
+| 20 | FU-40, FU-41 given explicit persistence-only support with no premature enforcement claimed | Done |
+| 21 | Policy-reference silent-omission behaviour replaced with an accounted design | Done — `incident_policy_references` in [incident-persistence.md](../architecture/incident-persistence.md) |
+| 22 | Test-database and integration-test plan defined | Done — [phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md) |
+| 23 | Backup/restore plan defined; no invented RPO/RTO presented as a commitment | Done — technical design targets stated as such |
+| 24 | Community/Enterprise boundary confirmed for persistence | Done — no correctness/durability control gated |
+| 25 | No dependency added | Verified |
+| 26 | No Rust implementation added | Verified |
+| 27 | No migration file created | Verified |
+| 28 | No database started or connected to | Verified |
+| 29 | 531 workspace tests remain green (planning-only branch) | Verified |
+| 30 | MkDocs strict passes | Verified |
+
+**Gate 1B is PASSED as of 2026-08-24**, pending owner review of the
+planning branch. Milestone 5B implementation (5B-0 onward) begins once
+that review approves this document set and the Phase 5B-1 dependency
+probe (§ Gate 1B row 5–10 follow-ups) clears.
+
 ## Gate 2 — Implementation complete
 
 A future gate. Listed now so it is defined before the work starts rather

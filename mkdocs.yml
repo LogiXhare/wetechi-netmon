@@ -67,6 +67,7 @@ nav:
       - Incident Correlation: architecture/incident-correlation.md
       - Incident State Machine: architecture/incident-state-machine.md
       - Incident Persistence: architecture/incident-persistence.md
+      - Phase 5B PostgreSQL Persistence Plan: architecture/phase5b-postgresql-persistence-plan.md
       - Incident Security Model: architecture/incident-security-model.md
       - Incident API Design: architecture/incident-api-plan.md
       - Incident CLI Plan: architecture/incident-cli-plan.md

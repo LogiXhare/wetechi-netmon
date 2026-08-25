@@ -1,7 +1,7 @@
 # Roadmap
 
-Status: Phase 3 complete
-Last updated: 2026-08-20
+Status: Phase 4 complete; Phase 5A merged; Phase 5B planning complete
+Last updated: 2026-08-24
 
 This roadmap mirrors the phased delivery model and versioning plan in the
 master prompt (sections 28–29). No phase begins until the prior phase has
@@ -137,30 +137,40 @@ than configured — see
 Not covered, and deliberately: incident lifecycle (Phase 5),
 notifications (Phase 6), and any form of mitigation (Phase 7).
 
-## Phase 5: Incident Management — Planned, Not Implemented
+## Phase 5: Incident Management — 5A Merged, 5B Planned
 
 Phase 4 was reviewed and merged into `main` on 2026-08-22 (merge commit
 `3f0cf3e`, PR #14). Phase 5 architecture and documentation planning
-followed; **no Phase 5 code exists**.
+followed; **BQ-5 through BQ-9** in
+[blocking-questions.md](blocking-questions.md) resolved 2026-08-22.
 
-The plan turns immutable detection events into operator-owned incidents:
-a transactional outbox for durable at-least-once ingestion, deterministic
-scope-based correlation, an operator-facing state machine that
-deliberately does not duplicate the detector's, PostgreSQL as the
-operational source of truth with ClickHouse kept to immutable analytics,
-an append-only timeline, a separate audit log, a REST API, and a CLI.
+**Milestone 5A — merged 2026-08-24** (PR #16, merge commit `2cd116d`),
+after two Opus 5 adversarial review cycles and a final pre-merge review.
+Delivers the dependency-free incident domain: the seven-state lifecycle,
+deterministic tenant-aware correlation, closure/reopen policy,
+suppression as an attribute, typed timeline and audit records,
+idempotency, and a bounded in-memory unit of work — 531 workspace tests,
+zero third-party dependency added. See
+[phase5-implementation-plan.md](development/phase5-implementation-plan.md)
+for the full delivery record and adversarial-review history.
+
+**Milestone 5B — Stage A/B planning complete 2026-08-24, implementation
+not started.** Stage A found Phase 5A's own planning had overstated its
+delivered persistence seam — there is no repository trait yet, and
+`Timestamp` cannot be restored from a database. Phase 5B is therefore a
+refactor-and-implement milestone: seam extraction first (5B-0, no SQL,
+no dependency), then a verified dependency probe (5B-1: `uuid`,
+`tokio-postgres`, `deadpool-postgres`, `rustls`/`tokio-postgres-rustls`,
+`refinery` — all conditionally selected, none yet added to `Cargo.toml`),
+then schema, repositories, outbox, and integration tests (5B-2 through
+5B-5). Start at
+[phase5b-postgresql-persistence-plan.md](architecture/phase5b-postgresql-persistence-plan.md);
+decisions are ADRs
+[0019](architecture/decisions/0019-phase5b-uuidv7-identity-generation.md)–[0033](architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md).
 
 **No notification and no mitigation.** Those remain Phases 6 and 7.
 Phase 5 plans only the seams they will attach to.
 
-Start at
-[phase5-incident-management-plan.md](architecture/phase5-incident-management-plan.md);
-decisions are ADRs
-[0011](architecture/decisions/0011-incident-domain-boundary.md)-[0017](architecture/decisions/0017-incident-community-enterprise-boundary.md),
-all **Proposed**.
-
-Implementation is blocked on **BQ-5 to BQ-9** in
-[blocking-questions.md](blocking-questions.md) — incident identity, the
-FR-5.1 deviation, dependency approval, manual closure for critical
-incidents, and the reopen window. Three of the five change code that the
-first milestone would write, so none should be guessed at.
+ADRs [0011](architecture/decisions/0011-incident-domain-boundary.md)–[0017](architecture/decisions/0017-incident-community-enterprise-boundary.md)
+remain the Phase 5 domain/API/concurrency decisions Phase 5A implemented
+against.
