@@ -1,12 +1,26 @@
 # Incident Persistence
 
-Status: **Planning only.** Part of the
+Status: **Planning only — Phase 5B Stage A/B planning complete
+(2026-08-24), implementation not started.** Part of the
 [Phase 5 plan](phase5-incident-management-plan.md). Decisions in
-[ADR 0015](decisions/0015-incident-operational-storage.md) and
-[ADR 0012](decisions/0012-incident-event-ingestion.md).
+[ADR 0015](decisions/0015-incident-operational-storage.md),
+[ADR 0012](decisions/0012-incident-event-ingestion.md), and the Phase 5B
+ADR series [0019](decisions/0019-phase5b-uuidv7-identity-generation.md)–[0033](decisions/0033-phase5b-transactional-outbox-and-dead-letter.md).
 
 **No migration is written by this document.** The DDL sketches below are
 design artefacts for review, not files in a migrations directory.
+
+**This document describes the target schema, not the current
+implementation seam.** Verified against actual Phase 5A source
+(2026-08-24): `wetechinetmon-incident` has no repository trait a
+PostgreSQL implementation could satisfy today —
+`IncidentUnitOfWork` is a concrete struct, not an interface, and
+`Incident` cannot be reconstituted from outside the crate. Phase 5B's
+first milestone (5B-0) extracts that seam *before* any of the SQL below
+is implemented — see [ADR 0029](decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
+and [ADR 0030](decisions/0030-phase5b-aggregate-reconstitution.md). This
+corrects `phase5-implementation-plan.md`'s earlier claim that 5A already
+delivered "repository traits with in-memory implementations."
 
 ## Two stores, one source of truth
 
@@ -44,25 +58,86 @@ CHECK (state IN ('open','acknowledged','investigating','monitoring',
                  'recovering','resolved','closed'))
 CHECK (suppressed_until IS NULL OR suppression_reason IS NOT NULL)
 CHECK (severity IN ('info','minor','major','critical'))
+CHECK (severity_source IN ('detection','operator'))
+CHECK (maximum_detected_severity IN ('info','minor','major','critical'))
 CHECK (address_family IN (4,6))
 CHECK (closed_at IS NOT NULL OR state <> 'closed')
+CHECK (
+  (target_type = 'host'      AND target_addr    IS NOT NULL AND target_network IS NULL AND target_hostgroup IS NULL) OR
+  (target_type = 'network'   AND target_network IS NOT NULL AND target_addr    IS NULL AND target_hostgroup IS NULL) OR
+  (target_type = 'hostgroup' AND target_hostgroup IS NOT NULL AND target_addr  IS NULL AND target_network   IS NULL)
+)
 ```
 
-The constraint that carries the most weight:
+`target_addr` is `inet`, `target_network` is `cidr`, `target_hostgroup`
+is `text` — the typed target identity from the detector's `ScopeId`
+(`Host`, `Network`, `Hostgroup`, verified against
+`crates/detector/src/input.rs`)
+mapped directly to native PostgreSQL address types, not to a display
+string. This is what makes typed IPv6 canonicalisation a database
+property instead of an application-code promise.
+
+`maximum_detected_severity` and `ever_critical` are new columns beyond
+the original sketch, added to support **FU-41** (detection-driven
+severity escalation): Phase 5A's `link_event_to_open_incident` never
+updates `severity` when a later, more severe detection links to an
+already-open incident, so an operator-editable `severity` alone cannot
+safely gate Critical manual-closure protection.
+`maximum_detected_severity` is a monotonic column a future Phase 5C
+escalation design can read without a migration; Phase 5B persists it and
+does **not** implement automatic escalation. See
+[follow-ups.md FU-41](../development/follow-ups.md).
+
+### Active-incident invariant — corrected 2026-08-24
+
+The original sketch here used a single partial unique index with
+predicate `WHERE state <> 'closed'`. **This predicate is incorrect** and
+is corrected below: verified against actual Phase 5A source, `Resolved`
+is not an active state for correlation — `link_event_to_open_incident`
+removes an incident from its `open_index` the moment it resolves, and
+[the state-machine ADR](decisions/0014-incident-state-machine.md) treats
+`Resolved` as outside correlation. A predicate of `state <> 'closed'`
+would still block a legitimate reopen-window recurrence from inserting a
+new incident row for the same key while a `Resolved` incident (correctly
+outside correlation) still occupies it.
+
+The **active states are exactly:** Open, Acknowledged, Investigating,
+Monitoring, Recovering. Resolved and Closed are not active.
+
+**Target-type-specific partial unique indexes**, not one generated
+canonical-key column, per
+[ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md)'s
+sibling decision on typed identity — using `inet`/`cidr` equality
+directly keeps the invariant expressed over the same native types the
+`incidents` table itself stores, rather than introducing a second,
+derived string representation that could drift from the typed columns:
 
 ```sql
-CREATE UNIQUE INDEX incidents_one_open_per_key
-  ON incidents (tenant_id, correlation_key)
-  WHERE state <> 'closed';
+CREATE UNIQUE INDEX incidents_active_host
+  ON incidents (tenant_id, target_addr, direction, address_family)
+  WHERE target_type = 'host'
+    AND state NOT IN ('resolved', 'closed');
+
+CREATE UNIQUE INDEX incidents_active_network
+  ON incidents (tenant_id, target_network, direction, address_family)
+  WHERE target_type = 'network'
+    AND state NOT IN ('resolved', 'closed');
+
+CREATE UNIQUE INDEX incidents_active_hostgroup
+  ON incidents (tenant_id, target_hostgroup, direction)
+  WHERE target_type = 'hostgroup'
+    AND state NOT IN ('resolved', 'closed');
 ```
 
-A **partial unique index** makes "two open incidents for one correlation
-key" impossible at the database level. Without it, two concurrent
-correlator instances — or one instance processing a redelivered event
-during a retry — could each check "is there an open incident?", both see
-none, and both insert. Enforcing it in application code means enforcing
-it in a race. Enforcing it here means the second insert fails loudly and
-the correlator retries into the update path.
+A **partial unique index** makes "two active incidents for one
+correlation key" impossible at the database level. Without it, two
+concurrent correlator instances — or one instance processing a
+redelivered event during a retry — could each check "is there an active
+incident?", both see none, and both insert. Enforcing it in application
+code means enforcing it in a race. Enforcing it here means the second
+insert fails loudly (`23505`) and the correlator retries into the update
+path, per the operation matrix in
+[ADR 0026](decisions/0026-phase5b-transaction-isolation.md).
 
 Suppression is three columns — `suppressed_until`, `suppression_reason`,
 `suppressed_by` — and **not** a state, per
@@ -109,8 +184,19 @@ PRIMARY KEY (timeline_id)
 INDEX (incident_id, occurred_at, timeline_id)
 ```
 
+`timeline_id` is `BIGINT GENERATED ALWAYS AS IDENTITY`
+([ADR 0027](decisions/0027-phase5b-durable-record-identity.md)) — not a
+saturating in-memory counter, closing **FU-39** for this table.
+`occurred_at` and `recorded_at` are both `timestamptz`, sourced from
+`transaction_timestamp()` ([ADR 0031](decisions/0031-phase5b-durable-time.md)):
+`occurred_at` is when the transition was decided, `recorded_at` is when
+this row was durably written — normally identical, distinguished for a
+late-linked event where "when the event happened" and "when we found out"
+genuinely differ. This closes **FU-35** ("Timeline and audit entries
+carry no timestamp") for the timeline table.
+
 Fields: `timeline_id`, `incident_id`, `tenant_id`, `occurred_at`,
-`entry_type`, `actor_type` (`operator`, `system`, `service_account`),
+`recorded_at`, `entry_type`, `actor_type` (`operator`, `system`, `service_account`),
 `actor_id`, `correlation_id`, `command_id`, `source_event_id`,
 `previous_value` (JSONB), `new_value` (JSONB), `payload` (JSONB),
 `schema_version`.
@@ -149,6 +235,51 @@ there is no customer-facing surface and no tenant authorization model to
 decide who may publish to one. Storing the column now avoids a migration
 later; honouring it now would be shipping an unreviewed disclosure path.
 
+### `incident_number_allocators`
+
+New table, added 2026-08-24 to support the
+[ADR 0013 amendment](decisions/0013-incident-identity.md#phase-5b-resolution--incident-number-format-2026-08-24)
+resolving **FU-24**: the incident number is a continuous per-tenant
+sequence, not year-scoped. One row per tenant holds the current counter.
+
+```text
+PRIMARY KEY (tenant_id)
+```
+
+Allocation reads the row with `SELECT ... FOR UPDATE`, checks the
+increment (refuses rather than silently repeating a number at
+exhaustion, matching every other counter in this design), and writes the
+new value back inside the same transaction that creates the incident —
+this durably replaces Phase 5A's `InMemoryNumberAllocator`
+(process-local, resets on restart) behind the same `NumberAllocator`
+trait it already defines.
+
+### `incident_policy_references`
+
+New table, added 2026-08-24. Phase 5A's in-memory `policy_refs` is a
+`Vec` capped at 64 distinct policies per incident with **silent
+omission** past the cap (no counter, no flag, no timeline record) — this
+task's instruction is explicit that silent omission is unacceptable for
+durable persistence.
+
+```text
+PRIMARY KEY (incident_id, policy_id)
+FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
+```
+
+Fields: `incident_id`, `tenant_id`, `policy_id`, `policy_version`,
+`first_seen_sequence`, `last_seen_sequence`. A normalized relation has no
+inherent per-incident cap — the operational query/export limit (if any
+UI or API caps how many are *displayed*) is a separate, later concern
+from persistence *correctness*. If a bound is still wanted for abuse
+resistance, it is enforced with an explicit **omitted-count column** on
+`incidents` (e.g. `policy_references_omitted_count`), incremented
+instead of silently dropping a row past the bound — matching
+`EvidenceLedger`'s existing accurate-omission pattern
+(`observed_total`/`omitted_count`) rather than repeating the gap
+[follow-ups.md FU-34](../development/follow-ups.md) already documents
+for the in-memory version.
+
 ### `incident_assignments`, `incident_tags`
 
 Assignment history is append-only, so "who owned this at 02:00?" is
@@ -159,7 +290,14 @@ convenience, not the record.
 
 Separate from the timeline. Records authorization decisions including
 **denials**, which have no incident to attach to and therefore cannot
-live on a timeline. Fields: `audit_id`, `occurred_at`, `tenant_id`,
+live on a timeline. `audit_id` is `BIGINT GENERATED ALWAYS AS IDENTITY`
+([ADR 0027](decisions/0027-phase5b-durable-record-identity.md)), closing
+**FU-39** for this table. `occurred_at` and `recorded_at` are both
+`timestamptz` sourced from `transaction_timestamp()`
+([ADR 0031](decisions/0031-phase5b-durable-time.md)), closing **FU-35**
+for this table — same distinction as `incident_timeline`: when the
+audited action happened versus when this row was durably written.
+Fields: `audit_id`, `occurred_at`, `recorded_at`, `tenant_id`,
 `actor_type`, `actor_id`, `action`, `resource_type`, `resource_id`,
 `result` (`allowed`, `denied`, `error`), `reason`, `source_ip`,
 `user_agent`, `request_id`, `trace_id`, `before` (JSONB), `after`
@@ -218,9 +356,17 @@ PRIMARY KEY (outbox_id)
 INDEX (status, available_at) WHERE status IN ('pending','retrying')
 ```
 
+`outbox_id` is `BIGINT GENERATED ALWAYS AS IDENTITY`
+([ADR 0027](decisions/0027-phase5b-durable-record-identity.md)), closing
+**FU-39** for this table. Claim mechanics (`SELECT ... FOR UPDATE SKIP
+LOCKED`, lease expiry, retry-then-dead-letter) are fixed in
+[ADR 0033](decisions/0033-phase5b-transactional-outbox-and-dead-letter.md),
+which also adds `locked_at`/`locked_by` fields for the claim lease.
+
 Fields: `outbox_id`, `tenant_id`, `aggregate_type`, `aggregate_id`,
-`event_type`, `payload` (JSONB), `status`, `attempts`, `available_at`,
-`last_error`, `created_at`, `published_at`.
+`aggregate_version`, `event_type`, `payload` (JSONB), `status`,
+`attempts`, `available_at`, `locked_at`, `locked_by`, `last_error`,
+`created_at`, `published_at`.
 
 Consumers: the ClickHouse analytics exporter in Phase 5; notification in
 Phase 6; mitigation in Phase 7. Phase 5 writes event types those later
@@ -235,7 +381,35 @@ payload, the failure reason, attempt count, and first/last seen. Never
 auto-purged while unreviewed — a dead-letter row that ages out silently
 is an incident nobody knows was missed.
 
+## Durable time
+
+Phase 5A's `Timestamp` pairs a monotonic `Instant` with a `SystemTime`,
+and every reopen-window and suppression-expiry comparison uses the
+**monotonic** half — deliberate in 5A, because `Instant` cannot go
+backward under a wall-clock correction. `Instant` is process-local by
+definition and **cannot be persisted or restored** across a process
+restart, which persistence requires 5A did not.
+
+**PostgreSQL's `transaction_timestamp()` is the authoritative decision
+time** for every durable comparison this schema needs: reopen decisions,
+suppression expiry, lifecycle timestamps, closure eligibility, and
+`incident_timeline`/`incident_audit`'s `occurred_at`. Monotonic time
+remains available only for process-local latency and timeout
+measurement, never persisted. If a decision timestamp is earlier than
+the persisted reference it is being compared against, the design does
+**not** clamp silently, does **not** reopen, and does **not** create a
+duplicate incident — it returns a structured clock-skew error and emits
+a bounded metric. Full rationale, rejected alternatives, and the
+skew-handling contract:
+[ADR 0031](decisions/0031-phase5b-durable-time.md).
+
 ## Transaction boundaries
+
+**Isolation:** Read Committed by default for every operation, with
+correctness from constraints and explicit locks rather than a blanket
+stronger isolation level — full operation-by-operation matrix (locks,
+retryable `SQLSTATE`s, bounded retry counts) in
+[ADR 0026](decisions/0026-phase5b-transaction-isolation.md).
 
 The central rule:
 
@@ -280,7 +454,7 @@ outbox is exactly the mechanism that buys that separation.
 | Outbox publish fails | Retry with backoff; then dead-letter; operational state untouched |
 | Service restart | Uncommitted work is lost by construction; the outbox is re-read from `pending` |
 | Disk full | PostgreSQL rejects writes; commands fail closed |
-| Clock skew | Wall-clock only for display; ordering uses database sequence, not client time |
+| Clock skew | Never clamped silently, never reopens, never creates a duplicate incident on an unreliable comparison — structured error plus bounded metric. Ordering uses `BIGINT` identity ([ADR 0027](decisions/0027-phase5b-durable-record-identity.md)), decision time uses `transaction_timestamp()` ([ADR 0031](decisions/0031-phase5b-durable-time.md)), never client-supplied time |
 
 Retries use exponential backoff with jitter, capped attempts, then
 dead-letter. No infinite retry loop: a poison event that can never
@@ -326,4 +500,9 @@ PostgreSQL Row-Level Security is the right long-term enforcement and is
 because it needs a per-tenant database role model that does not exist
 yet. Phase 5 designs the schema so RLS can be switched on without a
 migration — every table has `tenant_id`, and no table relies on a join to
-establish tenancy. Recorded as **FU-21**.
+establish tenancy. Recorded as **FU-21**, formalized as
+[ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md),
+which also fixes the Phase 5B defense-in-depth layers (composite
+tenant-aware foreign keys, a separate migration role, an application
+runtime role provisioned without `BYPASSRLS`) that apply before RLS
+itself activates.

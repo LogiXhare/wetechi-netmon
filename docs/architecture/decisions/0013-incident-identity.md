@@ -187,13 +187,47 @@ a serial key; the UUIDv7 timestamp leak is immaterial because `opened_at`
 is returned anyway. **Licence impact:** `uuid` is MIT/Apache-2.0, to be
 verified and recorded before use, not assumed.
 
+## Phase 5B Resolution — Incident Number Format (2026-08-24)
+
+**FU-24 resolved.** The incident number is a **continuous per-tenant
+sequence, not year-based.** `WNM-<zero-padded sequence>`, no year
+segment — this closes the "does the sequence reset on 1 January?"
+question this ADR left open by removing the case entirely rather than
+answering it. The display format remains **provisional** in the same
+sense the rest of this ADR already states; only the reset-vs-continuous
+question is settled.
+
+Allocation mechanics: a **tenant-scoped allocator row** (one row per
+tenant, holding the current counter value), updated inside the same
+transaction that creates the incident, using a row lock
+(`SELECT ... FOR UPDATE`) and a **checked increment** — refuse rather
+than silently repeat a number at exhaustion, matching the "never
+mutate-then-fail" discipline
+`crates/incident/src/unit_of_work.rs` already
+applies to every counter. This durably replaces 5A's
+`InMemoryNumberAllocator`
+(`crates/incident/src/number.rs`), whose in-memory,
+per-process counter is explicitly documented there as resetting on
+restart — acceptable in 5A because nothing durable existed to disagree
+with it, not acceptable once PostgreSQL is the source of truth. See
+[ADR 0027](0027-phase5b-durable-record-identity.md) for how this
+differs from — and does not need to match — the strategy for
+`incident_id` itself, and
+[ADR 0029](0029-phase5b-repository-and-unit-of-work-seam.md) for the
+seam this allocator implements against.
+
 ## Follow-Up
 
 - [x] **BQ-5** — resolved 2026-08-22: UUIDv7, conditional on dependency
       review.
-- [ ] **FU-24** — decide whether the incident number resets annually.
+- [x] **FU-24** — resolved 2026-08-24: continuous per-tenant sequence,
+      no annual reset (see above).
 - [ ] **BQ-7** — owner approves or refuses new dependencies for Phase 5.
 - [ ] Add `uuid` to
       [dependency-license-matrix.md](../../dependency-license-matrix.md)
       if BQ-7 is approved.
 - [ ] Verify `uuid` published metadata and licence before adding it.
+- [ ] Implement the tenant-scoped allocator table and checked-increment
+      allocation at Phase 5B-2/5B-3, replacing
+      `InMemoryNumberAllocator` behind the existing `NumberAllocator`
+      trait.
