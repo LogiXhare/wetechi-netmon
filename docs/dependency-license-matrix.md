@@ -1,7 +1,8 @@
 # Dependency License Matrix
 
-Status: Phase 3 — ClickHouse client and time crates added
-Last updated: 2026-08-20
+Status: Phase 5B planning — six PostgreSQL-persistence candidates added,
+conditionally, pending the Phase 5B-1 dependency probe
+Last updated: 2026-08-24
 
 No dependency is approved for use until this matrix has a completed row for
 it with an explicit Approved/Rejected decision. License fields that are not
@@ -44,6 +45,12 @@ before any commercial distribution.
 | 29 | time | Date/time handling for ClickHouse row timestamps | MIT OR Apache-2.0 (verified via `cargo metadata` against v0.3.55) | None | Safe | **Approved** — vendored in `crates/storage`, `crates/collector` (Phase 3) |
 | 30 | serde (direct use) | Row serialization for `clickhouse::Row` | MIT OR Apache-2.0 (verified via `cargo metadata` against v1.0.229) | None | Safe | **Approved** — vendored in `crates/storage` (Phase 3; already a transitive dependency since Phase 2, now a direct one) |
 | 31 | libfuzzer-sys | libFuzzer bindings for the cargo-fuzz target | MIT OR Apache-2.0 (commonly known; **not independently verified via `cargo metadata`** — the fuzz crate is its own standalone Cargo workspace, per `crates/protocol-ipfix/fuzz/Cargo.toml`, so it doesn't appear in the main workspace's dependency graph) | None expected | Safe; dev/tooling-only, never shipped in a release binary | REQUIRES VERIFICATION — **not yet run in CI or locally in this environment** (no nightly toolchain here); verify before first real `cargo fuzz run` |
+| 32 | uuid | UUIDv7 incident-identity generation (Phase 5B, `crates/incident-postgres` only) | Apache-2.0 OR MIT (verified via crates.io API against v1.25.0, 2026-08-22 release; zero advisories ever, per RustSec advisory-db) | None expected | Safe — `features = ["v7"], default-features = false`, no `uuid::Uuid` type crosses `crates/incident`'s public API | **Conditionally Approved** — [ADR 0019](architecture/decisions/0019-phase5b-uuidv7-identity-generation.md); REQUIRES VERIFICATION: measured `cargo tree`, `cargo audit`, `unsafe` inventory, Windows-GNU + Linux build (Phase 5B-1 entry gate) |
+| 33 | tokio-postgres | PostgreSQL async client (Phase 5B, `crates/incident-postgres`) | MIT OR Apache-2.0 (verified via crates.io API against v0.7.18, 2026-06-12 release) | None | Safe — 1 advisory found (RUSTSEC-2026-0178), **patched at the selected version 0.7.18** | **Conditionally Approved** — [ADR 0020](architecture/decisions/0020-phase5b-postgresql-client.md); REQUIRES VERIFICATION: Phase 5B-1 probe |
+| 34 | deadpool-postgres | Connection pool for `tokio-postgres` (Phase 5B) | MIT OR Apache-2.0 (verified via crates.io API against v0.14.1) | None expected | Safe — no advisories found in RustSec advisory-db | **Conditionally Approved** — [ADR 0022](architecture/decisions/0022-phase5b-connection-pool.md); REQUIRES VERIFICATION: Phase 5B-1 probe |
+| 35 | rustls | TLS backend for the PostgreSQL connection (Phase 5B) | Apache-2.0 OR ISC OR MIT (verified via crates.io API against v0.23.43) | None | Safe — 2 advisories found (RUSTSEC-2024-0336, RUSTSEC-2024-0399), **both patched** well below the selected version | **Conditionally Approved** — [ADR 0023](architecture/decisions/0023-phase5b-postgresql-tls.md); REQUIRES VERIFICATION: Phase 5B-1 probe |
+| 36 | tokio-postgres-rustls | Bridges `tokio-postgres` to `rustls` (Phase 5B) | MIT (verified via crates.io API against v0.14.0) | None expected | Safe — no advisories found in RustSec advisory-db | **Conditionally Approved** — [ADR 0023](architecture/decisions/0023-phase5b-postgresql-tls.md); REQUIRES VERIFICATION: Phase 5B-1 probe |
+| 37 | refinery | Forward-only PostgreSQL migrations (Phase 5B) | MIT (verified via crates.io API against v0.9.2, 2026-06-10 release) | None expected | Safe — no advisories found in RustSec advisory-db | **Conditionally Approved** — [ADR 0024](architecture/decisions/0024-phase5b-migration-framework.md); REQUIRES VERIFICATION: Phase 5B-1 probe |
 
 ## Toolchain-Only, Not Shipped in Any Binary
 
@@ -73,6 +80,16 @@ actually added to `Cargo.toml`, `package.json`, or a deployment manifest:
 4. Record security maintenance status (actively maintained? recent CVEs?).
 5. Mark Approved or Rejected explicitly — "REQUIRES VERIFICATION" is not a
    valid terminal state for anything actually shipped.
+
+**"Conditionally Approved"** (rows 32–37) is a distinct, non-terminal
+state introduced for the Phase 5B candidates: the crate's version,
+license, and advisory history are independently verified against live
+sources, but the crate is **not yet added to any `Cargo.toml`** and
+cannot become "Approved" until the Phase 5B-1 dependency probe measures
+what this table's own "REQUIRES VERIFICATION" column still lists —
+transitive closure, `cargo audit`, `unsafe` inventory, and a
+Windows-GNU and Linux build. Do not treat "Conditionally Approved" as
+license or security clearance to add the dependency.
 
 ## Known Legal Flags Raised in Phase 0
 

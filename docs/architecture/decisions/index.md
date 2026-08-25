@@ -60,3 +60,18 @@ yet:
 | [0016](0016-incident-concurrency-and-idempotency.md) | Optimistic Concurrency and Fingerprinted Idempotency | Proposed |
 | [0017](0017-incident-community-enterprise-boundary.md) | The Community/Enterprise Seam Is an Extension Point, Not a Limitation | Proposed |
 | [0018](0018-phase5-dependency-selection.md) | Phase 5 Dependency Selection: Criteria and Shortlist | Proposed |
+| [0019](0019-phase5b-uuidv7-identity-generation.md) | Phase 5B UUIDv7 Identity Generation | Conditionally Accepted |
+| [0020](0020-phase5b-postgresql-client.md) | Phase 5B PostgreSQL Client | Conditionally Accepted |
+| [0021](0021-phase5b-async-runtime-boundary.md) | Phase 5B Async Runtime Boundary | Accepted |
+| [0022](0022-phase5b-connection-pool.md) | Phase 5B Connection Pool | Conditionally Accepted |
+| [0023](0023-phase5b-postgresql-tls.md) | Phase 5B PostgreSQL TLS | Conditionally Accepted |
+| [0024](0024-phase5b-migration-framework.md) | Phase 5B Migration Framework | Conditionally Accepted |
+| [0025](0025-phase5b-postgresql-version-support.md) | Phase 5B PostgreSQL Version Support Range | Accepted |
+| [0026](0026-phase5b-transaction-isolation.md) | Phase 5B Transaction Isolation Model | Accepted |
+| [0027](0027-phase5b-durable-record-identity.md) | Phase 5B Durable Record Identity (Timeline, Audit, Outbox) | Accepted |
+| [0028](0028-phase5b-idempotency-fingerprint.md) | Phase 5B Durable Idempotency Fingerprint | Accepted |
+| [0029](0029-phase5b-repository-and-unit-of-work-seam.md) | Phase 5B Repository and Unit-of-Work Seam Extraction | Accepted |
+| [0030](0030-phase5b-aggregate-reconstitution.md) | Phase 5B Aggregate Reconstitution | Accepted |
+| [0031](0031-phase5b-durable-time.md) | Phase 5B Durable Time Semantics | Accepted |
+| [0032](0032-phase5b-tenant-isolation-and-rls-readiness.md) | Phase 5B Tenant Isolation and Row-Level Security Readiness | Accepted |
+| [0033](0033-phase5b-transactional-outbox-and-dead-letter.md) | Phase 5B Transactional Outbox and Dead-Letter Design | Accepted |
