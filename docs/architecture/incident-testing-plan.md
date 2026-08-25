@@ -109,9 +109,14 @@ Atomicity is the centre of this section, and it must be tested by
 - **An audit write failure rolls back the mutation.** The mutation must
   not be visible afterwards.
 - Optimistic concurrency: conflicting updates produce exactly one winner.
-- The partial unique index actually prevents two open incidents per
-  correlation key, tested with genuine concurrent inserts rather than
-  sequential ones.
+- **Each of the three target-specific partial unique indexes**
+  (`incidents_active_host`, `incidents_active_network`,
+  `incidents_active_hostgroup` — corrected from a single generic index,
+  see [incident-persistence.md](incident-persistence.md) and
+  [ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md))
+  actually prevents two active incidents per correlation key, tested
+  with genuine concurrent inserts rather than sequential ones, for each
+  target type independently.
 - Duplicate `dedup_key` insert raises the constraint and is handled as a
   duplicate rather than an error.
 - Idempotency: same key and body replays; same key, different body
@@ -120,10 +125,46 @@ Atomicity is the centre of this section, and it must be tested by
 - Retry after a transient failure does not double-apply.
 - Database outage produces `503` and no partial state.
 - Migrations apply cleanly forward, and the incident schema version is
-  recorded.
+  recorded, across the full supported version matrix
+  ([ADR 0025](decisions/0025-phase5b-postgresql-version-support.md):
+  15, 16, 17, 18).
 - Retention deletes what it should and **never cascades into audit**.
 - Tenant isolation at the repository layer: a tenant-less query cannot be
   constructed.
+
+### Phase 5B additions (2026-08-24 planning)
+
+- **Seam-extraction regression:** all 531 existing Phase 5A tests remain
+  green against the extracted repository seam (Milestone 5B-0), proving
+  the refactor changed no behaviour — see
+  [ADR 0029](decisions/0029-phase5b-repository-and-unit-of-work-seam.md).
+- **Aggregate reconstitution:** `Incident::reconstitute` rejects a
+  structurally invalid snapshot (e.g. `state_before_recovering` set
+  while `state != Recovering`) rather than silently accepting it — see
+  [ADR 0030](decisions/0030-phase5b-aggregate-reconstitution.md).
+- **Clock-skew contract:** a decision timestamp earlier than the
+  persisted reference does not clamp, does not reopen, does not create a
+  duplicate incident, and returns a structured error — see
+  [ADR 0031](decisions/0031-phase5b-durable-time.md).
+- **FU-38 acceptance gate:** the table-driven "every command × every
+  illegal source state" test exercises `close_internal` and
+  `reopen_incident_internal` directly, post-hardening.
+- **UUIDv7 round trip:** generated identity round-trips through
+  PostgreSQL's native `uuid` column and back without loss.
+- **`incident_policy_references` overflow behaviour:** a 65th distinct
+  policy on one incident is recorded, not silently dropped — either
+  normalized without a cap, or with an explicit omitted-count increment,
+  never a silent no-op.
+- **Outbox lease and dead-letter:** a claimed-but-never-published row is
+  reclaimed by a different consumer after its lease expires; a row that
+  exceeds its retry limit transitions to dead-letter, never retries
+  indefinitely.
+- **Duplicate-consumer idempotency:** a re-claimed and re-published
+  outbox event does not corrupt downstream state under at-least-once
+  delivery.
+- **Windows-GNU and Linux builds** of the full Phase 5B suite, per
+  [ADR 0018](decisions/0018-phase5-dependency-selection.md)'s
+  non-negotiable cross-platform requirement.
 
 ## API tests
 
