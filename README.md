@@ -7,9 +7,13 @@ detection, traffic analytics, and policy-controlled mitigation platform
 for ISPs, enterprises, data centers, hosting providers, and managed
 network service providers.
 
-> **Project status: Phase 1 — repository and documentation foundation.**
-> No software has shipped yet. See [Project Status](#project-status)
-> below before evaluating this as a runnable product.
+> **Project status: Development Preview.** Phases 0–4 and Phase 5A are
+> merged, with real, tested Rust source (collector, aggregator, detector,
+> incident domain — 531 tests). Phase 5B (PostgreSQL persistence) is in
+> planning. There is no packaged release, no HTTP API, no notification
+> delivery, and mitigation is not implemented. See
+> [Project Status](#project-status) below before evaluating this as a
+> production-ready product.
 
 Built by **WeTechi Solutions**.
 
@@ -33,12 +37,39 @@ Built by **WeTechi Solutions**.
 
 ## Project Status
 
-This repository is at **Phase 1** of an explicit, phased delivery model
-(see [ROADMAP.md](ROADMAP.md)). Phase 0 (product foundation and
-clean-room boundary) is complete. Phase 1 establishes the repository
-skeleton, governance, and documentation/validation tooling — **it
-contains no application code and nothing here is runnable yet.** The
-first runnable component (the IPFIX telemetry collector) ships in Phase 2.
+**Development Preview.** This repository follows an explicit, phased
+delivery model (see [ROADMAP.md](ROADMAP.md)). Phases 0–4 and Phase 5A
+are merged to `main`, each after adversarial review:
+
+- **Phase 0–1**: product foundation, clean-room boundary, repository
+  governance and documentation/validation tooling.
+- **Phase 2–3**: IPFIX/NetFlow/sFlow telemetry collector, aggregation,
+  and ClickHouse analytics storage.
+- **Phase 4**: static-threshold detection engine.
+- **Phase 5A**: dependency-free incident management domain (state
+  machine, correlation, closure/reopen policy, idempotency) — 531
+  workspace tests, zero third-party dependency added.
+- **Phase 5B** (PostgreSQL persistence for incidents): architecture and
+  dependency-selection **planning only**, not yet implemented — see the
+  open documentation-only planning Pull Request.
+
+**Explicit safety boundaries, current as of this preview:**
+
+- No production BGP or FlowSpec mitigation execution — automated
+  mitigation is disabled and dry-run by default at every layer,
+  permanently (see [Security](#security) below).
+- No notification delivery is implemented (Phase 6).
+- No HTTP API or web UI is implemented yet (Phase 6).
+- APIs, schemas, and storage architecture may still change.
+- GitHub Actions cannot currently run on this repository because of an
+  account billing limitation; validation evidence cited in Pull Requests
+  is collected and reported locally instead.
+- Production use is not yet recommended unless explicitly supported by
+  WeTechi Solutions.
+
+There is no packaged release yet — the first runnable component (the
+IPFIX telemetry collector) shipped in Phase 2, and the repository has
+carried real, tested source code since.
 
 ## What WetechiNetMon Is
 
@@ -105,11 +136,15 @@ Full requirement traceability:
 
 ## Getting Started
 
-There is nothing to install or run yet — see
+There is no packaged release or installer yet. The Rust workspace
+(`cargo build --workspace`, `cargo test --workspace`) builds and its 531
+tests pass locally, but there is no HTTP API, web UI, or CLI to run
+against real traffic yet — see
 [docs/development/local-setup.md](docs/development/local-setup.md) for
-what you *can* do today (documentation preview, Markdown/YAML validation).
-Installation guides for Docker Compose, Kubernetes/Helm, and bare-metal
-Ubuntu will be published starting Phase 2.
+what you *can* do today (build the workspace, run the test suite,
+preview documentation, run Markdown/YAML validation). Installation
+guides for Docker Compose, Kubernetes/Helm, and bare-metal Ubuntu will be
+published once the corresponding phase ships a deployable service.
 
 *Screenshots and a quick-start walkthrough will be added once the web
 application and NOC UI exist (Phase 6) — placeholder only, no
@@ -120,8 +155,10 @@ screenshots exist yet.*
 ```text
 wetechi-netmon/
 ├── .github/          CI, issue/PR templates, CODEOWNERS, Dependabot
-├── apps/             api, web, cli — reserved, Phase 2+
-├── crates/           Rust service crates — reserved, Phase 2+
+├── apps/             api, web, cli — reserved, Phase 6+
+├── crates/           Rust service crates — 8 populated with real,
+│                     tested code (see Cargo.toml); the rest remain
+│                     README-only placeholders for later phases
 ├── deployments/       docker-compose, kubernetes, helm, systemd — reserved
 ├── docs/             product, architecture, and operational documentation
 ├── grafana/          dashboards, provisioning — reserved, Phase 6
@@ -137,13 +174,17 @@ wetechi-netmon/
 └── prompts/          the governing master prompt for this project
 ```
 
-Each currently-empty directory contains a `README.md` explaining what it
-is reserved for and which phase populates it — see
-[docs/roadmap.md](docs/roadmap.md).
+`crates/` (8 of them) and `tools/flow-replay/` now carry real, tested
+source (see `Cargo.toml`'s `[workspace] members`). Every still-empty
+directory contains a `README.md` explaining what it is reserved for and
+which phase populates it — see [docs/roadmap.md](docs/roadmap.md).
 
 ## Documentation
 
-Full documentation set (Phase 0 + Phase 1):
+Product-foundation documentation set (Phase 0 + Phase 1; the full,
+current documentation tree — including Phase 2–5B architecture, ADRs,
+and operational docs — is browsable via `mkdocs serve` or directly under
+`docs/`):
 
 - [Product Charter](docs/product-charter.md)
 - [Clean-Room Boundary](docs/clean-room-boundary.md)
@@ -183,13 +224,13 @@ change.**
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
-
-**⚠️ This license selection is a Phase 1 recommendation pending explicit
-confirmation by WeTechi Solutions — see
-[docs/license-recommendation.md](docs/license-recommendation.md) and
-[docs/blocking-questions.md](docs/blocking-questions.md) (BQ-1) before
-relying on it for any legal or commercial decision.**
+Licensed under the [Apache License 2.0](LICENSE) — resolved 2026-08-21
+by WeTechi Solutions; see
+[docs/blocking-questions.md](docs/blocking-questions.md) (BQ-1) and
+[docs/license-recommendation.md](docs/license-recommendation.md) for the
+full decision record and the fork-risk trade-off accepted knowingly.
+Contributions are accepted under the same license via DCO sign-off, no
+CLA — see [ADR 0006](docs/architecture/decisions/0006-contribution-licensing-dco-not-cla.md).
 
 See also [NOTICE](NOTICE) and
 [docs/dependency-license-matrix.md](docs/dependency-license-matrix.md).

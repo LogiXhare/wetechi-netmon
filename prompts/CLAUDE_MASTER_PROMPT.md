@@ -224,11 +224,11 @@ Cisco NCS540
 
 Router private telemetry and BGP IP:
 
-172.30.172.49
+203.0.113.1
 
 Collector private IP:
 
-172.30.172.50/30
+203.0.113.2/30
 
 Telemetry protocol:
 
@@ -244,7 +244,7 @@ Local ASN:
 
 Router ASN:
 
-17471
+64500
 
 Mitigation BGP community:
 
@@ -252,7 +252,7 @@ Mitigation BGP community:
 
 Mitigation next hop:
 
-172.30.172.50
+203.0.113.2
 
 Analytics storage:
 
