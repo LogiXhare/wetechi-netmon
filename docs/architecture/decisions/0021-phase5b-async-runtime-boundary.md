@@ -18,8 +18,14 @@ its 531 tests run without an async test harness.
 
 ## Verified evidence
 
-`tokio` 1.53.1 is **already** a `[workspace.dependencies]` entry
-(`workspace/Cargo.toml`), used directly by `crates/collector`,
+`tokio` is **already** a `[workspace.dependencies]` entry — corrected
+2026-08-30, both the path and the version claim below were wrong: the
+manifest declaring it is the **repository-root** `Cargo.toml` (there is
+no `workspace/` directory), at `tokio = { version = "1", features =
+[...] }`. That declares a **compatible-range requirement** (`^1`), not
+an exact pin — `Cargo.lock` currently resolves it to `1.53.1`, which is
+a lockfile resolution, not a manifest commitment to that exact patch
+version. `tokio` is used directly by `crates/collector`,
 `crates/storage`, and `tools/flow-replay` (verified via `grep
 "tokio.workspace = true"` across all crate manifests). Phase 5B
 introduces **no new runtime** — it reuses one the workspace has carried

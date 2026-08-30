@@ -46,6 +46,48 @@ authority for any given fact.
 
 Sketches. Types and constraints are the design; exact DDL is Milestone 5B.
 
+### Tenant-aware composite foreign keys — added 2026-08-30
+
+[ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md)'s
+defense-in-depth layer 2 requires that a foreign key from one
+tenant-owned table to another **includes `tenant_id` in the key**, so a
+cross-tenant reference is structurally rejected by the database rather
+than only by application discipline. This requires a **candidate key**
+on the referenced table that includes `tenant_id` — `incidents` declares
+`UNIQUE (tenant_id, incident_id)` alongside its existing
+`PRIMARY KEY (incident_id)` specifically to make this expressible; the
+primary key itself stays `incident_id` alone, unchanged from the
+originally approved design.
+
+Every table below states explicitly whether it references an incident
+and, if so, does so with the composite pattern:
+
+```sql
+FOREIGN KEY (tenant_id, incident_id)
+REFERENCES incidents (tenant_id, incident_id)
+```
+
+A table whose rows are not scoped to one specific incident (a per-tenant
+allocator, or a table using a polymorphic `resource_type`/`resource_id`
+or `aggregate_type`/`aggregate_id` pair that is not always an incident)
+does not get this foreign key — a generic reference cannot target one
+fixed parent table, and forcing one would either break the table's
+actual purpose or silently narrow it. Each such table states why below.
+
+**Deletion behavior:** where the [retention table](#retention) already
+states a child "follows its incident" (timeline, notes, detection
+events, policy references, assignments, tags), the composite foreign key
+is `ON DELETE CASCADE` — deleting a retained-past-24-months closed
+incident deletes its own timeline/notes/etc. with it, matching the
+stated retention behavior rather than leaving orphaned rows. **Audit is
+the deliberate exception**: it has no foreign key to `incidents` at all
+(see its own table section below), so it is structurally unable to
+cascade-delete when an incident is removed — the retention table already
+requires audit to outlive its incident (24 months minimum, versus the
+incident's own 24-month-after-close window) and the tenant-isolation
+section already requires "tenant deletion must never cascade into
+audit"; the same non-FK design serves both requirements at once.
+
 ### `incidents`
 
 Columns follow the [domain model](incident-domain-model.md). Key
@@ -53,6 +95,8 @@ constraints:
 
 ```text
 PRIMARY KEY (incident_id)
+UNIQUE (tenant_id, incident_id)    -- candidate key; see "Tenant-aware
+                                    -- composite foreign keys" above
 UNIQUE (tenant_id, incident_number)
 CHECK (state IN ('open','acknowledged','investigating','monitoring',
                  'recovering','resolved','closed'))
@@ -105,9 +149,13 @@ The **active states are exactly:** Open, Acknowledged, Investigating,
 Monitoring, Recovering. Resolved and Closed are not active.
 
 **Target-type-specific partial unique indexes**, not one generated
-canonical-key column, per
-[ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md)'s
-sibling decision on typed identity — using `inet`/`cidr` equality
+canonical-key column — corrected 2026-08-30 from a citation that
+attributed this design to [ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md),
+which covers tenant isolation and RLS readiness, not typed target
+identity or index design; the typed-target schema decision belongs to
+this document (see `incidents`'s own `CHECK` constraint above and
+[the `incidents` table](incident-domain-model.md) it follows) — using
+`inet`/`cidr` equality
 directly keeps the invariant expressed over the same native types the
 `incidents` table itself stores, rather than introducing a second,
 derived string representation that could drift from the typed columns:
@@ -160,7 +208,13 @@ The link table. One row per detection event associated with an incident.
 PRIMARY KEY (incident_id, detection_event_id)
 UNIQUE (tenant_id, dedup_key)      -- the duplicate gate
 INDEX (incident_id, observed_at DESC)
+FOREIGN KEY (tenant_id, incident_id)
+  REFERENCES incidents (tenant_id, incident_id) ON DELETE CASCADE
 ```
+
+**References an incident:** yes, every row belongs to exactly one
+incident; a cross-tenant `(tenant_id, incident_id)` pair is rejected by
+the database, not only by the correlator's own tenant-scoped queries.
 
 The `UNIQUE (tenant_id, dedup_key)` constraint is how at-least-once
 delivery becomes effectively-once *processing*. Phase 4's `dedup_key` is
@@ -182,7 +236,12 @@ just convention, so an application bug cannot rewrite history.
 ```text
 PRIMARY KEY (timeline_id)
 INDEX (incident_id, occurred_at, timeline_id)
+FOREIGN KEY (tenant_id, incident_id)
+  REFERENCES incidents (tenant_id, incident_id) ON DELETE CASCADE
 ```
+
+**References an incident:** yes, every timeline entry belongs to exactly
+one incident, tenant-checked at the database layer.
 
 `timeline_id` is `BIGINT GENERATED ALWAYS AS IDENTITY`
 ([ADR 0027](decisions/0027-phase5b-durable-record-identity.md)) — not a
@@ -218,9 +277,20 @@ which during a post-mortem is often the interesting part.
 
 ```text
 PRIMARY KEY (note_id)
+UNIQUE (tenant_id, note_id)        -- candidate key for the tenant-aware
+                                    -- self-reference below
 INDEX (incident_id, created_at DESC)
-FOREIGN KEY (supersedes_note_id) REFERENCES incident_notes(note_id)
+FOREIGN KEY (tenant_id, incident_id)
+  REFERENCES incidents (tenant_id, incident_id) ON DELETE CASCADE
+FOREIGN KEY (tenant_id, supersedes_note_id)
+  REFERENCES incident_notes (tenant_id, note_id)
 ```
+
+**References an incident:** yes. The supersession self-reference is also
+tenant-aware — a note cannot be recorded as superseding a note that
+belongs to a different tenant, corrected from the original single-column
+`FOREIGN KEY (supersedes_note_id) REFERENCES incident_notes(note_id)`,
+which had no tenant check at all.
 
 Editing writes a new row with `supersedes_note_id` set; the superseded
 row gets `superseded_at` and `superseded_by`. The API returns only
@@ -238,13 +308,20 @@ later; honouring it now would be shipping an unreviewed disclosure path.
 ### `incident_number_allocators`
 
 New table, added 2026-08-24 to support the
-[ADR 0013 amendment](decisions/0013-incident-identity.md#phase-5b-resolution--incident-number-format-2026-08-24)
+[ADR 0013 amendment](decisions/0013-incident-identity.md#phase-5b-resolution-incident-number-format-2026-08-24)
 resolving **FU-24**: the incident number is a continuous per-tenant
 sequence, not year-scoped. One row per tenant holds the current counter.
 
 ```text
 PRIMARY KEY (tenant_id)
 ```
+
+**References an incident:** no, deliberately. One row per tenant, not
+per incident — the row exists before, during, and after any single
+incident's lifetime, and outlives every incident that has ever consumed
+a number from it. There is no `incident_id` column to reference: this
+table's whole purpose is to hand out an `incident_id`-independent counter
+value **before** the row that would consume it exists.
 
 Allocation reads the row with `SELECT ... FOR UPDATE`, checks the
 increment (refuses rather than silently repeating a number at
@@ -264,8 +341,14 @@ durable persistence.
 
 ```text
 PRIMARY KEY (incident_id, policy_id)
-FOREIGN KEY (incident_id) REFERENCES incidents(incident_id)
+FOREIGN KEY (tenant_id, incident_id)
+  REFERENCES incidents (tenant_id, incident_id) ON DELETE CASCADE
 ```
+
+**References an incident:** yes — corrected 2026-08-30 from a
+single-column `FOREIGN KEY (incident_id) REFERENCES
+incidents(incident_id)`, which could not detect a hand-crafted or buggy
+row whose `tenant_id` disagreed with its `incident_id`'s actual owner.
 
 Fields: `incident_id`, `tenant_id`, `policy_id`, `policy_version`,
 `first_seen_sequence`, `last_seen_sequence`. A normalized relation has no
@@ -282,11 +365,39 @@ for the in-memory version.
 
 ### `incident_assignments`, `incident_tags`
 
+```text
+PRIMARY KEY (assignment_id)  -- incident_assignments; BIGINT GENERATED
+                              -- ALWAYS AS IDENTITY, append-only history
+PRIMARY KEY (incident_id, tag)  -- incident_tags; set semantics
+FOREIGN KEY (tenant_id, incident_id)
+  REFERENCES incidents (tenant_id, incident_id) ON DELETE CASCADE
+  -- on both tables
+```
+
+**References an incident:** yes, both tables — added 2026-08-30; no key
+block existed here before this correction.
+
 Assignment history is append-only, so "who owned this at 02:00?" is
 answerable. The current assignment on the incident row is a denormalised
 convenience, not the record.
 
 ### `incident_audit`
+
+**References an incident:** no, deliberately, and this is not an
+oversight — this table's `resource_type`/`resource_id` pair is
+polymorphic by design (an incident, a note, a tenant-level setting,
+whatever a future authorization decision needs to name), and a **denied**
+command frequently has no incident at all, since denial can happen before
+an incident is ever identified or created. A foreign key can target
+exactly one parent table; forcing `incident_audit` to reference
+`incidents` would either exclude every non-incident and every denied-
+before-identification row, or require `resource_id` to be nullable and
+the foreign key to be conditional — neither of which this generic audit
+design intends. The absence of a foreign key here is also what makes
+audit's own retention independent of `incidents`' retention possible (see
+"Tenant-aware composite foreign keys" above and the retention table
+below): with no `ON DELETE CASCADE` to inherit, an audit row is never at
+risk of disappearing when its named incident eventually is.
 
 Separate from the timeline. Records authorization decisions including
 **denials**, which have no incident to attach to and therefore cannot
@@ -349,6 +460,11 @@ Fields: `operation`, `resource_type`, `resource_id`,
 Retention 24 h by default. See
 [ADR 0016](decisions/0016-incident-concurrency-and-idempotency.md).
 
+**References an incident:** no, deliberately — same reasoning as
+`incident_audit`. `resource_type`/`resource_id` is polymorphic (the
+idempotency key covers any command, not only incident-mutating ones), so
+a single foreign key cannot target one fixed parent table.
+
 ### `incident_outbox`
 
 ```text
@@ -374,12 +490,32 @@ phases will consume and publishes only the analytics ones. **Producing an
 event nobody consumes is not implementing a notification** — it is
 leaving the seam ADR 0011 requires.
 
+**References an incident:** no, deliberately. `aggregate_type`/
+`aggregate_id` is a generic outbox pattern by design — every aggregate
+this system ever publishes an event for goes through this one table, not
+only `Incident`. Today `aggregate_type` is always `'incident'` in
+practice, but the schema does not hardcode that, so no foreign key to
+`incidents` specifically is declared. Where `aggregate_type = 'incident'`,
+the application is responsible for `aggregate_id` actually naming a real,
+tenant-matching incident — this is an application-level invariant, not a
+database-enforced one, consistent with this table's polymorphic design.
+
 ### `incident_dead_letter`
 
 Events that failed repeatedly or could not be parsed. Holds the raw
 payload, the failure reason, attempt count, and first/last seen. Never
 auto-purged while unreviewed — a dead-letter row that ages out silently
 is an incident nobody knows was missed.
+
+**References an incident:** no, deliberately, and for a stronger reason
+than `incident_outbox`'s own polymorphism — a dead-letter row exists
+specifically because its payload **failed to process or failed to
+parse**. A row that could not be parsed may not reliably contain a valid
+`incident_id` at all; requiring a foreign key here would mean a
+corrupted or malformed payload could itself fail to be recorded as
+dead-lettered, defeating the table's entire purpose ("never auto-purged
+while unreviewed" requires the row to exist unconditionally, not only
+when it happens to reference a real incident).
 
 ## Durable time
 

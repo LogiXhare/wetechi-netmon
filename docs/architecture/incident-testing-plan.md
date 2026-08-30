@@ -112,8 +112,10 @@ Atomicity is the centre of this section, and it must be tested by
 - **Each of the three target-specific partial unique indexes**
   (`incidents_active_host`, `incidents_active_network`,
   `incidents_active_hostgroup` — corrected from a single generic index,
-  see [incident-persistence.md](incident-persistence.md) and
-  [ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md))
+  see [incident-persistence.md](incident-persistence.md)'s "Active-
+  incident invariant" section — **not** ADR 0032, which is cited
+  incorrectly here as of the original planning pass; ADR 0032 covers
+  tenant isolation and RLS readiness, not the typed-target index design)
   actually prevents two active incidents per correlation key, tested
   with genuine concurrent inserts rather than sequential ones, for each
   target type independently.
@@ -165,6 +167,46 @@ Atomicity is the centre of this section, and it must be tested by
 - **Windows-GNU and Linux builds** of the full Phase 5B suite, per
   [ADR 0018](decisions/0018-phase5-dependency-selection.md)'s
   non-negotiable cross-platform requirement.
+
+### Tenant-aware composite foreign keys (added 2026-08-30)
+
+Per [incident-persistence.md](incident-persistence.md)'s "Tenant-aware
+composite foreign keys" section and
+[ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md):
+
+- **Same-tenant child reference succeeds:** inserting a timeline, note,
+  detection-event, policy-reference, assignment, or tag row whose
+  `(tenant_id, incident_id)` matches a real incident's own
+  `(tenant_id, incident_id)` succeeds normally.
+- **Cross-tenant child reference fails:** inserting the same row with
+  the *correct* `incident_id` but the *wrong* `tenant_id` (or vice
+  versa) is rejected by the foreign-key constraint itself
+  (`23503`), not merely by an application-level check — proving the
+  composite key, not a single-column one, is what is actually enforced.
+- **Note supersession is tenant-checked:** a note cannot be recorded as
+  superseding a note belonging to a different tenant — the
+  `FOREIGN KEY (tenant_id, supersedes_note_id) REFERENCES
+  incident_notes (tenant_id, note_id)` rejects a cross-tenant
+  `supersedes_note_id`, even when the referencing note's own tenant
+  matches its own incident correctly.
+- **Outbox and audit cannot reference another tenant's incident, at the
+  application layer:** since `incident_outbox` and `incident_audit`
+  are deliberately not foreign-key-constrained to `incidents` (see
+  those tables' own sections in
+  [incident-persistence.md](incident-persistence.md) for why), this
+  invariant is application-enforced, not database-enforced — the test
+  asserts the repository layer refuses to write an outbox or audit row
+  whose `aggregate_id`/`resource_id` names an incident belonging to a
+  different tenant than the row's own `tenant_id`, closing the gap a
+  missing foreign key leaves open for exactly these two tables.
+- **Archival preserves required audit history:** purging a closed
+  incident past its 24-month retention window (which cascades to its
+  timeline, notes, detection events, policy references, assignments,
+  and tags via `ON DELETE CASCADE`) does **not** remove that incident's
+  `incident_audit` rows — audit has no foreign key to `incidents` and
+  therefore nothing to cascade from, and the retention table's own
+  24-month-minimum audit window is independently verified to still hold
+  the rows after the incident itself is gone.
 
 ## API tests
 

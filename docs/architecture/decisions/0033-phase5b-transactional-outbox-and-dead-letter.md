@@ -56,16 +56,55 @@ already decided against.
 
 **Option A.** `incident_outbox` claim mechanics:
 
-- **Claim:** `SELECT outbox_id FROM incident_outbox WHERE status IN
-  ('pending','retrying') AND available_at <= transaction_timestamp()
-  ORDER BY outbox_id FOR UPDATE SKIP LOCKED LIMIT :batch_size`, then
-  mark claimed rows with `locked_at`/`locked_by` in the same transaction.
+- **Claim — corrected 2026-08-30.** The original wording selected rows
+  by `status`/`available_at` alone and recorded `locked_at`/`locked_by`
+  without the claim query itself accounting for the lease, so a claiming
+  transaction's commit released the row lock with nothing else changed —
+  a second consumer's identical query would re-select the same row
+  immediately, on every batch, not only after lease expiry. The
+  corrected claim is lease-aware in the predicate itself:
+
+  ```sql
+  SELECT outbox_id FROM incident_outbox
+  WHERE status IN ('pending', 'retrying')
+    AND available_at <= transaction_timestamp()
+    AND (
+      locked_at IS NULL
+      OR locked_at + :lease_interval <= transaction_timestamp()
+    )
+  ORDER BY outbox_id
+  FOR UPDATE SKIP LOCKED
+  LIMIT :batch_size
+  ```
+
+  In the same transaction, each claimed row is updated with
+  `locked_at = transaction_timestamp()` and `locked_by = :consumer_id`.
+  `status` is **not** advanced to a separate "processing" value —
+  `locked_at` compared against the configured `:lease_interval` is the
+  sole lease marker, so a fresh, unleased row (`locked_at IS NULL`) and
+  an expired-lease row (`locked_at` older than the interval) are both
+  captured by the same predicate without a third status value to keep in
+  sync. A successful publish sets `status = 'published'`,
+  `published_at = transaction_timestamp()`, and clears `locked_at`/
+  `locked_by`. A failed publish clears `locked_at`/`locked_by`,
+  increments `attempts`, sets `status = 'retrying'`, and advances
+  `available_at` by the backoff interval — so a retrying row is not
+  immediately re-claimed as if its lease had simply expired; the backoff
+  predicate (`available_at <= transaction_timestamp()`) and the lease
+  predicate both gate re-selection, independently.
 - **Batch size:** configurable, no production default asserted by this
   planning pass.
-- **Lease behavior:** a claimed row not published within a configured
-  lease duration is eligible for re-claim by a different consumer — the
-  lease timeout, not an assumption of consumer liveness, is what bounds
-  "stuck forever."
+- **Lease behavior:** a claimed row not published (nor moved to
+  `retrying` or `dead_letter`) within `:lease_interval` is eligible for
+  re-claim by a different consumer, per the corrected predicate above —
+  the lease timeout, not an assumption of consumer liveness, is what
+  bounds "stuck forever." An active lease
+  (`locked_at + :lease_interval > transaction_timestamp()`) is not
+  reclaimable by any concurrent claimer. A transaction that claims a row
+  and then rolls back (crash, error, forced abort) leaves the row
+  exactly as it was before the claim — `locked_at`/`locked_by` were
+  never durably written, so the row is immediately claimable again
+  without waiting out a lease it never actually held.
 - **Retry:** exponential backoff with jitter (matching
   [incident-persistence.md](../incident-persistence.md)'s existing
   failure-behavior table), `attempts` incremented per failed publish,
@@ -125,3 +164,31 @@ ClickHouse) demonstrates a real need, per Option C's note.
 - [ ] Confirm the ClickHouse exporter consumer (the only Phase 5B
       consumer) tolerates at-least-once delivery, per its existing
       design.
+- [ ] **Added 2026-08-30, from the lease-predicate correction above** —
+      the following integration tests at Phase 5B-5, alongside the two
+      already listed:
+  - [ ] A second worker cannot immediately reclaim a row whose lease is
+        still active.
+  - [ ] A row becomes eligible for reclaim only after its lease
+        genuinely expires (`locked_at + lease_interval <=
+        transaction_timestamp()`), not merely after the first
+        transaction commits.
+  - [ ] A crashed worker's claimed-but-never-published row is
+        eventually reclaimed by a different consumer.
+  - [ ] A successfully published row (`status = 'published'`) is never
+        reclaimed by any predicate.
+  - [ ] A `retrying` row does not become available before its
+        backoff-advanced `available_at` elapses, independent of the
+        lease predicate.
+  - [ ] Two simultaneous claimers against the same pending batch receive
+        disjoint row sets (`FOR UPDATE SKIP LOCKED` holds under real
+        concurrency, not only sequential test calls).
+  - [ ] A claiming transaction that rolls back leaves the row
+        immediately claimable — `locked_at`/`locked_by` were never
+        durably committed.
+  - [ ] The lease and backoff clocks are both PostgreSQL
+        `transaction_timestamp()`, never client-supplied time.
+  - [ ] `attempts` increments exactly once per genuine claim-and-fail
+        cycle, not once per predicate evaluation.
+  - [ ] The dead-letter transition at the configured retry limit is
+        deterministic and does not depend on claim timing.

@@ -496,8 +496,10 @@ design.
 
 ## Summary of residual risk
 
-Three carry real residual exposure and are added to the
-[risk register](../risk-register.md):
+Four carry real residual exposure and are added to the
+[risk register](../risk-register.md) — corrected 2026-08-30 from
+"Three," stale since R19 was added during the 2026-08-24 Phase 5B
+planning pass:
 
 | Risk | Threat | Why it persists |
 |---|---|---|

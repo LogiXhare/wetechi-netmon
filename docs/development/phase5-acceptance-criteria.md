@@ -102,7 +102,7 @@ specifically.
 | 16 | Tenant isolation and RLS readiness formalized | Done — [ADR 0032](../architecture/decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md) |
 | 17 | Transactional outbox and dead-letter claim mechanics defined | Done — [ADR 0033](../architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md) |
 | 18 | Dependency-selection evidence verified live (registry, advisories, upstream activity), dated | Done — 2026-08-24, [dependency-license-matrix.md](../dependency-license-matrix.md) rows 32–37 |
-| 19 | FU-31, FU-32, FU-33, FU-35, FU-38, FU-39 each given an explicit disposition | Done — see [follow-ups.md](follow-ups.md) |
+| 19 | FU-31, FU-32, FU-33, FU-34, FU-35, FU-38, FU-39 each given an explicit disposition | Done — see [follow-ups.md](follow-ups.md) |
 | 20 | FU-40, FU-41 given explicit persistence-only support with no premature enforcement claimed | Done |
 | 21 | Policy-reference silent-omission behaviour replaced with an accounted design | Done — `incident_policy_references` in [incident-persistence.md](../architecture/incident-persistence.md) |
 | 22 | Test-database and integration-test plan defined | Done — [phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md) |

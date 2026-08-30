@@ -63,7 +63,17 @@ delivers, listed explicitly so "RLS-ready" is not read as "RLS-equivalent":
 2. **Composite tenant-aware foreign keys** — a foreign key referencing
    another tenant-owned table includes `tenant_id` in the key, so a
    cross-tenant foreign-key reference is structurally rejected by the
-   database, not only by application logic.
+   database, not only by application logic. **Made concrete 2026-08-30**
+   in [incident-persistence.md](../incident-persistence.md)'s "Tenant-aware
+   composite foreign keys" section: `incidents` gains
+   `UNIQUE (tenant_id, incident_id)` as the candidate key every
+   tenant-owned child table's foreign key references, and every table
+   that references a specific incident does so through the composite
+   pair rather than `incident_id` alone. Not every table gets this
+   foreign key — a table using a polymorphic reference
+   (`incident_audit`, `incident_idempotency`, `incident_outbox`,
+   `incident_dead_letter`) cannot target one fixed parent table by
+   design, and that document states why for each.
 3. **Application queries always tenant-scoped** — the existing 5A
    pattern (tenant context as a repository constructor argument, making
    a tenant-less query inexpressible) is the Phase 5B-0 seam's
@@ -117,8 +127,10 @@ first-pass trait happens to cover.
 
 ## Follow-Up
 
-- [ ] Add the composite tenant-aware foreign key to every relevant table
-      in the Phase 5B-2 schema.
+- [x] Add the composite tenant-aware foreign key to every relevant table
+      in the Phase 5B-2 schema — **designed 2026-08-30** in
+      [incident-persistence.md](../incident-persistence.md); still to be
+      implemented as actual DDL at Phase 5B-2.
 - [ ] Provision the application runtime role without `BYPASSRLS` at
       Phase 5B-2, even though no policy exists yet to bypass.
 - [ ] Extend the cross-tenant isolation integration-test suite to cover
