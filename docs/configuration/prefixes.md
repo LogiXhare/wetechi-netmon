@@ -48,7 +48,7 @@ prevent the collector from being useful for raw traffic totals.
 ## Full Reference Example
 
 ```bash
-export WETECHINETMON_COLLECTOR_LOCAL_PREFIXES="10.0.0.0/8@wetechi@core,172.30.172.0/24@wetechi@collector-segment,2001:db8::/32@wetechi@core-v6"
+export WETECHINETMON_COLLECTOR_LOCAL_PREFIXES="10.0.0.0/8@wetechi@core,203.0.113.0/24@wetechi@collector-segment,2001:db8::/32@wetechi@core-v6"
 ```
 
 ## Known Limitations

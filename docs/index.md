@@ -6,10 +6,13 @@ WetechiNetMon is an independently engineered open network telemetry, DDoS
 detection, traffic analytics, and policy-controlled mitigation platform,
 built by WeTechi Solutions.
 
-> **Project status: Phase 1 — repository and documentation foundation.**
-> No software has shipped yet. See [product-charter.md](product-charter.md)
-> and the repository [README](https://github.com/badshashorif/wetechi-netmon#readme)
-> for full context.
+> **Project status: Development Preview.** Phases 0–4 and Phase 5A are
+> merged, with real, tested Rust source (531 workspace tests). Phase 5B
+> (PostgreSQL persistence) is in planning. There is no packaged release,
+> HTTP API, or notification/mitigation implementation yet. See
+> [product-charter.md](product-charter.md) and the repository
+> [README](https://github.com/badshashorif/wetechi-netmon#readme) for
+> full context.
 
 ## Start Here
 

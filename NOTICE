@@ -5,15 +5,15 @@ This product is licensed under the Apache License, Version 2.0. See the
 LICENSE file for the full license text.
 
 ============================================================
-LICENSE STATUS WARNING
+LICENSE STATUS
 ============================================================
 
-The license applied to this repository (Apache License 2.0) is a
-RECOMMENDATION made during Phase 1 of the project's phased delivery
-process, pending explicit confirmation by WeTechi Solutions. See
-docs/license-recommendation.md and docs/blocking-questions.md (BQ-1)
-for full context before relying on this NOTICE or the LICENSE file as
-final for any commercial or legal purpose.
+The license applied to this repository (Apache License 2.0) was a
+recommendation made during Phase 1 of the project's phased delivery
+process; it was resolved and explicitly confirmed by WeTechi Solutions
+on 2026-08-21 (BQ-1). See docs/blocking-questions.md and
+docs/license-recommendation.md for the full decision record, including
+the permissive-license fork risk that was accepted knowingly.
 
 ============================================================
 CLEAN-ROOM STATEMENT
