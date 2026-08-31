@@ -18,17 +18,18 @@ Include, where possible:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce, or a proof of concept
-- The affected component/version (or, at this stage, the affected
-  document/config if no software exists yet)
+- The affected component/version (or the affected document/config, if
+  the report concerns documentation rather than source)
 - Whether you believe this affects the reference lab deployment, a
   production deployment, or the software generically
 
 ## Response Process
 
-As this project is currently in Phase 1 (no software has shipped yet),
-there is no formal SLA for response time. Once the first software release
-ships (targeting v0.2.0, the IPFIX collector MVP), this policy will be
-updated with:
+This project has real, merged, tested source (Phases 0–4 and 5A) but has
+not yet cut a versioned release (no Git tag, no GitHub Release) — see
+[Project Status](https://github.com/badshashorif/wetechi-netmon#readme).
+There is no formal SLA for response time yet. Once the first versioned
+release ships, this policy will be updated with:
 
 - Acknowledgment time target
 - Triage and severity classification (e.g., CVSS-based)

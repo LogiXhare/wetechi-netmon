@@ -18,7 +18,7 @@ yet). Source of truth: `crates/collector/src/config.rs`.
 | Type | `host:port` (UDP) |
 | Default | `0.0.0.0:2055` |
 | Allowed values | Any value parseable as a Rust `std::net::SocketAddr` |
-| Example | `WETECHINETMON_COLLECTOR_BIND=172.30.172.50:2055` |
+| Example | `WETECHINETMON_COLLECTOR_BIND=203.0.113.2:2055` |
 | Security implications | This is the collector's untrusted-input surface (see [../security-principles.md](../security-principles.md)) — binding `0.0.0.0` exposes it on every interface; bind to a specific management/telemetry interface in production. |
 | Reload requirement | Restart required — read once at process startup. |
 | Related metrics | `wetechinetmon_collector_flow_datagrams_received_total`, `wetechinetmon_collector_parser_failures_total` |

@@ -61,7 +61,7 @@ product. See [clean-room-boundary.md](clean-room-boundary.md).
 
 ## 5. Business Objectives
 
-1. Internal network monitoring for WeTechi/GCL infrastructure
+1. Internal network monitoring for WeTechi Solutions' own and affiliated ISP infrastructure
 2. ISP infrastructure monitoring
 3. Enterprise customer monitoring
 4. Data-center traffic visibility
@@ -84,7 +84,7 @@ DDoS monitoring, policy-controlled mitigation.
 | Role | Interest |
 |---|---|
 | WeTechi Solutions (product owner) | Commercial product, internal use, IP ownership |
-| ISP/NOC operators (e.g. GCL) | Operational telemetry, DDoS defense |
+| ISP/NOC operators | Operational telemetry, DDoS defense |
 | Enterprise/data-center customers | Traffic visibility, managed mitigation |
 | Open-source contributors | Community edition adoption |
 | Claude Code (execution agent) | Phased, documented, tested delivery |

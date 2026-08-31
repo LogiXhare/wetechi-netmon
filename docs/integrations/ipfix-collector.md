@@ -32,8 +32,8 @@ port from `WETECHINETMON_COLLECTOR_BIND` (default `2055`).
 The reference lab configuration in
 `prompts/CLAUDE_MASTER_PROMPT.md` §4 uses:
 
-- Router telemetry/BGP IP: `172.30.172.49`
-- Collector IP: `172.30.172.50/30`
+- Router telemetry/BGP IP: `203.0.113.1`
+- Collector IP: `203.0.113.2/30`
 - Protocol: IPFIX, UDP port `2055`
 
 These are **lab reference values only** — never hardcode them; configure
