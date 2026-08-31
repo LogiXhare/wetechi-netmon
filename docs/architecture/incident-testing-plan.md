@@ -109,9 +109,16 @@ Atomicity is the centre of this section, and it must be tested by
 - **An audit write failure rolls back the mutation.** The mutation must
   not be visible afterwards.
 - Optimistic concurrency: conflicting updates produce exactly one winner.
-- The partial unique index actually prevents two open incidents per
-  correlation key, tested with genuine concurrent inserts rather than
-  sequential ones.
+- **Each of the three target-specific partial unique indexes**
+  (`incidents_active_host`, `incidents_active_network`,
+  `incidents_active_hostgroup` — corrected from a single generic index,
+  see [incident-persistence.md](incident-persistence.md)'s "Active-
+  incident invariant" section — **not** ADR 0032, which is cited
+  incorrectly here as of the original planning pass; ADR 0032 covers
+  tenant isolation and RLS readiness, not the typed-target index design)
+  actually prevents two active incidents per correlation key, tested
+  with genuine concurrent inserts rather than sequential ones, for each
+  target type independently.
 - Duplicate `dedup_key` insert raises the constraint and is handled as a
   duplicate rather than an error.
 - Idempotency: same key and body replays; same key, different body
@@ -120,10 +127,86 @@ Atomicity is the centre of this section, and it must be tested by
 - Retry after a transient failure does not double-apply.
 - Database outage produces `503` and no partial state.
 - Migrations apply cleanly forward, and the incident schema version is
-  recorded.
+  recorded, across the full supported version matrix
+  ([ADR 0025](decisions/0025-phase5b-postgresql-version-support.md):
+  15, 16, 17, 18).
 - Retention deletes what it should and **never cascades into audit**.
 - Tenant isolation at the repository layer: a tenant-less query cannot be
   constructed.
+
+### Phase 5B additions (2026-08-24 planning)
+
+- **Seam-extraction regression:** all 531 existing Phase 5A tests remain
+  green against the extracted repository seam (Milestone 5B-0), proving
+  the refactor changed no behaviour — see
+  [ADR 0029](decisions/0029-phase5b-repository-and-unit-of-work-seam.md).
+- **Aggregate reconstitution:** `Incident::reconstitute` rejects a
+  structurally invalid snapshot (e.g. `state_before_recovering` set
+  while `state != Recovering`) rather than silently accepting it — see
+  [ADR 0030](decisions/0030-phase5b-aggregate-reconstitution.md).
+- **Clock-skew contract:** a decision timestamp earlier than the
+  persisted reference does not clamp, does not reopen, does not create a
+  duplicate incident, and returns a structured error — see
+  [ADR 0031](decisions/0031-phase5b-durable-time.md).
+- **FU-38 acceptance gate:** the table-driven "every command × every
+  illegal source state" test exercises `close_internal` and
+  `reopen_incident_internal` directly, post-hardening.
+- **UUIDv7 round trip:** generated identity round-trips through
+  PostgreSQL's native `uuid` column and back without loss.
+- **`incident_policy_references` overflow behaviour:** a 65th distinct
+  policy on one incident is recorded, not silently dropped — either
+  normalized without a cap, or with an explicit omitted-count increment,
+  never a silent no-op.
+- **Outbox lease and dead-letter:** a claimed-but-never-published row is
+  reclaimed by a different consumer after its lease expires; a row that
+  exceeds its retry limit transitions to dead-letter, never retries
+  indefinitely.
+- **Duplicate-consumer idempotency:** a re-claimed and re-published
+  outbox event does not corrupt downstream state under at-least-once
+  delivery.
+- **Windows-GNU and Linux builds** of the full Phase 5B suite, per
+  [ADR 0018](decisions/0018-phase5-dependency-selection.md)'s
+  non-negotiable cross-platform requirement.
+
+### Tenant-aware composite foreign keys (added 2026-08-30)
+
+Per [incident-persistence.md](incident-persistence.md)'s "Tenant-aware
+composite foreign keys" section and
+[ADR 0032](decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md):
+
+- **Same-tenant child reference succeeds:** inserting a timeline, note,
+  detection-event, policy-reference, assignment, or tag row whose
+  `(tenant_id, incident_id)` matches a real incident's own
+  `(tenant_id, incident_id)` succeeds normally.
+- **Cross-tenant child reference fails:** inserting the same row with
+  the *correct* `incident_id` but the *wrong* `tenant_id` (or vice
+  versa) is rejected by the foreign-key constraint itself
+  (`23503`), not merely by an application-level check — proving the
+  composite key, not a single-column one, is what is actually enforced.
+- **Note supersession is tenant-checked:** a note cannot be recorded as
+  superseding a note belonging to a different tenant — the
+  `FOREIGN KEY (tenant_id, supersedes_note_id) REFERENCES
+  incident_notes (tenant_id, note_id)` rejects a cross-tenant
+  `supersedes_note_id`, even when the referencing note's own tenant
+  matches its own incident correctly.
+- **Outbox and audit cannot reference another tenant's incident, at the
+  application layer:** since `incident_outbox` and `incident_audit`
+  are deliberately not foreign-key-constrained to `incidents` (see
+  those tables' own sections in
+  [incident-persistence.md](incident-persistence.md) for why), this
+  invariant is application-enforced, not database-enforced — the test
+  asserts the repository layer refuses to write an outbox or audit row
+  whose `aggregate_id`/`resource_id` names an incident belonging to a
+  different tenant than the row's own `tenant_id`, closing the gap a
+  missing foreign key leaves open for exactly these two tables.
+- **Archival preserves required audit history:** purging a closed
+  incident past its 24-month retention window (which cascades to its
+  timeline, notes, detection events, policy references, assignments,
+  and tags via `ON DELETE CASCADE`) does **not** remove that incident's
+  `incident_audit` rows — audit has no foreign key to `incidents` and
+  therefore nothing to cascade from, and the retention table's own
+  24-month-minimum audit window is independently verified to still hold
+  the rows after the incident itself is gone.
 
 ## API tests
 

@@ -139,10 +139,16 @@ slow, stalled means stopped.
 
 ## Backup and restore
 
-Both stores need testing, not assuming — NFR-2.
+Both stores need testing, not assuming — NFR-2. **Technical design
+targets (2026-08-24 Phase 5B planning), not an SLA commitment or legal
+requirement:** RPO 15 minutes, RTO 4 hours — see
+[phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md).
 
 - **PostgreSQL** is the source of truth. Point-in-time recovery
-  configured; restore tested on a schedule, not only after a failure.
+  (continuous WAL archiving, sized against the 15-minute RPO target)
+  plus logical backups (`pg_dump`); restore tested on a schedule, not
+  only after a failure. A backup is taken and verified **before every
+  migration** (see Upgrades below).
 - **ClickHouse** analytics are reconstructible from the outbox only
   within its retention. Beyond that, incident analytics history is lost
   while operational history survives. That trade-off should be stated in
@@ -150,11 +156,64 @@ Both stores need testing, not assuming — NFR-2.
 - **A restore that has never been tested is not a backup.** This is
   called out because it is the single most common way an operations plan
   turns out to be fiction.
+- **Outbox rows in flight at backup time** are recovered from `pending`
+  on restore, the same behaviour as a service restart — no special
+  restore-time handling needed, per
+  [incident-persistence.md](../architecture/incident-persistence.md)'s
+  existing failure-behaviour table.
+- **Tenant-scoped restore is not supported in Phase 5B** — restore is a
+  full-database operation; a single-tenant export/restore path is a
+  later design, not assumed to exist (see
+  [ADR 0032](../architecture/decisions/0032-phase5b-tenant-isolation-and-rls-readiness.md)).
+
+## Connection pool health
+
+**Alert:** `pool_wait` climbing, or `pool_timeout` incrementing.
+
+A pool near exhaustion degrades every operator command and every
+detection-event ingestion at once — it is a whole-service brownout, not
+a single-feature failure.
+
+1. Is `pool_in_use` near `max_size`? Check for a long-running query or
+   transaction holding connections open longer than expected.
+2. Is `pool_idle` unexpectedly low even under light load? A leaked
+   connection (acquired, never released) is the usual cause — check for
+   an error path that returns early without releasing.
+3. **Do not** raise `max_size` reflexively — a larger pool against an
+   under-provisioned PostgreSQL instance moves the bottleneck to the
+   database's own `max_connections`, it does not remove it.
+
+A sustained pool-exhaustion condition should surface as `503` to
+callers, per the bounded-timeout requirement in
+[ADR 0022](../architecture/decisions/0022-phase5b-connection-pool.md) —
+never as an indefinite hang.
+
+## Migration locking
+
+**Alert:** a deployment startup that hangs at the migration step.
+
+`refinery`'s migration-runner locking (or an explicit PostgreSQL
+advisory lock wrapping it, per
+[ADR 0024](../architecture/decisions/0024-phase5b-migration-framework.md))
+prevents two service instances from applying the same migration twice
+during a rolling deployment. A hang here usually means a prior deploy's
+instance crashed mid-migration and still holds the lock.
+
+1. Confirm no other instance is genuinely mid-migration before clearing
+   a lock by hand.
+2. **Never** manually mark a migration as applied without confirming its
+   statements actually ran — a checksummed migration system exists
+   specifically so this class of manual intervention is rare and
+   auditable, not routine.
 
 ## Upgrades
 
 1. Back up PostgreSQL. Verify the backup.
-2. Apply migrations — forward-only; no down-migrations in production.
+2. Apply migrations — **forward-only**; no down-migrations in
+   production. Rollback is roll-forward (a corrective migration) or
+   restore-from-backup, never an assumed automatic reverse of a
+   destructive change (see
+   [ADR 0024](../architecture/decisions/0024-phase5b-migration-framework.md)).
 3. Start the new version; confirm the incident schema version.
 4. Watch `events_rejected_total` for schema-version quarantines, which
    indicate a detector newer than the incident manager.

@@ -1,7 +1,9 @@
 # Phase 5 Implementation Plan
 
-Status: **Planning only.** No milestone below has started. Part of the
-[Phase 5 plan](../architecture/phase5-incident-management-plan.md).
+Status: **Milestone 5A merged** (PR #16, merge commit `2cd116d`,
+2026-08-24). **Milestone 5B: Stage A/B planning complete** (2026-08-24,
+this document's 5B section below), implementation not started. Part of
+the [Phase 5 plan](../architecture/phase5-incident-management-plan.md).
 
 Six milestones, each independently reviewable and independently
 mergeable, each ending green. The ordering has one governing property:
@@ -44,8 +46,15 @@ New crate `wetechinetmon-incident`. Domain types from the
 [domain model](../architecture/incident-domain-model.md); the state
 machine with a guard refusing illegal edges; correlation key construction
 and canonicalisation; category derivation; the `Clock` seam reused from
-the detector; repository *traits* with in-memory implementations;
-`CorrelationStrategy` and `AssignmentPolicy` seams from ADR 0017.
+the detector; a bounded in-memory unit of work; `CorrelationStrategy` and
+`AssignmentPolicy` seams from ADR 0017.
+
+**Correction (2026-08-24, Phase 5B Stage A planning):** this line
+originally read "repository *traits* with in-memory implementations."
+Verified against actual source, that was not delivered — see the
+**Status** paragraph below and
+[ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
+for the finding and the Milestone 5B-0 correction.
 
 Tests: all domain tests, all state-machine tests, and property tests
 1–13 from the [testing plan](../architecture/incident-testing-plan.md).
@@ -57,7 +66,9 @@ green.
 **Reviewable because** it is pure logic with no infrastructure, so review
 attention goes to the rules rather than to wiring.
 
-**Status: implemented on `feat/phase5a-incident-domain`, not yet merged.**
+**Status: merged to `main`** (PR #16, merge commit `2cd116d`,
+2026-08-24), superseding the "not yet merged" note this paragraph
+originally carried.
 New crate `wetechinetmon-incident`, dependency-free beyond the workspace
 (a path dependency on `wetechinetmon-detector` for its published event
 vocabulary and clock trait only — see the crate's `lib.rs` module doc for
@@ -102,9 +113,13 @@ explicitly deferred with rationale on 2026-08-24; the
 [complete finding register](follow-ups.md#phase-5a-focused-re-review-finding-register-2026-08-24)
 is the authoritative record of what remains outstanding, superseding the
 Medium/low list in **FU-30** through **FU-37** above (kept current, not
-duplicated). Awaiting one brief final sanity review and a mandatory
-MkDocs strict validation before publication; Milestone 5B has not
-started.
+duplicated), and now extended through **FU-41** (see the register). The
+final sanity review, publication, and merge (PR #16, merge commit
+`2cd116d`) all completed 2026-08-24. Milestone 5B has not started
+implementation; its planning (this document's 5B section, the ADR series
+0019–0033, and
+[phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md))
+completed the same day.
 
 **5A is database-independent and dependency-free.** It may implement
 incident domain types, the seven-state lifecycle, correlation, reopen
@@ -120,39 +135,96 @@ has been drawn wrong and that is the thing to fix, not the constraint.
 
 ## Milestone 5B — PostgreSQL persistence
 
-**BQ-7 resolved architecturally; 5B does not start until every gate below
-is met.** BQ-7 approved the *capability*; these gates are what turns that
-into a specific, defensible set of crates.
+**BQ-7 resolved architecturally; Stage A/B planning complete 2026-08-24.**
+BQ-7 approved the *capability*; Stage A researched and Stage B decided
+the specific, defensible set of crates and the schema/transaction design
+— see [phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md)
+and ADRs [0019](../architecture/decisions/0019-phase5b-uuidv7-identity-generation.md)–[0033](../architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md).
+**Implementation has not started.** 5B is now known to be a
+**refactor-and-implement** milestone, not implement-only — Stage A found
+5A did not deliver the repository seam this document previously assumed
+(see the Milestone 5A correction above and
+[ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)).
+
+### 5B-0 — Seam extraction (no SQL, no dependency)
+
+Persistence contract extraction from `IncidentUnitOfWork`'s current
+concrete shape; `IncidentSnapshot` and `Incident::reconstitute` with
+invariant validation ([ADR 0030](../architecture/decisions/0030-phase5b-aggregate-reconstitution.md));
+durable-time API shape ([ADR 0031](../architecture/decisions/0031-phase5b-durable-time.md));
+**FU-38** guard hardening (move the transition check inside
+`close_internal`/`reopen_incident_internal` themselves); the in-memory
+adapter migrated to the new seam as its reference implementation.
+
+**Exit:** all 531 existing tests remain green throughout — this is a
+refactor, not a behaviour change; the table-driven illegal-source-state
+test FU-38 specifies passes for both hardened functions.
+
+### 5B-1 — Dependency probe
+
+Entry gates, all required before any of the six conditionally-accepted
+crates ([ADR 0019](../architecture/decisions/0019-phase5b-uuidv7-identity-generation.md),
+[0020](../architecture/decisions/0020-phase5b-postgresql-client.md),
+[0022](../architecture/decisions/0022-phase5b-connection-pool.md),
+[0023](../architecture/decisions/0023-phase5b-postgresql-tls.md),
+[0024](../architecture/decisions/0024-phase5b-migration-framework.md))
+is actually added:
 
 | # | Entry gate |
 |---|---|
-| 1 | UUID crate ADR (from [ADR 0013](../architecture/decisions/0013-incident-identity.md), still conditional) |
-| 2 | PostgreSQL client ADR |
-| 3 | Async runtime ADR — the runtime follows from the frameworks, never the reverse |
-| 4 | Connection-pool decision, whether in-driver or separate |
-| 5 | Migration-framework decision |
-| 6 | **Verified registry metadata** for every candidate — queried, not recalled |
-| 7 | Dependency licence review against the Apache-2.0 core |
-| 8 | `cargo tree` — a **measured** transitive closure, not an estimate |
-| 9 | `cargo audit` clean, with no open unfixed advisory |
-| 10 | **Windows build** — the primary development machine |
-| 11 | **Linux build** — the deployment target |
-| 12 | [Dependency licence matrix](../dependency-license-matrix.md) updated |
-| 13 | `NOTICE` reviewed and updated where a licence requires attribution |
+| 1 | **Verified registry metadata** for every candidate — queried, not recalled (done in Stage A; see the ADRs above and [dependency-license-matrix.md](../dependency-license-matrix.md) rows 32–37) |
+| 2 | Dependency licence review against the Apache-2.0 core (done in Stage A) |
+| 3 | `cargo tree` — a **measured** transitive closure for the actual selected feature set, not an estimate |
+| 4 | `cargo audit` clean, with no open unfixed advisory |
+| 5 | `unsafe` inventory measured, not assumed absent |
+| 6 | **Windows-GNU build** — the primary development machine |
+| 7 | **Linux build** — the deployment target |
+| 8 | [Dependency licence matrix](../dependency-license-matrix.md) updated from "Conditionally Approved" to "Approved" or "Rejected" |
+| 9 | `NOTICE` reviewed and updated where a licence requires attribution |
 
-Gates 6 and 8 exist because every version and licence figure in these
-planning documents was written from knowledge rather than from a registry
-query. They are plausible and they are not evidence. See
+Gates 3–7 exist because every transitive-closure, `unsafe`, and
+cross-platform-build figure in Stage A's research is what could be
+verified from registry/repository metadata **without adding the
+dependency** — actually measuring them requires adding it, which is
+exactly why this milestone exists as a distinct, reversible step before
+5B-2 onward depends on the result. See
 [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md).
 
-Schema and forward-only migrations for all ten tables; the partial unique
-index; real repository implementations; optimistic concurrency;
-idempotency with fingerprints; the transactional
-state-plus-timeline-plus-audit-plus-outbox write; retention jobs.
+### 5B-2 — Schema and migrations
 
-Tests: all persistence tests, with **injected failure at each of the four
-commit points** proving all-or-nothing; genuine concurrent inserts
-proving the partial unique index holds; migrations applying cleanly.
+Forward-only `refinery` migrations, in reviewable steps (extensions →
+`incidents` → detection links → timeline → audit → notes/tags/
+assignments → `incident_policy_references` / `incident_number_allocators`
+→ idempotency → outbox/dead-letter → constraints/indexes → RLS-ready
+roles), per [incident-persistence.md](../architecture/incident-persistence.md)
+and [ADR 0024](../architecture/decisions/0024-phase5b-migration-framework.md).
+
+### 5B-3 — Repository implementations
+
+Real repository implementations against the 5B-0 seam; optimistic
+concurrency ([ADR 0026](../architecture/decisions/0026-phase5b-transaction-isolation.md));
+idempotency with the persisted fingerprint
+([ADR 0028](../architecture/decisions/0028-phase5b-idempotency-fingerprint.md));
+the transactional state-plus-timeline-plus-audit-plus-outbox write; the
+sync/async bridge ([ADR 0021](../architecture/decisions/0021-phase5b-async-runtime-boundary.md)).
+
+### 5B-4 — Outbox and retention
+
+Claim/lease/retry/dead-letter implementation
+([ADR 0033](../architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md));
+retention and cleanup jobs per
+[incident-persistence.md](../architecture/incident-persistence.md)'s
+retention table.
+
+### 5B-5 — Integration and performance tests
+
+Tests: all persistence tests, with **injected failure at each commit
+point** proving all-or-nothing; genuine concurrent inserts proving each
+of the three target-specific partial unique indexes holds; migrations
+applying cleanly against all four tested PostgreSQL versions
+([ADR 0025](../architecture/decisions/0025-phase5b-postgresql-version-support.md));
+the full required-integration-test list in
+[phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md).
 
 **Exit:** atomicity proven by failure injection, not by observing
 success; tenant-less queries impossible to construct; retention never

@@ -117,9 +117,15 @@ subject to a focused dependency and licence review during implementation.
 - The `uuid` crate is **not** added by this decision — it goes through
   [ADR 0018](architecture/decisions/0018-phase5-dependency-selection.md).
 
-**Not decided:** whether the incident number resets annually or runs
-continuously per tenant. Affects a display value, not the primary key, so
-it does not block 5A. Tracked as **FU-24**.
+**Not decided at the time of this BQ-5 record:** whether the incident
+number resets annually or runs continuously per tenant. Affected a
+display value, not the primary key, so it did not block 5A. Tracked as
+**FU-24**.
+
+**FU-24 resolved 2026-08-24, during Phase 5B planning:** continuous
+per-tenant sequence, no annual reset. See
+[ADR 0013](architecture/decisions/0013-incident-identity.md#phase-5b-resolution-incident-number-format-2026-08-24)
+and [follow-ups.md](development/follow-ups.md).
 
 Recorded in
 [ADR 0013](architecture/decisions/0013-incident-identity.md).

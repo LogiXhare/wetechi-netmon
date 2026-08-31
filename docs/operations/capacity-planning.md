@@ -72,11 +72,50 @@ outage) or treat ClickHouse analytics data as best-effort and rely on
 Prometheus metrics (which are not subject to this trade-off) for
 operational alerting during an outage.
 
+## PostgreSQL (Phase 5B, planning only — nothing below is measured)
+
+Added 2026-08-24 during Phase 5B PostgreSQL-persistence planning. Every
+figure here is a **planning input**, not a benchmark result — the
+performance-test plan in
+[phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md)
+defines what will actually be measured at Milestone 5B-5.
+
+- **Row-count growth is unbounded by design** for `incidents` (retained
+  indefinitely while open, 24 months after close),
+  `incident_detection_events` (one row per linked event), and
+  `incident_timeline`/`incident_audit` (append-only, no cap in Phase 5B —
+  `TIMELINE_ENTRY_LIMIT` remains an unenforced constant, see
+  [FU-32](../development/follow-ups.md)). Real growth depends entirely on
+  attack volume and tenant count, neither of which this planning pass
+  has a production figure for.
+- **Connection-pool sizing** (`max_size`, `create_timeout`,
+  `wait_timeout` on `deadpool-postgres`,
+  [ADR 0022](../architecture/decisions/0022-phase5b-connection-pool.md))
+  has **no default asserted here** — sizing must be informed by the
+  Milestone 5B-5 performance tests, not guessed at in planning.
+- **Outbox lease duration**
+  ([ADR 0033](../architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md))
+  is similarly deferred to implementation time, informed by measured
+  consumer processing latency once a consumer exists.
+- **Index growth:** three target-specific partial unique indexes
+  (`incidents_active_host`, `incidents_active_network`,
+  `incidents_active_hostgroup`) are bounded by the *active* incident
+  count, not the historical total — partial indexes only index rows
+  matching their predicate, so this stays small relative to the
+  full-table row count regardless of history depth.
+- **RPO/RTO** technical design targets (15 minutes / 4 hours,
+  [phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md))
+  inform backup frequency and restore-procedure scope, not a capacity
+  figure directly.
+
 ## What This Document Does Not Claim
 
 - No sustained-throughput benchmark has been run.
 - No memory-under-load measurement has been taken.
 - No latency-under-load (P50/P95/P99) figures exist yet.
+- No PostgreSQL transaction-latency, pool-sizing, or index-growth
+  measurement has been taken — Phase 5B has not been implemented.
 
-All of the above are legitimate Phase 9 deliverables once a documented
-test machine and load-generation setup exist.
+All of the above are legitimate Phase 9 (or Phase 5B-5, for the
+PostgreSQL figures specifically) deliverables once a documented test
+machine and load-generation setup exist.

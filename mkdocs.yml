@@ -42,6 +42,19 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+# Added 2026-08-30 so a future broken internal `#anchor` fragment fails
+# `mkdocs build --strict` instead of only appearing as an INFO line that
+# is easy to miss — this is how L2's broken incident-number anchor was
+# actually found. The real MkDocs 1.6.1 config key is the nested
+# `validation.links.anchors` (verified against the installed version's
+# `mkdocs/config/defaults.py`), not a flat `validation.anchors`. This
+# only checks internal doc-to-doc anchor links — it does not resolve or
+# validate external URLs, so it cannot produce a false failure on an
+# intentionally external link.
+validation:
+  links:
+    anchors: warn
+
 nav:
   - Home: index.md
   - Product Foundation:
@@ -67,6 +80,7 @@ nav:
       - Incident Correlation: architecture/incident-correlation.md
       - Incident State Machine: architecture/incident-state-machine.md
       - Incident Persistence: architecture/incident-persistence.md
+      - Phase 5B PostgreSQL Persistence Plan: architecture/phase5b-postgresql-persistence-plan.md
       - Incident Security Model: architecture/incident-security-model.md
       - Incident API Design: architecture/incident-api-plan.md
       - Incident CLI Plan: architecture/incident-cli-plan.md

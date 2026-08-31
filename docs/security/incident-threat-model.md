@@ -6,7 +6,9 @@ Nothing here is implemented; every control is a requirement on the future
 implementation, and every one has a corresponding entry in the
 [testing plan](../architecture/incident-testing-plan.md).
 
-Twenty-four threats. Each names the asset, the attacker, the path, a
+Twenty-nine threats (twenty-four from Phase 5 planning, five added
+2026-08-24 during Phase 5B PostgreSQL-persistence planning — T-25
+through T-29). Each names the asset, the attacker, the path, a
 preventive control, a detective control, the test that must exist, and
 the residual risk that remains after both controls.
 
@@ -371,16 +373,140 @@ added later is enough.
 
 ---
 
+## Phase 5B additions (2026-08-24 planning)
+
+Five threats specific to durable persistence, none present while the
+domain was in-memory-only.
+
+## T-25 Clock-skew-induced reopen or duplicate-incident bypass
+
+**Asset** correctness of the reopen window (BQ-9) · **Attacker** a
+misconfigured NTP client, or EXT via a compromised database connection
+
+**Path** A decision timestamp (from `transaction_timestamp()`) earlier
+than the persisted reference it is compared against — from clock skew,
+not necessarily malice — silently clamped or misinterpreted, incorrectly
+reopening an incident outside its true window, or incorrectly creating a
+duplicate.
+
+**Prevent** The durable-time contract
+([ADR 0031](../architecture/decisions/0031-phase5b-durable-time.md))
+never clamps silently, never reopens, and never creates a duplicate
+incident on an unreliable comparison — it returns a structured
+clock-skew error instead. **Detect** a bounded metric and structured log
+entry on every occurrence. **Test** the clock-skew integration test in
+[incident-testing-plan.md](../architecture/incident-testing-plan.md).
+**Residual** Recurring skew degrades availability (commands failing
+closed) rather than correctness — an accepted trade, consistent with
+this project's fail-closed posture elsewhere.
+
+## T-26 Connection-pool exhaustion denial of service
+
+**Asset** availability · **Attacker** EXT (via ingestion volume), or an
+own goal (a leaked connection)
+
+**Path** Every pooled connection held by slow or stuck queries, or by a
+code path that acquires without releasing, starving all subsequent
+requests.
+
+**Prevent** Bounded `acquire`/`create` timeouts on the pool
+([ADR 0022](../architecture/decisions/0022-phase5b-connection-pool.md))
+— an unbounded wait becomes the same `503` backpressure
+[incident-persistence.md](../architecture/incident-persistence.md)
+already requires for "queue full", never a silent indefinite block.
+**Detect** `pool_wait`, `pool_timeout`, `pool_in_use` metrics. **Test** a
+pool-exhaustion integration test asserting `503` rather than a hang.
+**Residual** A sustained ingestion flood that outpaces the pool still
+degrades ingestion latency by design — backpressure, not data loss.
+
+## T-27 Corrupted or hand-crafted row bypassing domain invariants
+
+**Asset** aggregate integrity · **Attacker** an attacker with direct
+database write access, or a bug in a future second writer
+
+**Path** A row inserted or edited outside the application's own command
+paths — direct SQL, a migration bug, or a future second service writing
+to the same tables — produces a structurally invalid `Incident` (e.g.
+`ever_critical: false` for a `severity: critical` row) that the
+in-memory domain's own construction guards would never have permitted.
+
+**Prevent** `Incident::reconstitute`
+([ADR 0030](../architecture/decisions/0030-phase5b-aggregate-reconstitution.md))
+is the **only** path from a persisted row to a live `Incident`, and it
+validates structural invariants rather than accepting any row shape;
+`CHECK` constraints at the database layer reject some invalid states
+before they are even stored. **Detect** a `reconstitute` failure is
+itself a loggable, alertable event — an aggregate that cannot be loaded
+is worse than one that is merely wrong, and must be visible immediately.
+**Test** a table-driven test constructing invalid snapshots and asserting
+`reconstitute` refuses each one. **Residual** Database-level write access
+is already a trusted-boundary assumption (see the "attacker with
+database or host access" note in the summary below); this control
+narrows what such access can silently corrupt without detection, not
+what it can access at all.
+
+## T-28 TLS downgrade or certificate-verification bypass in production
+
+**Asset** confidentiality and integrity of the PostgreSQL connection ·
+**Attacker** network-position (MITM)
+
+**Path** A production deployment accidentally configured with
+certificate verification disabled, or a code path that falls back to
+plaintext on a TLS failure instead of refusing the connection.
+
+**Prevent** [ADR 0023](../architecture/decisions/0023-phase5b-postgresql-tls.md)
+requires full certificate and hostname verification in production, with
+**no code path** that disables it outside an explicitly isolated test
+helper; a TLS handshake failure is classified as a connection failure
+(fail closed), never a silent plaintext fallback. **Detect** a TLS
+handshake failure is logged and counted, distinguishable from other
+connection failures. **Test** a production-configuration test asserting
+the connection string always requires `sslmode=verify-full` or
+equivalent outside the explicitly loopback-only test path. **Residual**
+A deliberately misconfigured deployment (an operator who overrides the
+production default) is outside this control's reach — documentation, not
+code, is the remaining defense there.
+
+## T-29 Outbox lease starvation or duplicate-delivery abuse
+
+**Asset** availability and correctness of the analytics export path ·
+**Attacker** a crashed or slow consumer, or a bug in the lease logic
+
+**Path** A claimed outbox row whose consumer crashes without releasing
+it stalls that event indefinitely if no lease-expiry mechanism exists;
+conversely, an overly aggressive lease-expiry reclaims a row that is
+still being legitimately processed, causing duplicate delivery beyond
+what the downstream consumer's own idempotency can absorb.
+
+**Prevent** [ADR 0033](../architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md)'s
+lease duration bounds how long a claim is honored before reclaim is
+eligible, and the retry-limit-then-dead-letter path bounds how long a
+poison event can consume resources. **Detect** `outbox_pending`,
+`outbox_retries`, `dead_letter_count` metrics — a zero-threshold alert on
+dead-letter, matching the existing runbook posture. **Test** the stale-
+lease-reclaim and duplicate-consumer-idempotency integration tests in
+[incident-testing-plan.md](../architecture/incident-testing-plan.md).
+**Residual** At-least-once delivery is the accepted contract
+([incident-persistence.md](../architecture/incident-persistence.md));
+the downstream consumer must tolerate a duplicate, which the current
+sole consumer (the ClickHouse analytics exporter) already does by
+design.
+
+---
+
 ## Summary of residual risk
 
-Three carry real residual exposure and are added to the
-[risk register](../risk-register.md):
+Four carry real residual exposure and are added to the
+[risk register](../risk-register.md) — corrected 2026-08-30 from
+"Three," stale since R19 was added during the 2026-08-24 Phase 5B
+planning pass:
 
 | Risk | Threat | Why it persists |
 |---|---|---|
 | **R16** | T-05 | Tenant isolation is application-enforced until Phase 8 RLS |
 | **R17** | T-08 | Output escaping cannot be proven until a UI exists (Phase 6) |
 | **R18** | T-22 | Evidence storage is out of scope, so its access model is undesigned |
+| **R19** | T-25 | Recurring clock skew degrades availability by design (fail-closed); eliminating the residual requires infrastructure-level NTP discipline outside this project's control |
 
 The rest reduce to "an attacker with database or host access can do
 anything", which is a hardening problem outside this model, or to

@@ -1,7 +1,7 @@
 # Risk Register
 
-Status: Phase 5 planning
-Last updated: 2026-08-22
+Status: Phase 5A merged; Phase 5B PostgreSQL-persistence planning
+Last updated: 2026-08-24
 
 Scale: Likelihood (L) and Impact (I) rated Low/Medium/High. This register
 is reviewed and updated at the end of every phase per the master prompt's
@@ -27,6 +27,8 @@ phase-summary requirement.
 | R16 | Incident tenant isolation is enforced in application code until Phase 8 adds Row-Level Security, so a single missing tenant predicate leaks another tenant's incidents | M | H | Tenant context is a repository constructor argument, making a tenant-less query inexpressible rather than merely discouraged; `tenant_id` on every table so RLS can be enabled without migration; a dedicated cross-tenant isolation suite runs every endpoint as tenant A against tenant B ([threat model](security/incident-threat-model.md) T-05) |
 | R17 | Operator note content is stored verbatim and could execute as stored XSS once a web UI renders it (Phase 6) | M | M | The API returns JSON only and never HTML, and documents notes as untrusted content. Input sanitisation is deliberately **not** used — it destroys the operator's actual words and gives false assurance. Escaping on output is a Phase 6 acceptance requirement (T-08) |
 | R18 | Evidence attachment has no designed access model, because binary evidence storage is out of Phase 5 scope | L | M | Phase 5 stores evidence *references* only, tenant-scoped and authorized on dereference. Binary storage must not ship before its access model is designed (T-22, FU-23) |
+| R19 | Clock skew between a Phase 5B application instance and PostgreSQL, or between multiple database replicas, could corrupt a reopen or duplicate-incident decision if timestamps were trusted naively | L | H | Durable-time contract ([ADR 0031](architecture/decisions/0031-phase5b-durable-time.md)) never clamps silently, never reopens, never creates a duplicate on an unreliable comparison — returns a structured error instead. Residual: recurring skew degrades availability, not correctness (T-25) |
+| R20 | Phase 5B-0's repository/unit-of-work seam extraction touches `wetechinetmon-incident` code that two Opus 5 adversarial reviews already certified (0 Blocker, 0 High as of the 2026-08-24 merge), so a careless refactor could reintroduce a fixed defect | M | H | Milestone 5B-0 is deliberately dependency-free and SQL-free, so its own correctness is provable by the existing 531 tests remaining green before any persistence code exists ([ADR 0029](architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)); the in-memory adapter becomes the seam's own reference implementation rather than being replaced outright |
 
 ## Review Trigger
 
