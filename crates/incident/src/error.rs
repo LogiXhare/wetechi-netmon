@@ -61,6 +61,12 @@ pub enum IncidentError {
     #[error("state unchanged: already {0:?}")]
     StateUnchanged(IncidentState),
 
+    #[error("clock skew: decision time {decision_micros} precedes reference {reference_micros}")]
+    ClockSkew {
+        reference_micros: i64,
+        decision_micros: i64,
+    },
+
     #[error("correlation conflict: {0}")]
     Correlation(#[from] CorrelationConflict),
 }
@@ -85,6 +91,7 @@ impl IncidentError {
             IncidentError::EvidenceUnavailable => "incident.evidence_unavailable",
             IncidentError::InternalInvariantViolation(_) => "incident.internal_invariant_violation",
             IncidentError::StateUnchanged(_) => "incident.state_unchanged",
+            IncidentError::ClockSkew { .. } => "incident.clock_skew",
             IncidentError::Correlation(_) => "incident.correlation_conflict",
         }
     }

@@ -40,6 +40,7 @@ pub mod clock;
 pub mod closure;
 pub mod command;
 pub mod correlation;
+pub mod durable_time;
 pub mod error;
 pub mod evidence;
 pub mod id;
