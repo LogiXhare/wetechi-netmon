@@ -196,7 +196,7 @@ proptest! {
     /// [`Instant::saturating_duration_since`] and `Duration` is
     /// unsigned — cannot fail for *any* implementation, including one
     /// that silently regressed `last_detected_at`. This version compares
-    /// [`Timestamp::monotonic`] directly (a real `Instant` ordering, with
+    /// the stored `DurableTimestamp`s directly (a real total order, with
     /// no saturating clamp to hide a regression) and additionally asserts
     /// the exact expected value, so a bug that assigned any timestamp
     /// other than the fresh clock reading — regressed, stale, or simply
@@ -233,12 +233,12 @@ proptest! {
             uow.ingest_detection_event(&correlator, &updated).unwrap();
             let now = uow.get(&incident_id).unwrap().last_detected_at;
             prop_assert!(
-                now.monotonic() >= last.monotonic(),
+                now >= last,
                 "last_detected_at's stored reading moved backward: a real, non-saturating regression"
             );
             prop_assert_eq!(
-                now.monotonic(),
-                last.monotonic() + Duration::from_millis(*ms),
+                now,
+                last.checked_plus(Duration::from_millis(*ms)).unwrap(),
                 "a newer or equal-timestamp observation must advance last_detected_at by exactly the clock advance, not by more, less, or not at all"
             );
             last = now;

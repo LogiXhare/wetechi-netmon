@@ -25,9 +25,9 @@ use wetechinetmon_detector::{AddressFamily, MetricKind, ScopeId, ScopeType, Traf
 use crate::assignment::Assignment;
 use crate::authorization::Actor;
 use crate::category::IncidentCategory;
-use crate::clock::Timestamp;
 use crate::closure::ClosureReason;
 use crate::correlation::{CorrelationKey, TenantId};
+use crate::durable_time::DurableTimestamp;
 use crate::evidence::EvidenceLedger;
 use crate::id::IncidentId;
 use crate::limits::{
@@ -115,15 +115,15 @@ pub struct Incident {
     pub(crate) matched_metrics: BTreeSet<MetricKind>,
 
     // Timestamps.
-    pub first_detected_at: Timestamp,
-    pub opened_at: Timestamp,
-    pub last_detected_at: Timestamp,
-    pub last_updated_at: Timestamp,
-    pub acknowledged_at: Option<Timestamp>,
-    pub recovering_since: Option<Timestamp>,
-    pub resolved_at: Option<Timestamp>,
-    pub closed_at: Option<Timestamp>,
-    pub reopened_at: Option<Timestamp>,
+    pub first_detected_at: DurableTimestamp,
+    pub opened_at: DurableTimestamp,
+    pub last_detected_at: DurableTimestamp,
+    pub last_updated_at: DurableTimestamp,
+    pub acknowledged_at: Option<DurableTimestamp>,
+    pub recovering_since: Option<DurableTimestamp>,
+    pub resolved_at: Option<DurableTimestamp>,
+    pub closed_at: Option<DurableTimestamp>,
+    pub reopened_at: Option<DurableTimestamp>,
     pub reopen_count: u32,
 
     // Ownership.
@@ -159,7 +159,7 @@ impl Incident {
     /// The timestamp a reopen decision measures elapsed time from:
     /// `resolved_at` when `Resolved`, `closed_at` when `Closed`. `None`
     /// for any other state, which callers treat as "not eligible".
-    pub fn reopen_reference_timestamp(&self) -> Option<&Timestamp> {
+    pub fn reopen_reference_timestamp(&self) -> Option<&DurableTimestamp> {
         match self.state {
             IncidentState::Resolved => self.resolved_at.as_ref(),
             IncidentState::Closed => self.closed_at.as_ref(),
@@ -167,7 +167,7 @@ impl Incident {
         }
     }
 
-    pub fn is_suppressed(&self, now: &Timestamp) -> bool {
+    pub fn is_suppressed(&self, now: &DurableTimestamp) -> bool {
         self.suppression.as_ref().is_some_and(|s| s.is_active(now))
     }
 

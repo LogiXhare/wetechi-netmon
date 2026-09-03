@@ -40,6 +40,7 @@ pub mod clock;
 pub mod closure;
 pub mod command;
 pub mod correlation;
+pub mod durable_time;
 pub mod error;
 pub mod evidence;
 pub mod id;
@@ -48,10 +49,16 @@ pub mod incident;
 pub mod limits;
 pub mod number;
 pub mod outbox;
+pub mod reconstitute;
 pub mod reopen;
 pub mod severity;
+pub mod snapshot;
 pub mod state;
+pub mod store;
+
 pub mod suppression;
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 pub mod timeline;
 pub mod transition;
 pub mod unit_of_work;
