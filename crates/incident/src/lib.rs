@@ -49,6 +49,7 @@ pub mod incident;
 pub mod limits;
 pub mod number;
 pub mod outbox;
+pub mod reconstitute;
 pub mod reopen;
 pub mod severity;
 pub mod snapshot;
