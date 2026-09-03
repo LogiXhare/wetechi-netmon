@@ -1,0 +1,16 @@
+[package]
+name = "wetechinetmon-incident-postgres"
+description = "Phase 5B-1 dependency probe for the future PostgreSQL-backed IncidentStore adapter. No schema, no migration, no implementation yet — see FU-42."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wetechinetmon-incident = { path = "../incident" }
+uuid.workspace = true
+tokio-postgres.workspace = true
+deadpool-postgres.workspace = true
+rustls.workspace = true
+tokio-postgres-rustls.workspace = true
+refinery.workspace = true
