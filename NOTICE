@@ -45,6 +45,17 @@ guessed). None are modified from their upstream published source.
   serde (direct use)     MIT OR Apache-2.0  https://github.com/serde-rs/serde
   libfuzzer-sys (fuzz-only, own workspace, never shipped)  MIT OR Apache-2.0 (REQUIRES VERIFICATION)  https://github.com/rust-fuzz/libfuzzer
 
+Starting Phase 5B-1 (crates/incident-postgres, dependency probe only —
+no schema, no migration, no adapter implementation yet), the following
+are also vendored:
+
+  uuid (v7 feature only)  Apache-2.0 OR MIT  https://github.com/uuid-rs/uuid
+  tokio-postgres          MIT OR Apache-2.0  https://github.com/sfackler/rust-postgres
+  deadpool-postgres       MIT OR Apache-2.0  https://github.com/bikeshedder/deadpool
+  rustls                  Apache-2.0 OR ISC OR MIT  https://github.com/rustls/rustls
+  tokio-postgres-rustls   MIT             https://github.com/jbg/tokio-postgres-rustls
+  refinery (tokio-postgres feature only)  MIT  https://github.com/rust-db/refinery
+
 This list covers direct dependencies only. Transitive dependencies are
 recorded in Cargo.lock (committed to this repository) and are pulled in
 by the above crates' own dependency graphs, not chosen directly by
