@@ -54,6 +54,7 @@ pub mod reopen;
 pub mod severity;
 pub mod snapshot;
 pub mod state;
+pub mod store;
 
 pub mod suppression;
 #[cfg(test)]

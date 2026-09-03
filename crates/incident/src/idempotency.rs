@@ -112,7 +112,7 @@ pub enum IdempotencyCheck {
     Conflict,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct IdempotencyStore {
     records: HashMap<(TenantId, IdempotencyKey), IdempotencyRecord>,
 }
