@@ -133,7 +133,7 @@ pub fn attempt_automatic_closure(
 pub fn evaluate_reopen(
     incident: &Incident,
     policy: &ReopenPolicy,
-    now: &crate::clock::Timestamp,
+    now: &crate::durable_time::DurableTimestamp,
 ) -> Result<bool, IncidentError> {
     if !incident.is_reopen_candidate() {
         return Err(IncidentError::InvalidReopen(
@@ -148,7 +148,7 @@ pub fn evaluate_reopen(
             .ok_or(IncidentError::InternalInvariantViolation(
                 "a Resolved or Closed incident must have resolved_at or closed_at set",
             ))?;
-    Ok(policy.reopens(reference, now))
+    Ok(policy.reopens(reference, now)?)
 }
 
 #[cfg(test)]
@@ -156,8 +156,9 @@ mod tests {
     use super::*;
     use crate::authorization::Actor;
     use crate::category::IncidentCategory;
-    use crate::clock::{TestClock, Timestamp};
+    use crate::clock::TestClock;
     use crate::correlation::{CorrelationKey, TenantId};
+    use crate::durable_time::DurableTimestamp;
     use crate::evidence::EvidenceLedger;
     use crate::id::IncidentId;
     use crate::number::NumberAllocator;
@@ -167,7 +168,7 @@ mod tests {
     use wetechinetmon_detector::{AddressFamily, ScopeId, ScopeType, TrafficDirection};
 
     fn bare_incident(state: IncidentState, clock: &TestClock) -> Incident {
-        let now = Timestamp::now(clock);
+        let now = DurableTimestamp::now(clock).unwrap();
         let addr: IpAddr = "203.0.113.7".parse().unwrap();
         let key = CorrelationKey::new(
             TenantId::new("acme"),
@@ -297,9 +298,9 @@ mod tests {
     fn evaluate_reopen_uses_resolved_at_when_present() {
         let clock = TestClock::new();
         let mut incident = bare_incident(IncidentState::Resolved, &clock);
-        incident.resolved_at = Some(Timestamp::now(&clock));
+        incident.resolved_at = Some(DurableTimestamp::now(&clock).unwrap());
         clock.advance(std::time::Duration::from_secs(60));
-        let now = Timestamp::now(&clock);
+        let now = DurableTimestamp::now(&clock).unwrap();
         assert!(evaluate_reopen(&incident, &ReopenPolicy::approved_default(), &now).unwrap());
     }
 
@@ -307,7 +308,7 @@ mod tests {
     fn evaluate_reopen_rejects_a_non_terminal_incident() {
         let clock = TestClock::new();
         let incident = bare_incident(IncidentState::Open, &clock);
-        let now = Timestamp::now(&clock);
+        let now = DurableTimestamp::now(&clock).unwrap();
         assert!(evaluate_reopen(&incident, &ReopenPolicy::approved_default(), &now).is_err());
     }
 }

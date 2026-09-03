@@ -41,7 +41,7 @@ use crate::assignment::Assignee;
 use crate::audit::{AttemptedResource, AuditEntry};
 use crate::authorization::{Actor, AuthorizationContext, Permission};
 use crate::category::derive_category;
-use crate::clock::{Clock, Timestamp};
+use crate::clock::Clock;
 use crate::closure::ClosurePolicy;
 use crate::command::Command;
 use crate::correlation::{CorrelationConflict, CorrelationKey, TenantId};
@@ -211,10 +211,6 @@ impl IncidentUnitOfWork {
 
     pub fn incident_count(&self) -> usize {
         self.incidents.len()
-    }
-
-    fn now(&self) -> Timestamp {
-        Timestamp::now(self.clock.as_ref())
     }
 
     /// The authoritative UTC instant for the operation being decided.
@@ -422,10 +418,10 @@ impl IncidentUnitOfWork {
             .values()
             .filter(|i| i.correlation_key == key && i.is_reopen_candidate())
             .filter(|i| i.tenant_id == tenant)
-            .max_by_key(|i| i.reopen_reference_timestamp().map(|t| t.monotonic()));
+            .max_by_key(|i| i.reopen_reference_timestamp().copied());
 
         if let Some(candidate) = reopen_candidate {
-            let now = self.now();
+            let now = self.decision_time()?;
             if transition::evaluate_reopen(candidate, &self.reopen_policy, &now).unwrap_or(false) {
                 let incident_id = candidate.incident_id;
                 self.dedup_seen.insert(dedup, incident_id);
@@ -467,7 +463,7 @@ impl IncidentUnitOfWork {
                 CorrelationConflict::OpenIncidentAlreadyExists(self.open_index[key]).into(),
             );
         }
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident_id = self.incident_generator.generate()?;
         // Wall-clock year derivation is a display concern; `Timestamp`
         // carries no calendar API without a new dependency, so the value
@@ -593,15 +589,14 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         event: &DetectionEvent,
     ) -> Result<IngestResult, IncidentError> {
-        let now = self.now();
-        let observed = crate::clock::Timestamp::now(self.clock.as_ref());
+        let now = self.decision_time()?;
 
         let (evidence_ref, is_late, category_changed, old_category, new_category) = {
             let incident = self
                 .incidents
                 .get_mut(&incident_id)
                 .ok_or(IncidentError::NotFound)?;
-            let is_late = observed.monotonic() < incident.last_detected_at.monotonic();
+            let is_late = now < incident.last_detected_at;
             let new_version = incident.version.checked_add(1).ok_or(
                 IncidentError::InternalInvariantViolation("incident version overflowed u64"),
             )?;
@@ -725,7 +720,7 @@ impl IncidentUnitOfWork {
         event: &DetectionEvent,
         cause: AutomaticCause,
     ) -> Result<IngestResult, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let key = {
             let incident = self
                 .incidents
@@ -853,7 +848,7 @@ impl IncidentUnitOfWork {
             Permission::IncidentIngest,
             AttemptedResource::Unresolved(incident_id.to_string()),
         )?;
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get(&incident_id)
@@ -924,7 +919,7 @@ impl IncidentUnitOfWork {
             Permission::IncidentIngest,
             AttemptedResource::Unresolved(incident_id.to_string()),
         )?;
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get(&incident_id)
@@ -937,7 +932,7 @@ impl IncidentUnitOfWork {
                 .ok_or(IncidentError::InternalInvariantViolation(
                     "Recovering incident has no recovering_since",
                 ))?;
-        if now.elapsed_since(&recovering_since) < recovery_confirmation {
+        if now.checked_elapsed_since(&recovering_since)? < recovery_confirmation {
             return Ok(false);
         }
         self.resolve_internal(
@@ -962,7 +957,7 @@ impl IncidentUnitOfWork {
             Permission::IncidentIngest,
             AttemptedResource::Unresolved(incident_id.to_string()),
         )?;
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get(&incident_id)
@@ -1052,7 +1047,7 @@ impl IncidentUnitOfWork {
         cause: TransitionCause,
         resolution_note: Option<String>,
     ) -> Result<(), IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let existing = self
             .incidents
             .get(&incident_id)
@@ -1146,7 +1141,7 @@ impl IncidentUnitOfWork {
         reason: crate::closure::ClosureReason,
         cause: TransitionCause,
     ) -> Result<(), IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get(&incident_id)
@@ -1382,9 +1377,9 @@ impl IncidentUnitOfWork {
         to: IncidentState,
         command_kind: OperatorCommandKind,
         permission: Permission,
-        extra: impl FnOnce(&mut Incident, Timestamp),
+        extra: impl FnOnce(&mut Incident, DurableTimestamp),
     ) -> Result<u64, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get(&incident_id)
@@ -1440,7 +1435,7 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         reason: String,
     ) -> Result<u64, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get(&incident_id)
@@ -1527,7 +1522,7 @@ impl IncidentUnitOfWork {
         duration: Duration,
     ) -> Result<u64, IncidentError> {
         crate::suppression::validate_reason(&reason)?;
-        let now = self.now();
+        let now = self.decision_time()?;
         let deadline =
             self.decision_time()?
                 .checked_plus(duration)
@@ -1584,7 +1579,7 @@ impl IncidentUnitOfWork {
         auth: &AuthorizationContext,
         incident_id: IncidentId,
     ) -> Result<u64, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -1632,7 +1627,7 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         assignee: Option<Assignee>,
     ) -> Result<u64, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -1682,7 +1677,7 @@ impl IncidentUnitOfWork {
         new_severity: wetechinetmon_detector::Severity,
         reason: Option<String>,
     ) -> Result<u64, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -1749,7 +1744,7 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         new_priority: Priority,
     ) -> Result<u64, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -1811,7 +1806,7 @@ impl IncidentUnitOfWork {
             ));
         }
         validate_note_body(&body)?;
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -1867,7 +1862,7 @@ impl IncidentUnitOfWork {
                 "tag key or value exceeds its bound".to_string(),
             ));
         }
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -1910,7 +1905,7 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         key: String,
     ) -> Result<u64, IncidentError> {
-        let now = self.now();
+        let now = self.decision_time()?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
@@ -2343,7 +2338,8 @@ mod tests {
             .get(&incident_id)
             .unwrap()
             .last_detected_at
-            .plus(Duration::from_secs(3600));
+            .checked_plus(Duration::from_secs(3600))
+            .unwrap();
         uow.incidents
             .get_mut(&incident_id)
             .unwrap()
@@ -2400,7 +2396,7 @@ mod tests {
         let after = uow.get(&incident_id).unwrap().last_detected_at;
 
         assert!(
-            after.elapsed_since(&before) == Duration::from_secs(5),
+            after.checked_elapsed_since(&before).unwrap() == Duration::from_secs(5),
             "a strictly newer observation must advance last_detected_at by exactly the clock advance"
         );
         assert!(matches!(
