@@ -52,7 +52,17 @@ impl std::fmt::Display for TenantId {
 /// are unequal at the type level (different `ScopeId` variant *and*
 /// value) with no risk of two different scopes ever rendering to the
 /// same display string and colliding.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// This type is `Deserialize`, unlike [`crate::incident::Incident`],
+/// and the difference is not an inconsistency. ADR 0030 rejects a bare
+/// `Deserialize` on the aggregate because the aggregate has guards to
+/// bypass — combinations of field values its mutation methods refuse to
+/// produce. A correlation key has none: five independent typed
+/// components, all public, with an all-arguments public constructor that
+/// checks nothing because there is nothing to check. Deriving here
+/// grants a caller no power it does not already have through
+/// [`CorrelationKey::new`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CorrelationKey {
     pub tenant: TenantId,
     pub target_type: ScopeType,

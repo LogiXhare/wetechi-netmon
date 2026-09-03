@@ -51,8 +51,12 @@ pub mod number;
 pub mod outbox;
 pub mod reopen;
 pub mod severity;
+pub mod snapshot;
 pub mod state;
+
 pub mod suppression;
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 pub mod timeline;
 pub mod transition;
 pub mod unit_of_work;
