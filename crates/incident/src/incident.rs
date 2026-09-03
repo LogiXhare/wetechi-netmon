@@ -28,6 +28,7 @@ use crate::category::IncidentCategory;
 use crate::clock::Timestamp;
 use crate::closure::ClosureReason;
 use crate::correlation::{CorrelationKey, TenantId};
+use crate::durable_time::DurableTimestamp;
 use crate::evidence::EvidenceLedger;
 use crate::id::IncidentId;
 use crate::limits::{
@@ -167,7 +168,7 @@ impl Incident {
         }
     }
 
-    pub fn is_suppressed(&self, now: &Timestamp) -> bool {
+    pub fn is_suppressed(&self, now: &DurableTimestamp) -> bool {
         self.suppression.as_ref().is_some_and(|s| s.is_active(now))
     }
 

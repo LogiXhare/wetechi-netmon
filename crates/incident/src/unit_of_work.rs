@@ -45,6 +45,7 @@ use crate::clock::{Clock, Timestamp};
 use crate::closure::ClosurePolicy;
 use crate::command::Command;
 use crate::correlation::{CorrelationConflict, CorrelationKey, TenantId};
+use crate::durable_time::DurableTimestamp;
 use crate::error::IncidentError;
 use crate::evidence::{EvidenceLinkType, EvidenceReference};
 use crate::id::{IncidentGenerator, IncidentId};
@@ -214,6 +215,17 @@ impl IncidentUnitOfWork {
 
     fn now(&self) -> Timestamp {
         Timestamp::now(self.clock.as_ref())
+    }
+
+    /// The authoritative UTC instant for the operation being decided.
+    ///
+    /// The in-memory adapter reads the injected clock's wall half. The
+    /// future PostgreSQL adapter will source this from
+    /// `transaction_timestamp()` instead, so that one database rather than
+    /// several application hosts with independently drifting clocks is the
+    /// single authority on when a transition was decided (ADR 0031).
+    fn decision_time(&self) -> Result<DurableTimestamp, IncidentError> {
+        DurableTimestamp::now(self.clock.as_ref())
     }
 
     /// Documented overflow behavior: `saturating_add`, not a wrapping
@@ -1516,11 +1528,12 @@ impl IncidentUnitOfWork {
     ) -> Result<u64, IncidentError> {
         crate::suppression::validate_reason(&reason)?;
         let now = self.now();
-        let deadline = now
-            .checked_plus(duration)
-            .ok_or(IncidentError::ValidationError(
-                "suppression duration is too large to represent as a deadline".to_string(),
-            ))?;
+        let deadline =
+            self.decision_time()?
+                .checked_plus(duration)
+                .ok_or(IncidentError::ValidationError(
+                    "suppression duration is too large to represent as a deadline".to_string(),
+                ))?;
         let incident = self
             .incidents
             .get_mut(&incident_id)
