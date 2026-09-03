@@ -739,6 +739,28 @@ impl IncidentUnitOfWork {
             .incidents
             .get(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let from_state = incident.state;
+        // FU-38: this path is reached today only from a caller that has
+        // already checked `is_reopen_candidate()` (Resolved or Closed) and
+        // the reopen window. The guard is repeated here, independently, so
+        // that stays true no matter how many callers this function ever
+        // gets — the same reasoning close_internal's guard above uses.
+        //
+        // Deliberately `is_reopen_candidate()`, not
+        // `can_automatic_transition_to(Open)`: that table also legalizes
+        // `Recovering -> Open` for recovery-abort restoration, a
+        // completely different operation with its own path
+        // (`Self::abort_recovery`, via `transition::abort_recovery`) that
+        // does not touch `reopen_count`, `reopened_at`, or evidence the
+        // way this function does. Using the wider table here would let a
+        // future caller reopen-bookkeep a Recovering incident, which is
+        // not a state this function's mutations are correct for.
+        if !matches!(from_state, IncidentState::Resolved | IncidentState::Closed) {
+            return Err(IncidentError::InvalidTransition {
+                from: from_state,
+                to: IncidentState::Open,
+            });
+        }
         // Both counters computed before any field is mutated.
         let new_reopen_count = incident.reopen_count.checked_add(1).ok_or(
             IncidentError::InternalInvariantViolation("reopen_count overflowed u32"),
@@ -752,7 +774,6 @@ impl IncidentUnitOfWork {
                 ))?;
 
         let incident = self.incidents.get_mut(&incident_id).expect("checked above");
-        let from_state = incident.state;
         incident.state = IncidentState::Open;
         incident.reopen_count = new_reopen_count;
         incident.reopened_at = Some(now);
@@ -1146,6 +1167,27 @@ impl IncidentUnitOfWork {
             .incidents
             .get(&incident_id)
             .ok_or(IncidentError::NotFound)?;
+        let from = incident.state;
+        // FU-38: this guard used to live only at close_internal's two call
+        // sites (Command::CloseIncident checking `state != Resolved`, and
+        // attempt_automatic_closure delegating to
+        // transition::attempt_automatic_closure). A second caller added
+        // without the same check would have been able to close an incident
+        // from any state. The check now lives here, dispatched by cause the
+        // same way resolve_internal already dispatches its own — so it
+        // applies no matter how many callers this function ever gets.
+        let legal = match cause {
+            TransitionCause::Automatic(_) => {
+                from.can_automatic_transition_to(IncidentState::Closed)
+            }
+            TransitionCause::Operator(_) => from.can_operator_transition_to(IncidentState::Closed),
+        };
+        if !legal {
+            return Err(IncidentError::InvalidTransition {
+                from,
+                to: IncidentState::Closed,
+            });
+        }
         let new_version =
             incident
                 .version
@@ -1154,7 +1196,6 @@ impl IncidentUnitOfWork {
                     "incident version overflowed u64",
                 ))?;
         let incident = self.incidents.get_mut(&incident_id).expect("checked above");
-        let from = incident.state;
         incident.state = IncidentState::Closed;
         incident.closed_at = Some(now);
         incident.closure_reason = Some(reason);
@@ -1316,16 +1357,9 @@ impl IncidentUnitOfWork {
                 Ok(self.incidents[&incident_id].version)
             }
             Command::CloseIncident { reason, .. } => {
-                let incident = self
-                    .incidents
-                    .get(&incident_id)
-                    .ok_or(IncidentError::NotFound)?;
-                if incident.state != IncidentState::Resolved {
-                    return Err(IncidentError::InvalidTransition {
-                        from: incident.state,
-                        to: IncidentState::Closed,
-                    });
-                }
+                // The transition-legality check used to live here; it now
+                // lives inside close_internal itself (FU-38), so this arm
+                // no longer needs its own lookup to perform it.
                 self.close_internal(
                     auth,
                     incident_id,
@@ -2306,6 +2340,152 @@ mod tests {
             ))
         );
         assert_eq!(uow.get(&incident_id).unwrap().reopen_count, u32::MAX);
+    }
+
+    /// FU-38's acceptance gate: `close_internal` must refuse every
+    /// illegal source state **on its own**, called directly, bypassing
+    /// every caller-side check — the whole point being that a future
+    /// second caller that forgets its own check must still be safe.
+    #[test]
+    fn close_internal_refuses_every_illegal_source_state() {
+        let auth = AuthorizationContext::correlator(TenantId::new("acme"));
+        for state in [
+            IncidentState::Open,
+            IncidentState::Acknowledged,
+            IncidentState::Investigating,
+            IncidentState::Monitoring,
+            IncidentState::Recovering,
+            IncidentState::Closed,
+        ] {
+            for cause in [
+                TransitionCause::Automatic(AutomaticCause::AutomaticClosure),
+                TransitionCause::Operator(crate::timeline::OperatorCommandKind::Close),
+            ] {
+                let mut uow = fresh_uow();
+                let incident = crate::test_fixtures::valid_incident(state);
+                let incident_id = incident.incident_id;
+                uow.incidents.insert(incident_id, incident);
+
+                let result = uow.close_internal(
+                    &auth,
+                    incident_id,
+                    crate::closure::ClosureReason::Resolved,
+                    cause,
+                );
+                assert_eq!(
+                    result,
+                    Err(IncidentError::InvalidTransition {
+                        from: state,
+                        to: IncidentState::Closed,
+                    }),
+                    "state {state:?} with cause {cause:?} must be refused"
+                );
+                assert_eq!(
+                    uow.incidents[&incident_id].state, state,
+                    "a refused close must not mutate state"
+                );
+                assert!(
+                    uow.timeline.is_empty() && uow.audit.is_empty() && uow.outbox.is_empty(),
+                    "a refused close must not append anything"
+                );
+            }
+        }
+    }
+
+    /// The complement: `Resolved` is legal for both causes, and the
+    /// mutation actually applies — otherwise the guard above could be
+    /// satisfied by a guard that rejects everything.
+    #[test]
+    fn close_internal_accepts_the_one_legal_source_state_for_both_causes() {
+        let auth = AuthorizationContext::correlator(TenantId::new("acme"));
+        for cause in [
+            TransitionCause::Automatic(AutomaticCause::AutomaticClosure),
+            TransitionCause::Operator(crate::timeline::OperatorCommandKind::Close),
+        ] {
+            let mut uow = fresh_uow();
+            let incident = crate::test_fixtures::valid_incident(IncidentState::Resolved);
+            let incident_id = incident.incident_id;
+            uow.incidents.insert(incident_id, incident);
+
+            uow.close_internal(
+                &auth,
+                incident_id,
+                crate::closure::ClosureReason::Resolved,
+                cause,
+            )
+            .unwrap();
+            assert_eq!(uow.incidents[&incident_id].state, IncidentState::Closed);
+        }
+    }
+
+    /// FU-38's acceptance gate for the reopen side: `reopen_incident_internal`
+    /// must refuse every state outside `{Resolved, Closed}` on its own.
+    /// `Recovering` is included and matters specifically: it is a legal
+    /// automatic destination-source for `Open` in the shared state table
+    /// (recovery-abort restoration), but this function's mutations
+    /// (`reopen_count`, `reopened_at`, evidence) are wrong for that case —
+    /// see the guard's own comment.
+    #[test]
+    fn reopen_incident_internal_refuses_every_illegal_source_state() {
+        let auth = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 90));
+        for state in [
+            IncidentState::Open,
+            IncidentState::Acknowledged,
+            IncidentState::Investigating,
+            IncidentState::Monitoring,
+            IncidentState::Recovering,
+        ] {
+            let mut uow = fresh_uow();
+            let incident = crate::test_fixtures::valid_incident(state);
+            let incident_id = incident.incident_id;
+            uow.incidents.insert(incident_id, incident);
+
+            let result = uow.reopen_incident_internal(
+                &auth,
+                incident_id,
+                &event("det-fu38", 0, addr, 5_000_000),
+                AutomaticCause::ReopenedByRecurrence,
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(IncidentError::InvalidTransition { from, to: IncidentState::Open }) if from == state
+                ),
+                "state {state:?} must be refused, got {result:?}"
+            );
+            assert_eq!(
+                uow.incidents[&incident_id].state, state,
+                "a refused reopen must not mutate state"
+            );
+            assert!(
+                uow.timeline.is_empty() && uow.audit.is_empty() && uow.outbox.is_empty(),
+                "a refused reopen must not append anything"
+            );
+        }
+    }
+
+    /// The complement for reopen: both legal sources actually apply the
+    /// mutation.
+    #[test]
+    fn reopen_incident_internal_accepts_both_legal_source_states() {
+        let auth = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 91));
+        for state in [IncidentState::Resolved, IncidentState::Closed] {
+            let mut uow = fresh_uow();
+            let incident = crate::test_fixtures::valid_incident(state);
+            let incident_id = incident.incident_id;
+            uow.incidents.insert(incident_id, incident);
+
+            uow.reopen_incident_internal(
+                &auth,
+                incident_id,
+                &event("det-fu38b", 0, addr, 5_000_000),
+                AutomaticCause::ReopenedByRecurrence,
+            )
+            .unwrap();
+            assert_eq!(uow.incidents[&incident_id].state, IncidentState::Open);
+        }
     }
 
     /// R1: a genuine, non-tautological regression test for
