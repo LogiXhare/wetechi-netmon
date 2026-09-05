@@ -213,10 +213,24 @@ an operator needs to know which one happened.
 
 ## Limits
 
-- Correlation lookup is a single indexed read on
-  `(tenant_id, correlation_key)` where `state <> 'closed'`, backed by a
-  partial unique index that makes two open incidents for one key
-  impossible at the database level rather than merely unlikely.
+- Correlation lookup is a single indexed read on `(tenant_id,
+  correlation_key)`, scoped to the active states — open, acknowledged,
+  investigating, monitoring, recovering — not `state <> 'closed'`.
+  **Corrected 2026-09-05 (Milestone 5B-2):** this line previously read
+  `WHERE state <> 'closed'`, which is wrong for the same reason
+  [incident-persistence.md](incident-persistence.md)'s "Active-incident
+  invariant" section already documents for its own, once-identical
+  mistake — `Resolved` is not an active state for correlation, so that
+  predicate would still block a legitimate reopen-window recurrence from
+  inserting a new incident row for the same key while a `Resolved`
+  incident (correctly outside correlation) still occupies it. The lookup
+  is backed by three target-type-specific partial unique indexes —
+  `incidents_active_host`, `incidents_active_network`,
+  `incidents_active_hostgroup`, implemented in
+  `crates/incident-postgres/migrations/V10__active_incident_partial_indexes.sql`
+  — rather than one index on a single generated `correlation_key` column,
+  which makes two active incidents for one correlation key impossible at
+  the database level rather than merely unlikely.
 - Correlation is **single-node** in Phase 5. Distributed correlation is
   out of scope; the partial unique index means a second node would fail
   loudly on insert rather than silently duplicating, which is the correct
