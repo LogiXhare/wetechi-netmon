@@ -1,6 +1,6 @@
 [package]
 name = "wetechinetmon-incident-postgres"
-description = "Phase 5B-1 dependency probe for the future PostgreSQL-backed IncidentStore adapter. No schema, no migration, no implementation yet — see FU-42."
+description = "Milestone 5B-2: PostgreSQL schema and forward-only refinery migrations for the incident domain. No IncidentStore implementation, no connection pool wiring, no production database connection yet — see docs/development/follow-ups.md FU-42 and phase5-implementation-plan.md's 5B-3 section."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,3 +14,10 @@ deadpool-postgres.workspace = true
 rustls.workspace = true
 tokio-postgres-rustls.workspace = true
 refinery.workspace = true
+
+[dev-dependencies]
+# Already an approved, existing workspace dependency (vendored since
+# Phase 2 in crates/collector, crates/storage, tools/flow-replay) — used
+# here only to drive the async migration smoke test
+# (tests/migration_smoke_test.rs), not a new dependency for this crate.
+tokio = { workspace = true }

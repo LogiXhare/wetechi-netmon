@@ -1,0 +1,19 @@
+-- Milestone 5B-2: schema and migrations (see docs/development/follow-ups.md
+-- FU-42/FU-43 and docs/architecture/phase5b-postgresql-persistence-plan.md).
+--
+-- This migration is intentionally a no-op today. It exists as its own,
+-- reviewable step because docs/development/phase5-implementation-plan.md's
+-- 5B-2 section fixes "extensions" as the first migration in the sequence
+-- ("extensions -> incidents -> ..."), and a later migration that turns out
+-- to need one has an obvious, already-numbered place to add
+-- `CREATE EXTENSION IF NOT EXISTS ...` without renumbering anything after
+-- it.
+--
+-- Verified against the schema this milestone actually builds: incident
+-- identity is a UUIDv7 generated in Rust by the `uuid` crate (ADR 0019),
+-- never by a PostgreSQL-side function, so no `pgcrypto`/`uuid-ossp` is
+-- needed for id generation. Every other type used below (`uuid`, `inet`,
+-- `cidr`, `jsonb`, `timestamptz`, partial unique indexes, `BIGINT
+-- GENERATED ALWAYS AS IDENTITY`) is built into PostgreSQL 15+ (ADR 0025)
+-- with no extension required.
+SELECT 1;
