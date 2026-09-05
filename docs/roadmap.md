@@ -1,7 +1,6 @@
 # Roadmap
 
-Status: Phase 4 complete; Phase 5A merged; Phase 5B-0 and 5B-1 merged;
-5B-2 open, pending merge
+Status: Phase 4 complete; Phase 5A merged; Phase 5B-0, 5B-1, and 5B-2 merged
 Last updated: 2026-09-05
 
 This roadmap mirrors the phased delivery model and versioning plan in the
@@ -138,7 +137,7 @@ than configured — see
 Not covered, and deliberately: incident lifecycle (Phase 5),
 notifications (Phase 6), and any form of mitigation (Phase 7).
 
-## Phase 5: Incident Management — 5A Merged, 5B-0/5B-1 Merged, 5B-2 Open
+## Phase 5: Incident Management — 5A Merged, 5B-0/5B-1/5B-2 Merged
 
 Phase 4 was reviewed and merged into `main` on 2026-08-22 (merge commit
 `3f0cf3e`, PR #14). Phase 5 architecture and documentation planning
@@ -156,8 +155,8 @@ zero third-party dependency added. See
 for the full delivery record and adversarial-review history.
 
 **Milestone 5B — 5B-0 and 5B-1 merged 2026-09-03** (PR #22, merge commit
-`775fb1f`; PR #23, merge commit `4350412`); **5B-2 open, pending merge**
-(PR #25). Stage A had found Phase 5A's own planning overstated its
+`775fb1f`; PR #23, merge commit `4350412`); **5B-2 merged 2026-09-05**
+(PR #25, merge commit `167c357`). Stage A had found Phase 5A's own planning overstated its
 delivered persistence seam — there was no repository trait, and
 `Timestamp` could not be restored from a database. Phase 5B is therefore
 a refactor-and-implement milestone: seam extraction came first (5B-0, no
@@ -168,8 +167,9 @@ SQL, no dependency — done), then a verified dependency probe (5B-1:
 0 vulnerabilities across the resulting 252-crate lockfile — done), then
 schema and migrations (5B-2: eleven forward-only `refinery` migrations
 plus an ephemeral-Postgres migration smoke test, in
-`crates/incident-postgres/migrations/` — PR open, pending merge, no
-`IncidentStore` implementation yet), then repositories, outbox, and
+`crates/incident-postgres/migrations/` — merged, verified against a real
+PostgreSQL instance per FU-45, no `IncidentStore` implementation yet),
+then repositories, outbox, and
 integration tests remain (5B-3 through 5B-5). Start at
 [phase5b-postgresql-persistence-plan.md](architecture/phase5b-postgresql-persistence-plan.md);
 decisions are ADRs
