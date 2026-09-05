@@ -1,0 +1,53 @@
+# Ephemeral, local/CI-only PostgreSQL for running and testing the
+# Milestone 5B-2 migrations in crates/incident-postgres/migrations/.
+#
+# This is NEVER a production database. It has no persistent volume (data
+# lives in a tmpfs mount and is gone the moment the container stops),
+# generates no traffic outside localhost, and uses a throwaway
+# credential that exists only inside this container's own process
+# namespace for the container's lifetime. Do not point this compose file
+# at a real host, do not add a named/bind volume to it, and always tear
+# it down after use (`docker compose down -v`).
+#
+# Usage (see crates/incident-postgres/README.md for the full workflow):
+#
+#   docker compose -f crates/incident-postgres/docker-compose.yml up -d
+#   # ... run migrations / tests against the printed connection string ...
+#   docker compose -f crates/incident-postgres/docker-compose.yml down -v
+#
+# Tested PostgreSQL versions per ADR 0025: minimum 15, recommended
+# production 17, tested matrix 15/16/17/18. This file pins the
+# recommended production version (17) as the default local/dev target;
+# CI should additionally exercise 15 (the floor) before Milestone 5B-5
+# is considered complete, per that ADR's own follow-up.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wetechinetmon_test
+      POSTGRES_PASSWORD: wetechinetmon_test_only
+      POSTGRES_DB: wetechinetmon_incident_test
+      # Ephemeral by construction: PGDATA lives on the tmpfs mount below,
+      # so a container restart starts from empty, never from stale state.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      # Bound to loopback only, and to an unusual port, so this never
+      # collides with (or is mistaken for) a real local PostgreSQL
+      # instance on the default 5432.
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "fsync=off"
+      - "-c"
+      - "full_page_writes=off"
+      - "-c"
+      - "synchronous_commit=off"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wetechinetmon_test -d wetechinetmon_incident_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: "no"
