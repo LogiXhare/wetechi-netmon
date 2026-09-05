@@ -1,7 +1,8 @@
 # Roadmap
 
-Status: Phase 4 complete; Phase 5A merged; Phase 5B planning complete
-Last updated: 2026-08-24
+Status: Phase 4 complete; Phase 5A merged; Phase 5B-0 and 5B-1 merged;
+5B-2 open, pending merge
+Last updated: 2026-09-05
 
 This roadmap mirrors the phased delivery model and versioning plan in the
 master prompt (sections 28–29). No phase begins until the prior phase has
@@ -137,7 +138,7 @@ than configured — see
 Not covered, and deliberately: incident lifecycle (Phase 5),
 notifications (Phase 6), and any form of mitigation (Phase 7).
 
-## Phase 5: Incident Management — 5A Merged, 5B Planned
+## Phase 5: Incident Management — 5A Merged, 5B-0/5B-1 Merged, 5B-2 Open
 
 Phase 4 was reviewed and merged into `main` on 2026-08-22 (merge commit
 `3f0cf3e`, PR #14). Phase 5 architecture and documentation planning
@@ -154,16 +155,22 @@ zero third-party dependency added. See
 [phase5-implementation-plan.md](development/phase5-implementation-plan.md)
 for the full delivery record and adversarial-review history.
 
-**Milestone 5B — Stage A/B planning complete 2026-08-24, implementation
-not started.** Stage A found Phase 5A's own planning had overstated its
-delivered persistence seam — there is no repository trait yet, and
-`Timestamp` cannot be restored from a database. Phase 5B is therefore a
-refactor-and-implement milestone: seam extraction first (5B-0, no SQL,
-no dependency), then a verified dependency probe (5B-1: `uuid`,
-`tokio-postgres`, `deadpool-postgres`, `rustls`/`tokio-postgres-rustls`,
-`refinery` — all conditionally selected, none yet added to `Cargo.toml`),
-then schema, repositories, outbox, and integration tests (5B-2 through
-5B-5). Start at
+**Milestone 5B — 5B-0 and 5B-1 merged 2026-09-03** (PR #22, merge commit
+`775fb1f`; PR #23, merge commit `4350412`); **5B-2 open, pending merge**
+(PR #25). Stage A had found Phase 5A's own planning overstated its
+delivered persistence seam — there was no repository trait, and
+`Timestamp` could not be restored from a database. Phase 5B is therefore
+a refactor-and-implement milestone: seam extraction came first (5B-0, no
+SQL, no dependency — done), then a verified dependency probe (5B-1:
+`uuid`, `tokio-postgres`, `deadpool-postgres`,
+`rustls`/`tokio-postgres-rustls`, `refinery`, all six added to
+`Cargo.toml` in `crates/incident-postgres` at their ADR-pinned versions,
+0 vulnerabilities across the resulting 252-crate lockfile — done), then
+schema and migrations (5B-2: eleven forward-only `refinery` migrations
+plus an ephemeral-Postgres migration smoke test, in
+`crates/incident-postgres/migrations/` — PR open, pending merge, no
+`IncidentStore` implementation yet), then repositories, outbox, and
+integration tests remain (5B-3 through 5B-5). Start at
 [phase5b-postgresql-persistence-plan.md](architecture/phase5b-postgresql-persistence-plan.md);
 decisions are ADRs
 [0019](architecture/decisions/0019-phase5b-uuidv7-identity-generation.md)–[0033](architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md).
