@@ -140,11 +140,14 @@ BQ-7 approved the *capability*; Stage A researched and Stage B decided
 the specific, defensible set of crates and the schema/transaction design
 — see [phase5b-postgresql-persistence-plan.md](../architecture/phase5b-postgresql-persistence-plan.md)
 and ADRs [0019](../architecture/decisions/0019-phase5b-uuidv7-identity-generation.md)–[0033](../architecture/decisions/0033-phase5b-transactional-outbox-and-dead-letter.md).
-**Implementation has not started.** 5B is now known to be a
-**refactor-and-implement** milestone, not implement-only — Stage A found
-5A did not deliver the repository seam this document previously assumed
-(see the Milestone 5A correction above and
-[ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)).
+**Status: 5B-0 and 5B-1 merged to `main`** (PR #22, merge commit
+`775fb1f`, and PR #23, merge commit `4350412`, both 2026-09-03),
+superseding the "Implementation has not started" note this paragraph
+originally carried. 5B is a **refactor-and-implement** milestone, not
+implement-only — Stage A found 5A did not deliver the repository seam
+this document previously assumed (see the Milestone 5A correction above
+and [ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)).
+5B-2 onward has not started.
 
 ### 5B-0 — Seam extraction (no SQL, no dependency)
 
@@ -159,6 +162,9 @@ adapter migrated to the new seam as its reference implementation.
 **Exit:** all 531 existing tests remain green throughout — this is a
 refactor, not a behaviour change; the table-driven illegal-source-state
 test FU-38 specifies passes for both hardened functions.
+
+**Status: merged to `main`** (PR #22, merge commit `775fb1f`,
+2026-09-03).
 
 ### 5B-1 — Dependency probe
 
@@ -189,6 +195,12 @@ dependency** — actually measuring them requires adding it, which is
 exactly why this milestone exists as a distinct, reversible step before
 5B-2 onward depends on the result. See
 [ADR 0018](../architecture/decisions/0018-phase5-dependency-selection.md).
+
+**Status: merged to `main`** (PR #23, merge commit `4350412`,
+2026-09-03). All nine entry gates closed — see **FU-42** for the measured
+`cargo tree` (73 new crates), `cargo audit` (0 vulnerabilities/252
+crates), `unsafe` inventory, and Windows-GNU + Linux build results.
+Dependency-license-matrix rows 32–37 flipped to **Approved**.
 
 ### 5B-2 — Schema and migrations
 
