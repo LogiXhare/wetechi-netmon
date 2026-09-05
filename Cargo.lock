@@ -2125,6 +2125,7 @@ dependencies = [
  "deadpool-postgres",
  "refinery",
  "rustls",
+ "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
  "uuid",
