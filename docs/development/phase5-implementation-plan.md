@@ -147,9 +147,9 @@ originally carried. 5B is a **refactor-and-implement** milestone, not
 implement-only — Stage A found 5A did not deliver the repository seam
 this document previously assumed (see the Milestone 5A correction above
 and [ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)).
-**5B-2 (schema and migrations): PR #25 open, pending merge** (branch
-`feat/phase5b-2-schema-and-migrations`) — see that milestone's own status
-note below. 5B-3 onward has not started.
+**5B-2 (schema and migrations): merged to `main`** (PR #25, merge commit
+`167c357`, 2026-09-05) — see that milestone's own status note below.
+5B-3 onward has not started.
 
 ### 5B-0 — Seam extraction (no SQL, no dependency)
 
@@ -213,23 +213,23 @@ assignments → `incident_policy_references` / `incident_number_allocators`
 roles), per [incident-persistence.md](../architecture/incident-persistence.md)
 and [ADR 0024](../architecture/decisions/0024-phase5b-migration-framework.md).
 
-**Status: PR #25 open, pending merge** (branch
-`feat/phase5b-2-schema-and-migrations`). Eleven `refinery`-compatible SQL
-migrations added under `crates/incident-postgres/migrations/`
-(`V1__enable_extensions.sql` through `V11__rls_ready_roles.sql`),
-embedded into the crate via `refinery::embed_migrations!`; an ephemeral,
-loopback-only `docker-compose.yml` for local/CI PostgreSQL; a migration
-smoke test (`tests/migration_smoke_test.rs`) that applies all migrations,
-asserts a second run is a no-op, and checks the resulting schema shape.
-**No `IncidentStore` implementation, no connection pool wiring, and no
+**Status: merged to `main`** (PR #25, merge commit `167c357`, 2026-09-05).
+Eleven `refinery`-compatible SQL migrations added under
+`crates/incident-postgres/migrations/` (`V1__enable_extensions.sql`
+through `V11__rls_ready_roles.sql`), embedded into the crate via
+`refinery::embed_migrations!`; an ephemeral, loopback-only
+`docker-compose.yml` for local/CI PostgreSQL; a migration smoke test
+(`tests/migration_smoke_test.rs`) that applies all migrations, asserts a
+second run is a no-op, and checks the resulting schema shape. **No
+`IncidentStore` implementation, no connection pool wiring, and no
 production database connection** — unchanged from this milestone's scope,
-deferred to 5B-3. **Not yet run against a real PostgreSQL instance in the
-environment this PR was authored in** — Docker was unavailable there; see
-the PR description for what still needs verification (locally, with
-Docker, or in CI) before merge, and for the schema-design questions
-flagged for owner review where `incident-persistence.md`'s sketch was
-ambiguous or where the actual `Incident`/`IncidentSnapshot` source
-diverged from the older `incident-domain-model.md` planning doc.
+deferred to 5B-3. Docker was unavailable in the authoring environment, so
+the smoke test was verified for real on a separate Docker-capable host
+before merge (FU-45) rather than merged on eye-review alone. Schema-design
+questions flagged for owner review, where `incident-persistence.md`'s
+sketch was ambiguous or where the actual `Incident`/`IncidentSnapshot`
+source diverged from the older `incident-domain-model.md` planning doc,
+are tracked in FU-47.
 
 ### 5B-3 — Repository implementations
 
