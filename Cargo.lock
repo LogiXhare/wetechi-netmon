@@ -2129,6 +2129,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-postgres-rustls",
  "uuid",
+ "wetechinetmon-detector",
  "wetechinetmon-incident",
 ]
 

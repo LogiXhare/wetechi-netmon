@@ -149,7 +149,10 @@ this document previously assumed (see the Milestone 5A correction above
 and [ADR 0029](../architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)).
 **5B-2 (schema and migrations): merged to `main`** (PR #25, merge commit
 `167c357`, 2026-09-05) — see that milestone's own status note below.
-5B-3 onward has not started.
+**5B-3 (repository implementations): in progress** — its bridge design is
+[ADR 0034](../architecture/decisions/0034-phase5b-persistence-bridge-load-run-flush.md),
+and step (a) is the staging store; see that milestone's note below.
+5B-4 onward has not started.
 
 ### 5B-0 — Seam extraction (no SQL, no dependency)
 
@@ -239,6 +242,14 @@ idempotency with the persisted fingerprint
 ([ADR 0028](../architecture/decisions/0028-phase5b-idempotency-fingerprint.md));
 the transactional state-plus-timeline-plus-audit-plus-outbox write; the
 sync/async bridge ([ADR 0021](../architecture/decisions/0021-phase5b-async-runtime-boundary.md)).
+
+**Status (2026-09-15):** the bridge is decided as load–run–flush
+([ADR 0034](../architecture/decisions/0034-phase5b-persistence-bridge-load-run-flush.md)),
+delivered in three steps:
+
+- **(a) Staging store, no SQL.** `IncidentUnitOfWork` gains `with_store`/`into_store`, and `IdempotencyStore` gains record iteration. `crates/incident-postgres/src/staging.rs` holds one call's loaded rows, records its changes, and fails closed on unloaded lookups.
+- **(b)** Load/flush SQL and integration tests, including FU-44's acceptance gate.
+- **(c)** Retry and conflict classification per ADR 0026.
 
 ### 5B-4 — Outbox and retention
 

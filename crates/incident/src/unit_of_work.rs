@@ -187,6 +187,26 @@ impl IncidentUnitOfWork {
         self
     }
 
+    /// Replaces the backing store, for a persistence adapter that runs one
+    /// call against rows it has already loaded ([ADR 0034]'s
+    /// load–run–flush). Call it on a freshly built unit of work: the
+    /// timeline/audit/outbox sequence counters are not rewound, so they
+    /// only mean "order within this call" in that mode.
+    ///
+    /// [ADR 0034]: ../../../docs/architecture/decisions/0034-phase5b-persistence-bridge-load-run-flush.md
+    pub fn with_store(mut self, store: Box<dyn IncidentStore>) -> Self {
+        self.store = store;
+        self
+    }
+
+    /// Consumes this unit of work and hands back its store, so the adapter
+    /// that supplied it through [`Self::with_store`] can read what the call
+    /// changed. Recover the concrete type by upcasting to
+    /// `Box<dyn std::any::Any>` and downcasting.
+    pub fn into_store(self) -> Box<dyn IncidentStore> {
+        self.store
+    }
+
     pub fn get(&self, id: &IncidentId) -> Option<&Incident> {
         self.store.get(id)
     }
@@ -2057,6 +2077,28 @@ mod tests {
             Box::new(InMemoryNumberAllocator::new()),
             Box::new(TestClock::new()),
         )
+    }
+
+    /// ADR 0034: an adapter supplies a store holding the rows it loaded,
+    /// and must get that same store back to read what the call changed.
+    #[test]
+    fn with_store_reads_the_supplied_store_and_into_store_returns_it() {
+        let mut store = InMemoryIncidentStore::new();
+        let incident = crate::test_fixtures::valid_incident(IncidentState::Open);
+        let id = incident.incident_id;
+        store.insert(incident);
+
+        let uow = fresh_uow().with_store(Box::new(store));
+        assert!(
+            uow.get(&id).is_some(),
+            "the unit of work must read the supplied store"
+        );
+
+        let recovered: Box<dyn std::any::Any> = uow.into_store();
+        let recovered = recovered
+            .downcast::<InMemoryIncidentStore>()
+            .expect("into_store must return the store with_store was given");
+        assert_eq!(recovered.len(), 1);
     }
 
     fn event(detection_id: &str, sequence: u64, addr: IpAddr, observed: u64) -> DetectionEvent {

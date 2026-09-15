@@ -1,13 +1,14 @@
-//! PostgreSQL schema and migrations for the incident domain (Milestone
-//! 5B-2), plus the Phase 5B-1 dependency probe this crate started as.
+//! PostgreSQL persistence for the incident domain: schema and migrations
+//! (Milestone 5B-2), the staging store for ADR 0034's load–run–flush
+//! (5B-3(a)), plus the Phase 5B-1 dependency probe this crate started as.
 //!
-//! **Status: schema and migrations only.** [`migrations`] embeds the
-//! forward-only, checksummed SQL migrations under `migrations/` (ADR
-//! 0024) that build the tables, constraints, and indexes
+//! [`migrations`] embeds the forward-only, checksummed SQL migrations
+//! under `migrations/` (ADR 0024) that build the tables, constraints, and
+//! indexes
 //! [`docs/architecture/incident-persistence.md`](../../../docs/architecture/incident-persistence.md)
-//! describes. **No `IncidentStore` implementation, no connection pool
-//! wiring, no repository, no HTTP, no CLI exists here yet** — that is
-//! Milestone 5B-3 onward, out of scope for this crate as it stands. See
+//! describes. [`staging`] is the in-memory `IncidentStore` one unit-of-work
+//! call runs against. **No load/flush SQL, no connection pool wiring, no
+//! HTTP, and no CLI exist here yet**: those are 5B-3(b) onward. See
 //! `README.md` for how to run the migrations against an ephemeral,
 //! local-or-CI-only PostgreSQL instance, and
 //! [ADR 0029](../../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
@@ -38,6 +39,11 @@
 pub mod migrations {
     refinery::embed_migrations!("migrations");
 }
+
+/// The in-memory staging store for ADR 0034's load–run–flush
+/// (Milestone 5B-3(a)). No SQL; the load and flush statements that fill
+/// and drain it are 5B-3(b).
+pub mod staging;
 
 /// Never called. Exists only so every probed dependency's crate root is
 /// referenced by name, forcing the compiler to actually resolve and link

@@ -60,7 +60,10 @@ use crate::timeline::TimelineEntry;
 /// its backing storage. See the module doc for why the shape is
 /// fine-grained rather than a single atomic mutation call, and for the
 /// atomicity obligation that shape places on a future implementation.
-pub trait IncidentStore: std::fmt::Debug {
+///
+/// `Any` is a supertrait so an adapter can recover its own concrete store
+/// from [`crate::unit_of_work::IncidentUnitOfWork::into_store`] (ADR 0034).
+pub trait IncidentStore: std::any::Any + std::fmt::Debug {
     /// Looks up one incident by id.
     fn get(&self, id: &IncidentId) -> Option<&Incident>;
 
