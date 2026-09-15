@@ -85,7 +85,9 @@ coupling.
 
 ## Follow-Up
 
-- [ ] Confirm the test-database plan (ADR 0029 follow-up) actually
+- [x] **Done 2026-09-15 (5B-5):** the `postgres` CI job runs every
+      `crates/incident-postgres` test against 15, 16, 17 and 18.
+      Original item: confirm the test-database plan (ADR 0029 follow-up) actually
       exercises at least the minimum (15) and recommended (17) versions
       before Phase 5B-5 integration tests are considered complete.
 - [ ] Revisit this range when PostgreSQL 14's 2026-11-12 end-of-life
