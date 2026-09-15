@@ -133,6 +133,7 @@ pub struct IncidentSnapshot {
     pub notes: Vec<Note>,
     pub tags: BTreeMap<String, String>,
     pub policy_refs: Vec<PolicyRef>,
+    pub policy_refs_omitted: u64,
 }
 
 impl Incident {
@@ -188,6 +189,7 @@ impl Incident {
             notes,
             tags,
             policy_refs,
+            policy_refs_omitted,
         } = self;
 
         IncidentSnapshot {
@@ -231,6 +233,7 @@ impl Incident {
             notes: notes.clone(),
             tags: tags.clone(),
             policy_refs: policy_refs.clone(),
+            policy_refs_omitted: *policy_refs_omitted,
         }
     }
 }

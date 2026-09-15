@@ -91,6 +91,8 @@ pub struct IncidentRow {
     /// Ordered by key.
     pub tags: Vec<(String, String)>,
     pub policy_refs: Vec<PolicyRefRow>,
+    /// V13.
+    pub policy_refs_omitted: i64,
 }
 
 /// An actor split into `_type` and nullable `_id` (V2 design note 5).
@@ -449,6 +451,7 @@ impl IncidentRow {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
             policy_refs,
+            policy_refs_omitted: to_i64(s.policy_refs_omitted, "policy_refs_omitted")?,
         })
     }
 
@@ -584,6 +587,7 @@ impl IncidentRow {
             notes,
             tags: self.tags.into_iter().collect::<BTreeMap<_, _>>(),
             policy_refs,
+            policy_refs_omitted: to_u64(self.policy_refs_omitted, "policy_refs_omitted")?,
         })
     }
 }

@@ -551,6 +551,7 @@ impl IncidentUnitOfWork {
                 first_seen_sequence: event.sequence,
                 last_seen_sequence: event.sequence,
             }],
+            policy_refs_omitted: 0,
         };
 
         self.store.insert(incident);
@@ -640,7 +641,10 @@ impl IncidentUnitOfWork {
                         last_seen_sequence: event.sequence,
                     });
                 }
-                None => {}
+                None => {
+                    // At the cap: counted, never silently dropped (FU-34).
+                    incident.policy_refs_omitted = incident.policy_refs_omitted.saturating_add(1);
+                }
             }
             let new_category = derive_category(&incident.matched_metrics);
             let old_category = incident.category;
@@ -2813,6 +2817,54 @@ mod tests {
         assert_eq!(other.policy_version, 2);
         assert_eq!(other.first_seen_sequence, 1);
         assert_eq!(other.last_seen_sequence, 1);
+    }
+
+    /// FU-34: once `policy_refs` holds `POLICY_REFS_MAX` distinct policies,
+    /// an event under an unseen policy is counted in `policy_refs_omitted`
+    /// rather than silently dropped, and a recorded policy still updates.
+    #[test]
+    fn a_policy_past_the_cap_is_counted_as_omitted() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 77));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-policy", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        let cap = POLICY_REFS_MAX as u64;
+        for sequence in 1..cap {
+            let mut next = event("det-policy", sequence, addr, 5_000_000);
+            next.policy_id = format!("p-extra-{sequence}");
+            uow.ingest_detection_event(&correlator, &next).unwrap();
+        }
+        let incident = uow.get(&incident_id).unwrap();
+        assert_eq!(incident.policy_refs.len(), POLICY_REFS_MAX);
+        assert_eq!(incident.policy_refs_omitted, 0);
+
+        let mut overflow = event("det-policy", cap, addr, 5_000_000);
+        overflow.policy_id = "p-past-the-cap".to_string();
+        uow.ingest_detection_event(&correlator, &overflow).unwrap();
+        let mut recorded = event("det-policy", cap + 1, addr, 5_000_000);
+        recorded.policy_id = "p-extra-1".to_string();
+        uow.ingest_detection_event(&correlator, &recorded).unwrap();
+
+        let incident = uow.get(&incident_id).unwrap();
+        assert_eq!(incident.policy_refs.len(), POLICY_REFS_MAX);
+        assert_eq!(
+            incident.policy_refs_omitted, 1,
+            "the policy past the cap is counted, not silently dropped"
+        );
+        assert!(incident
+            .policy_refs
+            .iter()
+            .all(|p| p.policy_id != "p-past-the-cap"));
+        let updated = incident
+            .policy_refs
+            .iter()
+            .find(|p| p.policy_id == "p-extra-1")
+            .unwrap();
+        assert_eq!(updated.last_seen_sequence, cap + 1);
     }
 
     /// FU-37: a manual operator reopen must also clear the stale

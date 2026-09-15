@@ -115,5 +115,6 @@ pub(crate) fn valid_incident(state: IncidentState) -> Incident {
         notes: Vec::new(),
         tags: BTreeMap::new(),
         policy_refs: Vec::new(),
+        policy_refs_omitted: 0,
     }
 }

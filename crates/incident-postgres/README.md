@@ -72,16 +72,18 @@ rows 32–37).
 
 ## Migrations
 
-`migrations/` holds twelve `refinery`-compatible SQL files
+`migrations/` holds thirteen `refinery`-compatible SQL files
 (`V1__enable_extensions.sql` through
-`V12__policy_reference_order.sql`). V1–V11 follow the dependency order
+`V13__policy_refs_omitted.sql`). V1–V11 follow the dependency order
 [phase5-implementation-plan.md](../../docs/development/phase5-implementation-plan.md)'s
 5B-2 section fixes: extensions, `incidents`, detection-event links,
 timeline, audit, notes/tags/assignments, policy references and number
 allocators, idempotency, outbox and dead-letter, the active-incident
 partial unique indexes, and the RLS-ready application role (ADR
 0032). V12 (5B-3(b)) adds `ref_index` so a load keeps policy references
-in the order the domain holds them.
+in the order the domain holds them. V13 (5B-5) adds
+`policy_refs_omitted`, so a policy past the per-incident cap is counted
+rather than silently dropped (FU-34).
 
 They are embedded into this crate's binary at compile time via
 [`refinery::embed_migrations!`] (`src/lib.rs`'s `migrations` module) —

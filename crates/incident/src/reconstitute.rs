@@ -197,6 +197,11 @@ impl Incident {
             "exceeds the per-incident cap",
         )?;
         require(
+            s.policy_refs_omitted == 0 || s.policy_refs.len() == POLICY_REFS_MAX,
+            "policy_refs_omitted",
+            "counts omissions, but the policy references are below their cap",
+        )?;
+        require(
             s.evidence.retained_count() <= EVIDENCE_RETAINED_LIMIT,
             "evidence",
             "retains more references than the ledger permits",
@@ -374,6 +379,7 @@ impl Incident {
             notes: s.notes,
             tags: s.tags,
             policy_refs: s.policy_refs,
+            policy_refs_omitted: s.policy_refs_omitted,
         })
     }
 }
