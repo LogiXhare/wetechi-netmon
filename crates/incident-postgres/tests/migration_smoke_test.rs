@@ -30,11 +30,14 @@
 //!
 //! Without that environment variable set, this test prints why it is
 //! skipping and passes trivially — `cargo test --workspace` must stay
-//! green in an environment with no Docker/PostgreSQL available (this
-//! project's own CI `rust` job does not currently provision one; see
-//! this crate's README for the open question that leaves), and a hard
-//! failure on missing opt-in infrastructure would make every ordinary
-//! contributor's `cargo test` red for a reason unrelated to their change.
+//! green in an environment with no Docker/PostgreSQL available, and a
+//! hard failure on missing opt-in infrastructure would make every
+//! ordinary contributor's `cargo test` red for a reason unrelated to
+//! their change. CI is different: the `rust` job in
+//! `.github/workflows/validate.yml` provisions a PostgreSQL service
+//! container, sets the variable, and fails the job if this test prints
+//! its skip message anyway (FU-46) — so a skip can never pass silently
+//! there.
 
 const TEST_DATABASE_URL_VAR: &str = "WETECHINETMON_INCIDENT_POSTGRES_TEST_URL";
 

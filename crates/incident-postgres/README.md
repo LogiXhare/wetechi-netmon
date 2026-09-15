@@ -71,12 +71,14 @@ itself with an explanatory message rather than failing — an environment
 with no Docker/PostgreSQL available must still be able to run `cargo
 test --workspace` cleanly.
 
-**Open item, not yet resolved:** this repository's `.github/workflows/validate.yml`
-`rust` job does not currently provision a PostgreSQL service container,
-so the smoke test above does not yet run in CI — only locally, with
-Docker, by whoever sets the environment variable. Wiring a `postgres:`
-service into that job (or a dedicated workflow) is follow-up work, not
-done as part of this migration-authoring milestone.
+**In CI (FU-46):** the `rust` job in `.github/workflows/validate.yml`
+provisions the same ephemeral `postgres:17-alpine` instance as a
+service container, sets `WETECHINETMON_INCIDENT_POSTGRES_TEST_URL`, and
+runs this crate's tests in their own step — failing the job if any test
+prints its skip message, so a skip cannot pass silently there. Every PR
+therefore runs the smoke test against a real PostgreSQL. Only the
+recommended version (17) runs today; the full 15/16/17/18 matrix is
+Milestone 5B-5's ([ADR 0025](../../docs/architecture/decisions/0025-phase5b-postgresql-version-support.md)).
 
 ## What this crate does not do
 
