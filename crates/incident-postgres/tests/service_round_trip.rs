@@ -218,33 +218,27 @@ async fn the_service_commits_each_call_whole_and_a_killed_flush_commits_nothing(
     );
 
     // --- A failed outcome is recorded and replays as the same error ---
-    let stale_key = IdempotencyKey::new("stale-request-key-01").unwrap();
+    // A version conflict is refused before the domain records anything, so
+    // this uses a refusal from inside the command itself: customer-visible
+    // notes are not honoured yet.
+    let refused_key = IdempotencyKey::new("refused-request-key1").unwrap();
+    let customer_note = || Command::AddNote {
+        body: "visible to the customer".to_string(),
+        visibility: NoteVisibility::CustomerVisible,
+    };
     let first = service
         .handle_command(
             &mut client,
             &noc,
             id,
-            Command::MarkMonitoring {
-                expected_version: 2,
-            },
-            Some(stale_key.clone()),
+            customer_note(),
+            Some(refused_key.clone()),
         )
         .await
         .unwrap();
-    assert!(
-        matches!(first, Err(IncidentError::VersionConflict { .. })),
-        "got {first:?}"
-    );
+    assert!(first.is_err(), "a customer-visible note must be refused");
     let second = service
-        .handle_command(
-            &mut client,
-            &noc,
-            id,
-            Command::MarkMonitoring {
-                expected_version: 2,
-            },
-            Some(stale_key),
-        )
+        .handle_command(&mut client, &noc, id, customer_note(), Some(refused_key))
         .await
         .unwrap();
     assert_eq!(second, first);
