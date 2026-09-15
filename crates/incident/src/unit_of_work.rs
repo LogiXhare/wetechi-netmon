@@ -502,6 +502,7 @@ impl IncidentUnitOfWork {
             severity: event.severity,
             severity_source: SeveritySource::Detection,
             ever_critical: event.severity == wetechinetmon_detector::Severity::Critical,
+            maximum_detected_severity: event.severity,
             priority: Priority::default_for(event.severity),
             closure_reason: None,
             state_before_recovering: None,

@@ -78,6 +78,7 @@ use crate::limits::{
     TAGS_PER_INCIDENT_MAX, TAG_KEY_MAX_LEN, TAG_VALUE_MAX_LEN, TITLE_MAX_LEN,
 };
 use crate::number::INCIDENT_NUMBER_MAX_LEN;
+use crate::severity::SeveritySource;
 use crate::snapshot::IncidentSnapshot;
 use crate::state::IncidentState;
 use crate::suppression::{Suppression, SUPPRESSION_REASON_MAX_LEN};
@@ -281,6 +282,20 @@ impl Incident {
             "must be set for an incident whose severity is Critical",
         )?;
         require(
+            s.maximum_detected_severity != Severity::Critical || s.ever_critical,
+            "ever_critical",
+            "must be set for an incident that has ever detected Critical",
+        )?;
+        // A detection-sourced severity came from an event, so it cannot
+        // exceed the highest severity any event reported. An operator
+        // override may (it is not a detection), hence the source check.
+        require(
+            s.severity_source != SeveritySource::Detection
+                || (s.severity as u8) <= (s.maximum_detected_severity as u8),
+            "maximum_detected_severity",
+            "is below a detection-sourced severity",
+        )?;
+        require(
             (s.reopen_count > 0) == s.reopened_at.is_some(),
             "reopened_at",
             "is set exactly when the incident has been reopened at least once",
@@ -333,6 +348,7 @@ impl Incident {
             severity: s.severity,
             severity_source: s.severity_source,
             ever_critical: s.ever_critical,
+            maximum_detected_severity: s.maximum_detected_severity,
             priority: s.priority,
             closure_reason: s.closure_reason,
             state_before_recovering: s.state_before_recovering,
@@ -638,6 +654,34 @@ mod tests {
             Incident::reconstitute(s).is_ok(),
             "ever_critical is never cleared, so this is the normal downgrade shape"
         );
+    }
+
+    #[test]
+    fn a_critical_detection_without_ever_critical_is_rejected() {
+        let mut s = snapshot_of(IncidentState::Open);
+        s.maximum_detected_severity = Severity::Critical;
+        s.ever_critical = false;
+        expect_rejected(s, "ever_critical");
+    }
+
+    #[test]
+    fn a_detection_severity_above_the_maximum_detected_is_rejected() {
+        let mut s = snapshot_of(IncidentState::Open);
+        s.severity = Severity::Major;
+        s.severity_source = SeveritySource::Detection;
+        s.maximum_detected_severity = Severity::Minor;
+        expect_rejected(s, "maximum_detected_severity");
+    }
+
+    /// An operator may raise severity past anything detected; that is an
+    /// override, not a detection, so the maximum stays where it was.
+    #[test]
+    fn an_operator_severity_above_the_maximum_detected_is_accepted() {
+        let mut s = snapshot_of(IncidentState::Open);
+        s.severity = Severity::Major;
+        s.severity_source = SeveritySource::Operator;
+        s.maximum_detected_severity = Severity::Minor;
+        assert!(Incident::reconstitute(s).is_ok());
     }
 
     #[test]
