@@ -156,7 +156,11 @@ async fn a_statement_timeout_commits_nothing_and_a_restarted_service_recovers_fr
     // --- A restart: nothing survives in the process, everything in the database ---
     const PENDING: &str = "SELECT count(*) FROM incident_outbox WHERE status = 'pending'";
     let pending_before = scalar(&client, PENDING, &[]).await;
-    assert!(pending_before >= 2, "the open and the acknowledgement");
+    // Opening writes `IncidentOpened`; acknowledging writes no outbox event.
+    assert!(
+        pending_before >= 1,
+        "the opening's message is still pending"
+    );
     drop(service);
     drop(client);
 
