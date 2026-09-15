@@ -1,6 +1,6 @@
 [package]
 name = "wetechinetmon-incident-postgres"
-description = "PostgreSQL persistence for the incident domain: schema and forward-only refinery migrations (5B-2) and the in-memory staging store for ADR 0034's load-run-flush (5B-3(a)). No load/flush SQL, connection pool wiring, or production database connection yet."
+description = "PostgreSQL persistence for the incident domain: schema and forward-only refinery migrations (5B-2), the in-memory staging store for ADR 0034's load-run-flush (5B-3(a)), and the incident row mapping with per-incident insert/update/load SQL (5B-3(b)). No working-set load, history flush, connection pool wiring, or production database connection yet."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,19 +8,25 @@ publish.workspace = true
 
 [dependencies]
 wetechinetmon-incident = { path = "../incident" }
+# Workspace-internal crate, not a third-party dependency: the row mapping
+# reads the scope, direction, family and severity types the incident
+# snapshot carries.
+wetechinetmon-detector = { path = "../detector" }
 uuid.workspace = true
 tokio-postgres.workspace = true
 deadpool-postgres.workspace = true
 rustls.workspace = true
 tokio-postgres-rustls.workspace = true
 refinery.workspace = true
+# Already used by crates/incident, crates/detector and crates/storage at
+# these same requirements; nothing new enters Cargo.lock.
+serde = "1"
+serde_json = "1"
+thiserror.workspace = true
 
 [dev-dependencies]
 # Already an approved, existing workspace dependency (vendored since
 # Phase 2 in crates/collector, crates/storage, tools/flow-replay) — used
-# here only to drive the async migration smoke test
-# (tests/migration_smoke_test.rs), not a new dependency for this crate.
+# here only to drive the async PostgreSQL tests, not a new dependency for
+# this crate.
 tokio = { workspace = true }
-# Workspace-internal crate, not a third-party dependency: the staging-store
-# tests build real detection events to drive the unit of work.
-wetechinetmon-detector = { path = "../detector" }

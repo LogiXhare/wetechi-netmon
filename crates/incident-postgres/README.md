@@ -1,6 +1,6 @@
 # Incident PostgreSQL Adapter
 
-**Status:** Milestone 5B-3(a). This crate carries:
+**Status:** Milestone 5B-3(b), in progress. This crate carries:
 
 - the forward-only, checksummed PostgreSQL schema for the incident domain
   (`migrations/`, 5B-2), with a migration smoke test and a compose file
@@ -10,9 +10,16 @@
   [ADR 0034](../../docs/architecture/decisions/0034-phase5b-persistence-bridge-load-run-flush.md)'s
   load–run–flush. It records what the call changed and refuses to hand
   back changes if the call looked up a key the load step never fetched.
+- `src/row.rs`, the pure mapping between an incident and its `incidents`,
+  notes, tags and policy-reference rows, and `src/sql.rs`, which inserts,
+  version-guard updates and loads one incident. `tests/incident_row_mapping.rs`
+  checks the mapping without a database; `tests/incident_row_round_trip.rs`
+  runs the SQL against PostgreSQL.
 
-**There is still no load/flush SQL, no connection pool wiring, and no
-production database connection.** Those are 5B-3(b) and (c). See
+**Not here yet:** loading a call's whole working set, flushing the
+timeline, audit, outbox, dedup and idempotency rows, the transaction
+wrapper, retry, connection pool wiring, and any production database
+connection. Those are the rest of 5B-3(b) and (c). See
 [ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
 for why this is the crate's real, final placement, and
 [FU-42](../../docs/development/follow-ups.md) for the dependency probe it
@@ -27,15 +34,16 @@ rows 32–37).
 
 ## Migrations
 
-`migrations/` holds eleven `refinery`-compatible SQL files
+`migrations/` holds twelve `refinery`-compatible SQL files
 (`V1__enable_extensions.sql` through
-`V11__rls_ready_roles.sql`), in the dependency order
+`V12__policy_reference_order.sql`). V1–V11 follow the dependency order
 [phase5-implementation-plan.md](../../docs/development/phase5-implementation-plan.md)'s
 5B-2 section fixes: extensions, `incidents`, detection-event links,
 timeline, audit, notes/tags/assignments, policy references and number
 allocators, idempotency, outbox and dead-letter, the active-incident
-partial unique indexes, and finally the RLS-ready application role (ADR
-0032).
+partial unique indexes, and the RLS-ready application role (ADR
+0032). V12 (5B-3(b)) adds `ref_index` so a load keeps policy references
+in the order the domain holds them.
 
 They are embedded into this crate's binary at compile time via
 [`refinery::embed_migrations!`] (`src/lib.rs`'s `migrations` module) —
