@@ -43,6 +43,15 @@ pub enum PersistError {
     #[error("the idempotency key was recorded concurrently by another request")]
     IdempotencyKeyTaken,
 
+    /// A failure a test armed at a flush point ([`crate::fault`]). Only the
+    /// `fault-injection` feature can produce it.
+    #[cfg(feature = "fault-injection")]
+    #[error("injected failure at {point:?} (transient: {transient})")]
+    InjectedFault {
+        point: crate::fault::FlushPoint,
+        transient: bool,
+    },
+
     #[error("database error: {0}")]
     Database(#[from] tokio_postgres::Error),
 }

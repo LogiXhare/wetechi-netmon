@@ -1,6 +1,6 @@
 [package]
 name = "wetechinetmon-incident-postgres"
-description = "PostgreSQL persistence for the incident domain: schema and forward-only refinery migrations (5B-2), and ADR 0034's load-run-flush over it, from the staging store (5B-3(a)) through row mapping, load, flush and the transaction service (5B-3(b)) to retry (5B-3(c)). No connection pool wiring or production database connection yet."
+description = "PostgreSQL persistence for the incident domain: schema and forward-only refinery migrations (5B-2), and ADR 0034's load-run-flush over it, from the staging store (5B-3(a)) through row mapping, load, flush and the transaction service (5B-3(b)) to retry (5B-3(c)), the outbox consumer and retention (5B-4), and test-only failure injection (5B-5). No connection pool wiring or production database connection yet."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -29,3 +29,13 @@ thiserror.workspace = true
 # runtime. ADR 0021 keeps Tokio out of crates/incident, not out of this
 # adapter.
 tokio = { workspace = true }
+
+[features]
+# Test-only: lets a test arm a one-shot failure at a flush commit point
+# (src/fault.rs). Off in every normal build.
+fault-injection = []
+
+[dev-dependencies]
+# This crate itself, with fault-injection on, so every `cargo test` of the
+# crate can inject failures while no normal build contains the hooks.
+wetechinetmon-incident-postgres = { path = ".", features = ["fault-injection"] }
