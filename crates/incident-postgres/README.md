@@ -16,10 +16,18 @@
   checks the mapping without a database; `tests/incident_row_round_trip.rs`
   runs the SQL against PostgreSQL.
 
-**Not here yet:** loading a call's whole working set, flushing the
-timeline, audit, outbox, dedup and idempotency rows, the transaction
-wrapper, retry, connection pool wiring, and any production database
-connection. Those are the rest of 5B-3(b) and (c). See
+- `src/load.rs`, `src/flush.rs` and `src/service.rs`: the rest of the
+  load–run–flush. `IncidentPersistence` runs each unit-of-work entry
+  point as one Read Committed transaction: load the working set under
+  the ADR's locks, run the domain call over the staging store, flush the
+  incidents and their detection-event links, timeline, audit, outbox and
+  idempotency rows (`src/history.rs` maps those), then commit.
+  `tests/service_round_trip.rs` covers it on PostgreSQL, including
+  FU-44's gate that a connection killed mid-flush commits nothing.
+
+**Not here yet:** retrying a retryable failure from a fresh load
+(5B-3(c)), connection pool wiring, and any production database
+connection. See
 [ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
 for why this is the crate's real, final placement, and
 [FU-42](../../docs/development/follow-ups.md) for the dependency probe it
