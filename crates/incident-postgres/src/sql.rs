@@ -51,7 +51,7 @@ INSERT INTO incidents (
     matched_metrics, first_detected_at, opened_at, last_detected_at,
     last_updated_at, acknowledged_at, recovering_since, resolved_at, closed_at,
     reopened_at, reopen_count, assigned_kind, assigned_id, updated_by_type,
-    updated_by_id, evidence_summary
+    updated_by_id, evidence_summary, policy_refs_omitted
 ) VALUES (
     $1::text::uuid, $2, $3, $4, $5,
     $6, $7, $8, $9::text::inet, network($10::text::inet),
@@ -62,10 +62,10 @@ INSERT INTO incidents (
     $30::text::jsonb, $31, $32, $33,
     $34, $35, $36, $37, $38,
     $39, $40, $41, $42, $43,
-    $44, $45::text::jsonb
+    $44, $45::text::jsonb, $46
 )";
 
-/// Same parameter numbering as [`INSERT_INCIDENT`], plus `$46`, the
+/// Same parameter numbering as [`INSERT_INCIDENT`], plus `$47`, the
 /// version the call loaded.
 const UPDATE_INCIDENT: &str = "\
 UPDATE incidents SET
@@ -111,8 +111,9 @@ UPDATE incidents SET
     assigned_id = $42,
     updated_by_type = $43,
     updated_by_id = $44,
-    evidence_summary = $45::text::jsonb
-WHERE incident_id = $1::text::uuid AND tenant_id = $4 AND version = $46";
+    evidence_summary = $45::text::jsonb,
+    policy_refs_omitted = $46
+WHERE incident_id = $1::text::uuid AND tenant_id = $4 AND version = $47";
 
 /// Every column the load reads, without a `WHERE` clause.
 const SELECT_COLUMNS: &str = "\
@@ -125,7 +126,8 @@ SELECT incident_id::text AS incident_id, incident_number, schema_version, tenant
     matched_metrics::text AS matched_metrics, first_detected_at, opened_at,
     last_detected_at, last_updated_at, acknowledged_at, recovering_since,
     resolved_at, closed_at, reopened_at, reopen_count, assigned_kind, assigned_id,
-    updated_by_type, updated_by_id, evidence_summary::text AS evidence_summary
+    updated_by_type, updated_by_id, evidence_summary::text AS evidence_summary,
+    policy_refs_omitted
 FROM incidents";
 
 /// The states the V10 partial unique indexes cover, and the ones the
@@ -394,6 +396,7 @@ async fn incident_from_row(client: &impl GenericClient, r: Row) -> Result<Incide
         notes,
         tags,
         policy_refs,
+        policy_refs_omitted: r.try_get("policy_refs_omitted")?,
     };
     row.into_incident()
 }
@@ -487,8 +490,8 @@ impl<'a> Bound<'a> {
         })
     }
 
-    /// `$1` to `$45`, in the column order of [`INSERT_INCIDENT`].
-    fn params(&self) -> [&(dyn ToSql + Sync); 45] {
+    /// `$1` to `$46`, in the column order of [`INSERT_INCIDENT`].
+    fn params(&self) -> [&(dyn ToSql + Sync); 46] {
         let r = self.row;
         [
             &r.incident_id,
@@ -536,6 +539,7 @@ impl<'a> Bound<'a> {
             &r.updated_by.actor_type,
             &r.updated_by.actor_id,
             &r.evidence_summary,
+            &r.policy_refs_omitted,
         ]
     }
 }

@@ -144,6 +144,11 @@ pub struct Incident {
     pub notes: Vec<Note>,
     pub tags: BTreeMap<String, String>,
     pub policy_refs: Vec<PolicyRef>,
+    /// Linked events whose policy was not recorded in `policy_refs` because
+    /// it already held `POLICY_REFS_MAX` distinct policies (FU-34). Counts
+    /// events, not distinct policies, the way the evidence ledger counts
+    /// what it stops retaining, so an omission is never silent.
+    pub policy_refs_omitted: u64,
 }
 
 impl Incident {
