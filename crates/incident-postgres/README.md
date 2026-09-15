@@ -48,6 +48,13 @@
   turns on. `tests/failure_injection.rs` fails a creating ingest at each of
   the eight flush points and proves nothing committed, fails a command the
   same way, and checks that a transient failure is rerun and commits once.
+- `tests/outbox_concurrency.rs` (5B-5) runs ADR 0033's outbox concurrency
+  and crash list on separate connections. It covers simultaneous
+  claimers, a rolled-back claim, and a worker crashing before and after
+  its claim commits. It also checks that lease and backoff are measured
+  on `transaction_timestamp()`, that `attempts` counts once when two
+  holders race, and that the retry limit dead-letters on the same failure
+  whatever claims happen in between.
 
 **Not here yet:** a scheduler for the consumer and retention jobs,
 connection pool wiring, and any production database connection. See
