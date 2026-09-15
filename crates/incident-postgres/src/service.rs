@@ -51,9 +51,21 @@ pub type Outcome<T> = Result<Result<T, IncidentError>, PersistError>;
 pub struct IncidentPersistence {
     generator: Arc<dyn IncidentGenerator>,
     clock: Arc<dyn Clock>,
+    decision_time: DecisionTime,
     retry: RetryPolicy,
     number_allocation_year: Option<u32>,
     policies: Option<(ClosurePolicy, ReopenPolicy)>,
+}
+
+/// Where a call's wall-clock decision time comes from (ADR 0031).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecisionTime {
+    /// PostgreSQL's `transaction_timestamp()`, read at the start of each
+    /// attempt. Authoritative for every reopen, suppression and lifecycle
+    /// decision, so application servers' clocks never disagree about it.
+    Database,
+    /// The injected clock's wall time.
+    Injected,
 }
 
 #[derive(Clone, Copy)]
@@ -66,15 +78,26 @@ enum Load<'a> {
 }
 
 impl IncidentPersistence {
-    /// Uses [`RetryPolicy::approved_default`].
+    /// Uses [`RetryPolicy::approved_default`]. Decisions are made at the
+    /// database's `transaction_timestamp()` (ADR 0031); `clock` supplies
+    /// only monotonic time, unless [`Self::with_injected_decision_time`].
     pub fn new(generator: Arc<dyn IncidentGenerator>, clock: Arc<dyn Clock>) -> Self {
         IncidentPersistence {
             generator,
             clock,
+            decision_time: DecisionTime::Database,
             retry: RetryPolicy::approved_default(),
             number_allocation_year: None,
             policies: None,
         }
+    }
+
+    /// Makes decisions at the injected clock's wall time instead of the
+    /// database's. ADR 0031 makes the database authoritative, so this is for
+    /// tests that need to control time, not for production.
+    pub fn with_injected_decision_time(mut self) -> Self {
+        self.decision_time = DecisionTime::Injected;
+        self
     }
 
     pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
@@ -210,6 +233,15 @@ impl IncidentPersistence {
             .isolation_level(IsolationLevel::ReadCommitted)
             .start()
             .await?;
+        let decided_at = match self.decision_time {
+            DecisionTime::Database => Some(
+                transaction
+                    .query_one("SELECT transaction_timestamp()", &[])
+                    .await?
+                    .try_get::<_, SystemTime>(0)?,
+            ),
+            DecisionTime::Injected => None,
+        };
 
         let event = match load {
             Load::Ingest(event) => Some(event),
@@ -238,7 +270,10 @@ impl IncidentPersistence {
             let mut uow = IncidentUnitOfWork::new(
                 Box::new(SharedGenerator(Arc::clone(&self.generator))),
                 Box::new(StagedNumbers(Arc::clone(&numbers))),
-                Box::new(SharedClock(Arc::clone(&self.clock))),
+                Box::new(DecisionClock {
+                    clock: Arc::clone(&self.clock),
+                    decided_at,
+                }),
             )
             .with_store(Box::new(store));
             if let Some(year) = self.number_allocation_year {
@@ -287,15 +322,20 @@ impl IncidentGenerator for SharedGenerator {
     }
 }
 
-struct SharedClock(Arc<dyn Clock>);
+/// One attempt's clock: monotonic time from the injected clock, and wall time
+/// from the transaction when the service decides on database time.
+struct DecisionClock {
+    clock: Arc<dyn Clock>,
+    decided_at: Option<SystemTime>,
+}
 
-impl Clock for SharedClock {
+impl Clock for DecisionClock {
     fn monotonic(&self) -> Instant {
-        self.0.monotonic()
+        self.clock.monotonic()
     }
 
     fn wall(&self) -> SystemTime {
-        self.0.wall()
+        self.decided_at.unwrap_or_else(|| self.clock.wall())
     }
 }
 

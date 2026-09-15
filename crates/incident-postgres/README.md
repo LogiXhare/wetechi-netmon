@@ -55,6 +55,13 @@
   on `transaction_timestamp()`, that `attempts` counts once when two
   holders race, and that the retry limit dead-letters on the same failure
   whatever claims happen in between.
+- Decision time (ADR 0031). Each `IncidentPersistence` attempt reads
+  PostgreSQL's `transaction_timestamp()` and gives it to the domain as
+  wall time. The injected clock supplies only monotonic time, unless a
+  test opts into `with_injected_decision_time()`. `tests/clock_skew.rs`
+  checks that a recurrence against a future `resolved_at` returns
+  `ClockSkew`, with no reopen or duplicate, and that decisions use the
+  database's time.
 
 **Not here yet:** a scheduler for the consumer and retention jobs,
 connection pool wiring, and any production database connection. See
