@@ -107,14 +107,15 @@ itself with an explanatory message rather than failing — an environment
 with no Docker/PostgreSQL available must still be able to run `cargo
 test --workspace` cleanly.
 
-**In CI (FU-46):** the `rust` job in `.github/workflows/validate.yml`
-provisions the same ephemeral `postgres:17-alpine` instance as a
-service container, sets `WETECHINETMON_INCIDENT_POSTGRES_TEST_URL`, and
-runs this crate's tests in their own step — failing the job if any test
+**In CI (FU-46, 5B-5):** the `postgres` job in
+`.github/workflows/validate.yml` runs this crate's tests once for each
+PostgreSQL version
+[ADR 0025](../../docs/architecture/decisions/0025-phase5b-postgresql-version-support.md)
+supports: 15, 16, 17 and 18. Each run gets an ephemeral
+`postgres:<version>-alpine` service container and sets
+`WETECHINETMON_INCIDENT_POSTGRES_TEST_URL`. The job fails if any test
 prints its skip message, so a skip cannot pass silently there. Every PR
-therefore runs the smoke test against a real PostgreSQL. Only the
-recommended version (17) runs today; the full 15/16/17/18 matrix is
-Milestone 5B-5's ([ADR 0025](../../docs/architecture/decisions/0025-phase5b-postgresql-version-support.md)).
+therefore runs every PostgreSQL test against all four versions.
 
 ## What this crate does not do
 
