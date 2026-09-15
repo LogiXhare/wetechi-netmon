@@ -139,9 +139,14 @@ reality) is now an explicit threat-model entry — see
       ([ADR 0030](0030-phase5b-aggregate-reconstitution.md)) to accept a
       durable UTC timestamp representation, not an `Instant`, for every
       restored field.
-- [ ] Add the clock-skew integration test (an event whose
+- [x] Add the clock-skew integration test (an event whose
       `transaction_timestamp()` predates the persisted reference)
-      to the Phase 5B-5 test plan.
+      to the Phase 5B-5 test plan. Done 2026-09-15:
+      `crates/incident-postgres/tests/clock_skew.rs`. The same change
+      makes `IncidentPersistence` decide on `transaction_timestamp()`,
+      which it previously took from the application clock. It also stops
+      the domain from reading a skewed reopen comparison as "outside the
+      window", which fell through to creating a duplicate incident.
 - [ ] Add the bounded clock-skew metric to the observability plan.
 - [ ] Close **FU-35** (durable timeline/audit timestamps) against this
       ADR plus [ADR 0027](0027-phase5b-durable-record-identity.md).

@@ -289,8 +289,8 @@ cascades into audit.
 
 **Status (2026-09-15):** in progress.
 
-- **Done:** the CI `postgres` job runs every PostgreSQL test against 15, 16, 17 and 18 and fails if any skips (ADR 0025, FU-46). Cross-tenant paths take a `PlatformAuthority` (ADR 0032 item 7). `tests/failure_injection.rs` injects a failure at each of the eight flush points and proves nothing commits, and runs a transient failure through the retry loop. `tests/outbox_concurrency.rs` covers ADR 0033's concurrency and crash test list. A policy past the per-incident cap is now counted in `policy_refs_omitted` (V13, FU-34) and tested in `tests/policy_reference_overflow.rs`.
-- **Remaining:** the rest of the persistence plan's required integration tests.
+- **Done:** the CI `postgres` job runs every PostgreSQL test against 15, 16, 17 and 18 and fails if any skips (ADR 0025, FU-46). Cross-tenant paths take a `PlatformAuthority` (ADR 0032 item 7). `tests/failure_injection.rs` injects a failure at each of the eight flush points and proves nothing commits, and runs a transient failure through the retry loop. `tests/outbox_concurrency.rs` covers ADR 0033's concurrency and crash test list. A policy past the per-incident cap is now counted in `policy_refs_omitted` (V13, FU-34) and tested in `tests/policy_reference_overflow.rs`. `IncidentPersistence` decides on `transaction_timestamp()` and returns `ClockSkew` for a reopen against a future reference, instead of creating a duplicate (ADR 0031, `tests/clock_skew.rs`).
+- **Remaining:** the rest of the persistence plan's required integration tests. These include statement timeout, pool exhaustion, service restart, concurrent reopen races, the network and hostgroup partial unique indexes under concurrent creates, UUIDv7 round trip, tenant concealment, and Windows builds. ADR 0031's clock-skew metric waits for 5C's metrics.
 
 ## Milestone 5C — Ingestion and correlation
 

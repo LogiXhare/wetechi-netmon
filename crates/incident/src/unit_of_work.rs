@@ -431,7 +431,10 @@ impl IncidentUnitOfWork {
 
         if let Some(candidate) = reopen_candidate {
             let now = self.decision_time()?;
-            if transition::evaluate_reopen(candidate, &self.reopen_policy, &now).unwrap_or(false) {
+            // ADR 0031: a decision time before the candidate's reference is
+            // clock skew. Returned, never read as "outside the window": that
+            // would fall through to creating a duplicate incident.
+            if transition::evaluate_reopen(candidate, &self.reopen_policy, &now)? {
                 let incident_id = candidate.incident_id;
                 self.store.dedup_record(dedup, incident_id);
                 return self.reopen_incident_internal(
@@ -2356,6 +2359,67 @@ mod tests {
         assert_eq!(third.outcome_kind, IngestOutcomeKind::Updated);
         assert_eq!(third.incident_id, Some(incident_id));
         assert_eq!(uow.incident_count(), 1);
+    }
+
+    /// ADR 0031: a recurrence whose decision time precedes the candidate's
+    /// `resolved_at` is refused with `ClockSkew`. It neither reopens on an
+    /// untrustworthy comparison nor opens a duplicate incident.
+    #[test]
+    fn a_recurrence_before_the_reference_time_is_refused_not_duplicated() {
+        let clock = std::sync::Arc::new(TestClock::new());
+        struct Shared(std::sync::Arc<TestClock>);
+        impl Clock for Shared {
+            fn monotonic(&self) -> std::time::Instant {
+                self.0.monotonic()
+            }
+            fn wall(&self) -> std::time::SystemTime {
+                self.0.wall()
+            }
+        }
+        let mut uow = IncidentUnitOfWork::new(
+            Box::new(TestIncidentGenerator::starting_at(1)),
+            Box::new(InMemoryNumberAllocator::new()),
+            Box::new(Shared(clock.clone())),
+        );
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 41));
+
+        clock.advance(Duration::from_secs(3_600));
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &event("det-skew", 0, addr, 5_000_000))
+            .unwrap()
+            .incident_id
+            .unwrap();
+        uow.handle_command(
+            &senior_operator("acme"),
+            incident_id,
+            Command::ResolveIncident {
+                expected_version: 1,
+                resolution_note: None,
+            },
+            None,
+        )
+        .unwrap();
+
+        // A second process whose clock has not reached that resolution,
+        // reading the same store.
+        let mut behind = IncidentUnitOfWork::new(
+            Box::new(TestIncidentGenerator::starting_at(100)),
+            Box::new(InMemoryNumberAllocator::new()),
+            Box::new(TestClock::new()),
+        )
+        .with_store(uow.into_store());
+        let refused = behind
+            .ingest_detection_event(&correlator, &event("det-skew-recur", 0, addr, 6_000_000));
+        assert!(
+            matches!(refused, Err(IncidentError::ClockSkew { .. })),
+            "got {refused:?}"
+        );
+        assert_eq!(behind.incident_count(), 1, "no duplicate incident");
+        assert_eq!(
+            behind.get(&incident_id).unwrap().state,
+            IncidentState::Resolved
+        );
     }
 
     /// Version-overflow safety (required correction): a command that
