@@ -75,3 +75,4 @@ yet:
 | [0031](0031-phase5b-durable-time.md) | Phase 5B Durable Time Semantics | Accepted |
 | [0032](0032-phase5b-tenant-isolation-and-rls-readiness.md) | Phase 5B Tenant Isolation and Row-Level Security Readiness | Accepted |
 | [0033](0033-phase5b-transactional-outbox-and-dead-letter.md) | Phase 5B Transactional Outbox and Dead-Letter Design | Accepted |
+| [0034](0034-phase5b-persistence-bridge-load-run-flush.md) | Phase 5B Persistence Bridge: Load, Run, Flush | Accepted |
