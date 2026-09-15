@@ -111,6 +111,8 @@ impl PersistError {
             PersistError::Database(error) => error
                 .as_db_error()
                 .is_some_and(|db| retryable_sqlstate(db.code(), db.constraint())),
+            #[cfg(feature = "fault-injection")]
+            PersistError::InjectedFault { transient, .. } => *transient,
             _ => false,
         }
     }

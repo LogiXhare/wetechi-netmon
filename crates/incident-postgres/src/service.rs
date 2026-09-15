@@ -266,6 +266,7 @@ impl IncidentPersistence {
         };
 
         flush(&transaction, tenant, &changes, event, consumed).await?;
+        crate::fault::check(crate::fault::FlushPoint::BeforeCommit)?;
         transaction.commit().await?;
         Ok(outcome)
     }

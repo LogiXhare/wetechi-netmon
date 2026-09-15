@@ -2134,6 +2134,7 @@ dependencies = [
  "uuid",
  "wetechinetmon-detector",
  "wetechinetmon-incident",
+ "wetechinetmon-incident-postgres",
 ]
 
 [[package]]

@@ -86,6 +86,10 @@ pub mod retention;
 /// ADR 0032).
 pub mod platform;
 
+/// Failure injection at each flush commit point, behind the
+/// `fault-injection` feature (5B-5).
+pub mod fault;
+
 /// Never called. Exists only so every probed dependency's crate root is
 /// referenced by name, forcing the compiler to actually resolve and link
 /// each one rather than merely list it in `Cargo.toml`.

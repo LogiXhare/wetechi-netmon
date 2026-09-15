@@ -43,6 +43,11 @@
   are the only cross-tenant paths, and each takes a `PlatformAuthority`.
   Only a context holding `PlatformIncidentAdmin` can produce one
   (ADR 0032, item 7). Every other function is scoped to a tenant.
+- `src/fault.rs` (5B-5). Test-only failure injection behind the
+  `fault-injection` feature, which only this crate's own dev-dependency
+  turns on. `tests/failure_injection.rs` fails a creating ingest at each of
+  the eight flush points and proves nothing committed, fails a command the
+  same way, and checks that a transient failure is rerun and commits once.
 
 **Not here yet:** a scheduler for the consumer and retention jobs,
 connection pool wiring, and any production database connection. See

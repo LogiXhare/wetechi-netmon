@@ -4,7 +4,8 @@
 //! Incidents are written first because every other row references one.
 //! Idempotency records are kept for 24 hours, the retention
 //! `docs/architecture/incident-persistence.md` sets; an expired record for
-//! the same key is overwritten.
+//! the same key is overwritten. After each group of writes the flush passes
+//! a [`FlushPoint`], where a test can inject a failure ([`crate::fault`]).
 
 use std::collections::HashMap;
 
@@ -15,6 +16,7 @@ use wetechinetmon_incident::id::IncidentId;
 use wetechinetmon_incident::incident::Incident;
 
 use crate::error::PersistError;
+use crate::fault::{self, FlushPoint};
 use crate::history::{self, IDEMPOTENCY_OPERATION};
 use crate::sql;
 use crate::staging::ChangeSet;
@@ -83,6 +85,7 @@ pub async fn flush(
     for updated in &changes.updated {
         sql::update_incident(client, &updated.incident, updated.loaded_version).await?;
     }
+    fault::check(FlushPoint::Incidents)?;
 
     let incidents: HashMap<IncidentId, &Incident> = changes
         .inserted
@@ -128,6 +131,7 @@ pub async fn flush(
             )
             .await?;
     }
+    fault::check(FlushPoint::DetectionLinks)?;
 
     for entry in &changes.timeline {
         let row = history::timeline_row(tenant, entry)?;
@@ -146,6 +150,7 @@ pub async fn flush(
             )
             .await?;
     }
+    fault::check(FlushPoint::Timeline)?;
 
     for entry in &changes.audit {
         let row = history::audit_row(entry)?;
@@ -166,6 +171,7 @@ pub async fn flush(
             )
             .await?;
     }
+    fault::check(FlushPoint::Audit)?;
 
     for message in &changes.outbox {
         let version = incidents
@@ -191,6 +197,7 @@ pub async fn flush(
             )
             .await?;
     }
+    fault::check(FlushPoint::Outbox)?;
 
     for record in &changes.idempotency {
         let row = history::idempotency_row(record)?;
@@ -212,6 +219,7 @@ pub async fn flush(
             return Err(PersistError::IdempotencyKeyTaken);
         }
     }
+    fault::check(FlushPoint::Idempotency)?;
 
     if let Some(next) = next_number {
         let next = i64::try_from(next)
@@ -220,5 +228,6 @@ pub async fn flush(
             .execute(UPDATE_ALLOCATOR, &[&tenant.as_str(), &next])
             .await?;
     }
+    fault::check(FlushPoint::Allocator)?;
     Ok(())
 }
