@@ -6,7 +6,7 @@ name: Validate
 # runners ship a Rust toolchain preinstalled, so no separate toolchain
 # action is needed.
 #
-# Checks are deliberately grouped into three jobs rather than one job per
+# Checks are deliberately grouped into four jobs rather than one job per
 # check. Every job is a separate runner, billed with a one-minute minimum
 # and starting from a cold cache: as nine jobs, fmt/clippy/test/build each
 # recompiled the whole workspace independently, four times over. Grouping
@@ -17,7 +17,7 @@ name: Validate
 #   postgres — Rust plus an ephemeral PostgreSQL service container, once
 #              per supported version (ADR 0025), for crates/incident-postgres
 #   docs     — needs Node + Python
-#   history — needs full history (fetch-depth: 0), which the others do not
+#   history  — needs full history (fetch-depth: 0), which the others do not
 #
 # Adding a check belongs in an existing job unless it genuinely needs a
 # different environment.
