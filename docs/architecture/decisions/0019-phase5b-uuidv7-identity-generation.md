@@ -114,6 +114,12 @@ Row pending in [dependency-license-matrix.md](../../dependency-license-matrix.md
       entry gate for implementation.
 - [ ] Add the completed matrix row before the crate is added to any
       `Cargo.toml`.
-- [ ] Implement the concrete generator in `crates/incident-postgres`
+- [x] Implement the concrete generator in `crates/incident-postgres`
       behind `IncidentGenerator`, with the same "refuse rather than
-      repeat" contract 5A's placeholder generator already tests.
+      repeat" contract 5A's placeholder generator already tests. Done
+      2026-09-15 (5B-5): `UuidV7IncidentGenerator` in
+      `crates/incident-postgres/src/id.rs`. It uses the pinned `v7`
+      feature without `std`: `Uuid::new_v7` with a mutex-held
+      `ContextV7`, fed the system time. It refuses an id equal to the
+      last one it issued. `tests/uuidv7_round_trip.rs` checks the round
+      trip through PostgreSQL's native `uuid` column.
