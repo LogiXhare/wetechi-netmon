@@ -261,7 +261,10 @@ pub(crate) fn target_type_text(identity: &ScopeId) -> &'static str {
     }
 }
 
-fn actor_columns(actor: &Actor, field: &'static str) -> Result<ActorColumns, PersistError> {
+pub(crate) fn actor_columns(
+    actor: &Actor,
+    field: &'static str,
+) -> Result<ActorColumns, PersistError> {
     let (actor_type, actor_id) = match actor {
         Actor::Operator { id } => ("operator", Some(id.clone())),
         Actor::ServiceAccount { id } => ("service_account", Some(id.clone())),

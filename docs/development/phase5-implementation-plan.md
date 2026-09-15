@@ -250,7 +250,7 @@ delivered in three steps:
 - **(a) Staging store, no SQL.** `IncidentUnitOfWork` gains `with_store`/`into_store`, and `IdempotencyStore` gains record iteration. `crates/incident-postgres/src/staging.rs` holds one call's loaded rows, records its changes, and fails closed on unloaded lookups.
 - **(b) Load/flush SQL and integration tests,** including FU-44's acceptance gate. In progress:
   - **Part 1 (row mapping):** `src/row.rs` maps an incident to its `incidents`, notes, tags and policy-reference rows and back, with no database. `src/sql.rs` inserts one incident, updates it under the `WHERE version = loaded_version` guard, and loads it with an optional `FOR UPDATE` lock. `V12__policy_reference_order.sql` keeps policy-reference order. Tests: `tests/incident_row_mapping.rs` runs without a database, `tests/incident_row_round_trip.rs` runs on CI PostgreSQL. Found along the way: FU-48, FU-49, FU-50.
-  - **Remaining:** the working-set load, the history-table flush (timeline, audit, outbox, detection-event links, idempotency), the transaction wrapper, and FU-44's killed-connection gate.
+  - **Part 2 (load, flush, transaction):** `src/load.rs` fetches each entry point's working set under ADR 0034's locks. When a create is possible, it locks the allocator row and then re-checks the active incident. `src/flush.rs` writes the change set, and `src/history.rs` maps the timeline, audit, outbox, detection-link and idempotency rows. `src/service.rs` (`IncidentPersistence`) wraps each entry point in one Read Committed transaction. `tests/service_round_trip.rs` covers the service on PostgreSQL, including FU-44's killed-connection gate.
 - **(c)** Retry and conflict classification per ADR 0026.
 
 ### 5B-4 — Outbox and retention

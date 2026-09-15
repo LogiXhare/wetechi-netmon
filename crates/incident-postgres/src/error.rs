@@ -28,6 +28,21 @@ pub enum PersistError {
         loaded_version: u64,
     },
 
+    /// The call looked up keys the load step never fetched, so its
+    /// decision may rest on a false "absent" and was not flushed (ADR 0034).
+    #[error("the call looked up {} key(s) the load step did not fetch", .0.len())]
+    UnloadedLookup(Vec<crate::staging::UnloadedLookup>),
+
+    /// The domain reported a broken internal invariant, so its in-memory
+    /// changes may be partial and were not flushed.
+    #[error("internal invariant violated: {0}")]
+    DomainInvariant(&'static str),
+
+    /// Another transaction recorded the same unexpired idempotency key
+    /// first. Rerunning from a fresh load replays that record.
+    #[error("the idempotency key was recorded concurrently by another request")]
+    IdempotencyKeyTaken,
+
     #[error("database error: {0}")]
     Database(#[from] tokio_postgres::Error),
 }

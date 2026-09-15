@@ -40,6 +40,24 @@ impl IncidentNumber {
         IncidentNumber(value)
     }
 
+    /// The Community format for the `sequence`-th number a tenant is
+    /// issued: `WNM-YYYY-NNNNNN`, widening past six digits rather than
+    /// wrapping. Public so a persistent allocator (whose counter lives in
+    /// a database row) produces exactly the numbers
+    /// [`InMemoryNumberAllocator`] would.
+    pub fn from_sequence(allocation_year: u32, sequence: u64) -> Self {
+        let formatted = if sequence <= 999_999 {
+            format!("WNM-{allocation_year}-{sequence:06}")
+        } else {
+            // Deliberately not wrapped: overflowing to seven digits is
+            // uglier than silently reusing a number, and a tenant
+            // exceeding 999,999 incidents in the counter's lifetime has a
+            // different problem than formatting.
+            format!("WNM-{allocation_year}-{sequence}")
+        };
+        IncidentNumber::new_unchecked(formatted)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -110,16 +128,7 @@ impl NumberAllocator for InMemoryNumberAllocator {
         ))?;
         *next = seq;
         drop(counters);
-        let formatted = if seq <= 999_999 {
-            format!("WNM-{allocation_year}-{seq:06}")
-        } else {
-            // Deliberately not wrapped: overflowing to seven digits is
-            // uglier than silently reusing a number, and a tenant
-            // exceeding 999,999 incidents in the counter's lifetime has a
-            // different problem than formatting.
-            format!("WNM-{allocation_year}-{seq}")
-        };
-        Ok(IncidentNumber::new_unchecked(formatted))
+        Ok(IncidentNumber::from_sequence(allocation_year, seq))
     }
 }
 

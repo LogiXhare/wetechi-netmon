@@ -58,6 +58,19 @@ pub mod row;
 /// Insert, version-guarded update and load of one incident (5B-3(b)).
 pub mod sql;
 
+/// Pure mapping for detection-event links, timeline, audit, outbox and
+/// idempotency rows (5B-3(b)).
+pub mod history;
+
+/// The load step: one call's working set into a staging store (5B-3(b)).
+pub mod load;
+
+/// The flush step: one call's change set into the database (5B-3(b)).
+pub mod flush;
+
+/// One load–run–flush transaction per unit-of-work entry point (5B-3(b)).
+pub mod service;
+
 /// Never called. Exists only so every probed dependency's crate root is
 /// referenced by name, forcing the compiler to actually resolve and link
 /// each one rather than merely list it in `Cargo.toml`.

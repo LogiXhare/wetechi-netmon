@@ -14,6 +14,9 @@
 //! - The network target goes through `network(...)`; see [`crate::row`].
 //! - The typed target columns are written, never read back: the load
 //!   rebuilds scope from `correlation_key`.
+//! - Lookups by correlation key compare `correlation_key` text. It is
+//!   always written by [`crate::row`] from the same serializer, so equal
+//!   keys give equal text.
 //! - Notes are append-only in the domain, so an update inserts only notes
 //!   whose index is not stored yet. Tags and policy references are
 //!   rewritten in full.
@@ -22,7 +25,7 @@ use std::time::SystemTime;
 
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{GenericClient, Row};
-use wetechinetmon_incident::correlation::TenantId;
+use wetechinetmon_incident::correlation::{CorrelationKey, TenantId};
 use wetechinetmon_incident::durable_time::DurableTimestamp;
 use wetechinetmon_incident::id::IncidentId;
 use wetechinetmon_incident::incident::Incident;
@@ -111,7 +114,8 @@ UPDATE incidents SET
     evidence_summary = $45::text::jsonb
 WHERE incident_id = $1::text::uuid AND tenant_id = $4 AND version = $46";
 
-const SELECT_INCIDENT: &str = "\
+/// Every column the load reads, without a `WHERE` clause.
+const SELECT_COLUMNS: &str = "\
 SELECT incident_id::text AS incident_id, incident_number, schema_version, tenant_id,
     correlation_key, address_family, direction, target_type, created_by_type,
     created_by_id, title, description, state, severity, severity_source,
@@ -122,8 +126,11 @@ SELECT incident_id::text AS incident_id, incident_number, schema_version, tenant
     last_detected_at, last_updated_at, acknowledged_at, recovering_since,
     resolved_at, closed_at, reopened_at, reopen_count, assigned_kind, assigned_id,
     updated_by_type, updated_by_id, evidence_summary::text AS evidence_summary
-FROM incidents
-WHERE tenant_id = $1 AND incident_id = $2::text::uuid";
+FROM incidents";
+
+/// The states the V10 partial unique indexes cover, and the ones the
+/// domain's open index holds: everything before `Resolved`.
+const ACTIVE: &str = "state NOT IN ('resolved', 'closed')";
 
 const INSERT_NOTE_IF_ABSENT: &str = "\
 INSERT INTO incident_notes (
@@ -212,18 +219,97 @@ pub async fn load_incident(
     incident_id: &IncidentId,
     locking: Locking,
 ) -> Result<Option<Incident>, PersistError> {
-    let tenant = tenant.as_str();
+    let lock = match locking {
+        Locking::NoLock => "",
+        Locking::ForUpdate => " FOR UPDATE",
+    };
+    let statement =
+        format!("{SELECT_COLUMNS} WHERE tenant_id = $1 AND incident_id = $2::text::uuid{lock}");
     let id = incident_id.to_canonical_string();
-    let statement = match locking {
-        Locking::NoLock => SELECT_INCIDENT.to_string(),
-        Locking::ForUpdate => format!("{SELECT_INCIDENT} FOR UPDATE"),
-    };
-    let Some(r) = client
-        .query_opt(statement.as_str(), &[&tenant, &id])
+    match client
+        .query_opt(statement.as_str(), &[&tenant.as_str(), &id])
         .await?
-    else {
-        return Ok(None);
-    };
+    {
+        Some(row) => incident_from_row(client, row).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// The key's active incident, locked `FOR UPDATE`. At most one can exist:
+/// the V10 partial unique indexes enforce it.
+pub async fn load_active_incident(
+    client: &impl GenericClient,
+    key: &CorrelationKey,
+) -> Result<Option<Incident>, PersistError> {
+    let (tenant, key_text) = key_params(key)?;
+    let statement = format!(
+        "{SELECT_COLUMNS} WHERE tenant_id = $1 AND correlation_key = $2 AND {ACTIVE} FOR UPDATE"
+    );
+    match client
+        .query_opt(statement.as_str(), &[&tenant, &key_text])
+        .await?
+    {
+        Some(row) => incident_from_row(client, row).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// The id of the key's active incident, without locking it. Used where
+/// the domain only asks whether one exists; claiming the key is still
+/// guarded by the partial unique index at flush.
+pub async fn active_incident_id(
+    client: &impl GenericClient,
+    key: &CorrelationKey,
+) -> Result<Option<IncidentId>, PersistError> {
+    let (tenant, key_text) = key_params(key)?;
+    let statement = format!(
+        "SELECT incident_id::text AS incident_id FROM incidents \
+         WHERE tenant_id = $1 AND correlation_key = $2 AND {ACTIVE}"
+    );
+    client
+        .query_opt(statement.as_str(), &[&tenant, &key_text])
+        .await?
+        .map(|row| {
+            let id: String = row.try_get("incident_id")?;
+            IncidentId::parse(&id).map_err(|e| PersistError::corrupt("incident_id", e.to_string()))
+        })
+        .transpose()
+}
+
+/// The row `InMemoryIncidentStore::reopen_candidate` would pick: among the
+/// key's resolved or closed incidents, the one resolved or closed most
+/// recently. Locked `FOR UPDATE`.
+pub async fn load_reopen_candidate(
+    client: &impl GenericClient,
+    key: &CorrelationKey,
+) -> Result<Option<Incident>, PersistError> {
+    let (tenant, key_text) = key_params(key)?;
+    let statement = format!(
+        "{SELECT_COLUMNS} WHERE tenant_id = $1 AND correlation_key = $2 \
+         AND state IN ('resolved', 'closed') \
+         ORDER BY CASE WHEN state = 'resolved' THEN resolved_at ELSE closed_at END DESC NULLS LAST, \
+         incident_id LIMIT 1 FOR UPDATE"
+    );
+    match client
+        .query_opt(statement.as_str(), &[&tenant, &key_text])
+        .await?
+    {
+        Some(row) => incident_from_row(client, row).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+fn key_params(key: &CorrelationKey) -> Result<(&str, String), PersistError> {
+    let text = serde_json::to_string(key)
+        .map_err(|e| PersistError::unrepresentable("correlation_key", e.to_string()))?;
+    Ok((key.tenant.as_str(), text))
+}
+
+/// Reads the child rows for an `incidents` row and reconstitutes it.
+async fn incident_from_row(client: &impl GenericClient, r: Row) -> Result<Incident, PersistError> {
+    let tenant: String = r.try_get("tenant_id")?;
+    let id: String = r.try_get("incident_id")?;
+    let (tenant, id) = (tenant.as_str(), id.as_str());
 
     let notes = client
         .query(SELECT_NOTES, &[&tenant, &id])
@@ -260,10 +346,10 @@ pub async fn load_incident(
         .collect::<Result<Vec<_>, PersistError>>()?;
 
     let row = IncidentRow {
-        incident_id: r.try_get("incident_id")?,
+        incident_id: id.to_string(),
         incident_number: r.try_get("incident_number")?,
         schema_version: r.try_get("schema_version")?,
-        tenant_id: r.try_get("tenant_id")?,
+        tenant_id: tenant.to_string(),
         correlation_key: r.try_get("correlation_key")?,
         address_family: r.try_get("address_family")?,
         direction: r.try_get("direction")?,
@@ -309,7 +395,7 @@ pub async fn load_incident(
         tags,
         policy_refs,
     };
-    row.into_incident().map(Some)
+    row.into_incident()
 }
 
 async fn write_children(
