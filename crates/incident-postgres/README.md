@@ -68,6 +68,12 @@
   connections ingesting first detections at once open exactly one
   incident. It also races two recurrences on one resolved incident: it
   reopens once, and the other recurrence links to it.
+- `src/id.rs` (5B-5, ADR 0019). `UuidV7IncidentGenerator` is the
+  production `IncidentGenerator`. It builds version 7 UUIDs with the
+  pinned `v7` feature only, and refuses to repeat an id.
+  `tests/uuidv7_round_trip.rs` checks that ids keep their text, bytes and
+  version through PostgreSQL's `uuid` column, and sort in generation
+  order on the server.
 
 **Not here yet:** a scheduler for the consumer and retention jobs,
 connection pool wiring, and any production database connection. See
