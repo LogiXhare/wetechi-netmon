@@ -1,5 +1,6 @@
 //! Milestone 5B-4: the outbox consumer's claim, lease, retry and
 //! dead-letter behavior (ADR 0033), and retention purging only what it may.
+//! 5B-5: both are reachable only with a `PlatformAuthority` (ADR 0032).
 //!
 //! Like the other PostgreSQL tests, this only connects to the opt-in,
 //! ephemeral database named by `WETECHINETMON_INCIDENT_POSTGRES_TEST_URL`,
@@ -15,12 +16,15 @@ use support::{event, host_scope, network_scope_with_host_bits};
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Client;
 use wetechinetmon_detector::{EventKind, MetricKind, TestClock};
-use wetechinetmon_incident::authorization::AuthorizationContext;
+use wetechinetmon_incident::authorization::{
+    Actor, AuthorizationContext, FixedBundleResolver, PermissionResolver,
+};
 use wetechinetmon_incident::correlation::TenantId;
 use wetechinetmon_incident::id::TestIncidentGenerator;
 use wetechinetmon_incident_postgres::outbox::{
-    outbox_stats, ClaimedMessage, FailureOutcome, OutboxConsumer, OutboxPolicy,
+    outbox_stats, ClaimedMessage, FailureOutcome, OutboxConsumer, OutboxPolicy, OutboxStats,
 };
+use wetechinetmon_incident_postgres::platform::PlatformAuthority;
 use wetechinetmon_incident_postgres::retention::{run_retention, RetentionPolicy, RetentionReport};
 use wetechinetmon_incident_postgres::retry::RetryPolicy;
 use wetechinetmon_incident_postgres::service::IncidentPersistence;
@@ -68,6 +72,16 @@ fn ids(messages: Vec<ClaimedMessage>) -> Vec<i64> {
         .collect()
 }
 
+fn platform_context(role: &str) -> AuthorizationContext {
+    AuthorizationContext::new(
+        TenantId::new("platform"),
+        Actor::Operator {
+            id: "platform-admin".to_string(),
+        },
+        FixedBundleResolver.permissions_for(role),
+    )
+}
+
 #[tokio::test]
 async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_what_it_may() {
     let Some(url) = std::env::var(TEST_DATABASE_URL_VAR).ok() else {
@@ -88,6 +102,11 @@ async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_wh
         .await
         .expect("migrations must apply");
 
+    // --- Only a platform-admin context reaches the cross-tenant paths ---
+    assert!(PlatformAuthority::from_context(&platform_context("noc_lead")).is_err());
+    let platform = PlatformAuthority::from_context(&platform_context("platform_admin"))
+        .expect("a platform admin is authorized");
+
     let first = insert_message(&client, "agg-1").await;
     let second = insert_message(&client, "agg-2").await;
     let third = insert_message(&client, "agg-3").await;
@@ -102,8 +121,8 @@ async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_wh
         },
         ..OutboxPolicy::starting_default()
     };
-    let a = OutboxConsumer::new("consumer-a", policy);
-    let b = OutboxConsumer::new("consumer-b", policy);
+    let a = OutboxConsumer::new(&platform, "consumer-a", policy);
+    let b = OutboxConsumer::new(&platform, "consumer-b", policy);
 
     // --- A claim takes the oldest batch; an active lease is not reclaimable ---
     assert_eq!(ids(a.claim(&client).await.unwrap()), [first, second]);
@@ -131,6 +150,7 @@ async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_wh
 
     // --- An expired lease is reclaimable, and the old holder loses it ---
     let reclaimer = OutboxConsumer::new(
+        &platform,
         "consumer-c",
         OutboxPolicy {
             lease: Duration::ZERO,
@@ -149,6 +169,7 @@ async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_wh
 
     // --- At the retry limit a message is dead-lettered ---
     let strict = OutboxConsumer::new(
+        &platform,
         "consumer-d",
         OutboxPolicy {
             retry: RetryPolicy {
@@ -189,8 +210,8 @@ async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_wh
         "a dead-lettered row is never claimed, and the reclaimed row is leased again"
     );
     assert_eq!(
-        outbox_stats(&client).await.unwrap(),
-        wetechinetmon_incident_postgres::outbox::OutboxStats {
+        outbox_stats(&platform, &client).await.unwrap(),
+        OutboxStats {
             pending: 1,
             retrying: 0,
             unreviewed_dead_letter: 1,
@@ -272,7 +293,7 @@ async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_wh
     let audit_before = scalar(&client, "SELECT count(*) FROM incident_audit", &[]).await;
     assert!(audit_before >= 2);
 
-    let report = run_retention(&client, &RetentionPolicy::engineering_default())
+    let report = run_retention(&platform, &client, &RetentionPolicy::engineering_default())
         .await
         .unwrap();
     assert_eq!(

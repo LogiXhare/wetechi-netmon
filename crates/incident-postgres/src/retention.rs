@@ -3,8 +3,8 @@
 //!
 //! [`run_retention`] deletes each class of row that is past its retention
 //! and reports how many it deleted. Nothing here runs on a schedule; a later
-//! milestone decides when to call it. These are platform maintenance jobs,
-//! so they span every tenant.
+//! milestone decides when to call it. These are platform maintenance jobs
+//! that span every tenant, so they take a [`PlatformAuthority`] (ADR 0032).
 //!
 //! Deliberately never purged:
 //!
@@ -26,6 +26,7 @@ use tokio_postgres::GenericClient;
 
 use crate::error::PersistError;
 use crate::outbox::micros;
+use crate::platform::PlatformAuthority;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetentionPolicy {
@@ -84,6 +85,7 @@ WHERE state = 'closed'
 
 /// Runs every retention job once, each as its own statement.
 pub async fn run_retention(
+    _authority: &PlatformAuthority,
     client: &impl GenericClient,
     policy: &RetentionPolicy,
 ) -> Result<RetentionReport, PersistError> {

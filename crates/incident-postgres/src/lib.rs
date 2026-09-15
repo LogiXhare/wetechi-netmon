@@ -82,6 +82,10 @@ pub mod outbox;
 /// Retention jobs for the persistence retention table (5B-4).
 pub mod retention;
 
+/// The explicitly authorized path for cross-tenant maintenance (5B-5,
+/// ADR 0032).
+pub mod platform;
+
 /// Never called. Exists only so every probed dependency's crate root is
 /// referenced by name, forcing the compiler to actually resolve and link
 /// each one rather than merely list it in `Cargo.toml`.
