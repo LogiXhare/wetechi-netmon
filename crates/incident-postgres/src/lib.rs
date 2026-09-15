@@ -68,8 +68,12 @@ pub mod load;
 /// The flush step: one call's change set into the database (5B-3(b)).
 pub mod flush;
 
-/// One load–run–flush transaction per unit-of-work entry point (5B-3(b)).
+/// One load–run–flush transaction per unit-of-work entry point (5B-3(b)),
+/// rerun from a fresh load on a transient failure (5B-3(c)).
 pub mod service;
+
+/// Which failures are transient, and the backoff between attempts (5B-3(c)).
+pub mod retry;
 
 /// Never called. Exists only so every probed dependency's crate root is
 /// referenced by name, forcing the compiler to actually resolve and link
