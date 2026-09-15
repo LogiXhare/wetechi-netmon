@@ -62,6 +62,12 @@
   checks that a recurrence against a future `resolved_at` returns
   `ClockSkew`, with no reopen or duplicate, and that decisions use the
   database's time.
+- `tests/concurrent_races.rs` (5B-5) checks each of the three
+  active-incident partial unique indexes on its own. A second active
+  incident is refused with a retryable 23505 on that index, and two
+  connections ingesting first detections at once open exactly one
+  incident. It also races two recurrences on one resolved incident: it
+  reopens once, and the other recurrence links to it.
 
 **Not here yet:** a scheduler for the consumer and retention jobs,
 connection pool wiring, and any production database connection. See
