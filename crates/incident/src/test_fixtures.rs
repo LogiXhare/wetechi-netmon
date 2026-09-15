@@ -71,6 +71,7 @@ pub(crate) fn valid_incident(state: IncidentState) -> Incident {
         severity: Severity::Major,
         severity_source: SeveritySource::Detection,
         ever_critical: false,
+        maximum_detected_severity: Severity::Major,
         priority: Priority::default_for(Severity::Major),
         closure_reason: if state == IncidentState::Closed {
             Some(crate::closure::ClosureReason::Resolved)

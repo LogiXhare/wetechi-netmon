@@ -95,6 +95,7 @@ pub struct IncidentSnapshot {
     pub severity: Severity,
     pub severity_source: SeveritySource,
     pub ever_critical: bool,
+    pub maximum_detected_severity: Severity,
     pub priority: Priority,
     pub closure_reason: Option<ClosureReason>,
     /// Mirrors the aggregate's `pub(crate)` field. A snapshot may carry
@@ -163,6 +164,7 @@ impl Incident {
             severity,
             severity_source,
             ever_critical,
+            maximum_detected_severity,
             priority,
             closure_reason,
             state_before_recovering,
@@ -205,6 +207,7 @@ impl Incident {
             severity: *severity,
             severity_source: *severity_source,
             ever_critical: *ever_critical,
+            maximum_detected_severity: *maximum_detected_severity,
             priority: *priority,
             closure_reason: *closure_reason,
             state_before_recovering: *state_before_recovering,

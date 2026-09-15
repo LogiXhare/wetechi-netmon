@@ -196,6 +196,7 @@ mod tests {
             severity: Severity::Major,
             severity_source: SeveritySource::Detection,
             ever_critical: false,
+            maximum_detected_severity: Severity::Major,
             priority: Priority::default_for(Severity::Major),
             closure_reason: None,
             state_before_recovering: if state == IncidentState::Recovering {

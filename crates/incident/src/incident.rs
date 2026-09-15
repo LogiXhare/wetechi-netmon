@@ -104,6 +104,15 @@ pub struct Incident {
     /// severity change that reaches `Critical`; never cleared in 5A, since
     /// no permissioned override exists yet to clear it safely (5B).
     pub ever_critical: bool,
+    /// The highest severity any detection event has reported for this
+    /// incident — monotonic, and never written by the operator
+    /// `ChangeSeverity` command (that changes `severity`, not what was
+    /// detected). Persisted as `incidents.maximum_detected_severity`
+    /// (incident-persistence.md, FU-47). Today only incident creation sets
+    /// it, from the opening event: raising it when a later event links in
+    /// is FU-41's detection-driven escalation, which must move this,
+    /// `ever_critical`, and the closure decision together (Milestone 5C).
+    pub maximum_detected_severity: Severity,
     pub priority: Priority,
     pub closure_reason: Option<ClosureReason>,
     pub(crate) state_before_recovering: Option<IncidentState>,
