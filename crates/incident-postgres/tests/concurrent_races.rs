@@ -249,8 +249,11 @@ async fn each_active_index_holds_under_concurrent_creates_and_a_reopen_race_reop
         1,
         "exactly one recurrence reopens, got {kinds:?}"
     );
+    // Whichever recurrence loses the race links to the reopened incident: as
+    // an update, or as a late link when it carries the older timestamp.
     assert_eq!(
-        count_kind(&kinds, IngestOutcomeKind::Updated),
+        count_kind(&kinds, IngestOutcomeKind::Updated)
+            + count_kind(&kinds, IngestOutcomeKind::LinkedLate),
         1,
         "the other links to the reopened incident, got {kinds:?}"
     );

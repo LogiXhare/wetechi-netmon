@@ -632,9 +632,16 @@ impl IncidentUnitOfWork {
                 .position(|p| p.policy_id == event.policy_id)
             {
                 Some(idx) => {
+                    // Events can arrive out of order. The seen range only
+                    // widens, so `first_seen <= last_seen` always holds, and
+                    // an older event never overwrites a newer event's
+                    // policy version.
                     let existing = &mut incident.policy_refs[idx];
-                    existing.last_seen_sequence = event.sequence;
-                    existing.policy_version = event.policy_version;
+                    if event.sequence >= existing.last_seen_sequence {
+                        existing.last_seen_sequence = event.sequence;
+                        existing.policy_version = event.policy_version;
+                    }
+                    existing.first_seen_sequence = existing.first_seen_sequence.min(event.sequence);
                 }
                 None if incident.policy_refs.len() < POLICY_REFS_MAX => {
                     incident.policy_refs.push(crate::incident::PolicyRef {
@@ -2881,6 +2888,34 @@ mod tests {
         assert_eq!(other.policy_version, 2);
         assert_eq!(other.first_seen_sequence, 1);
         assert_eq!(other.last_seen_sequence, 1);
+    }
+
+    /// An event arriving after a newer one, under the same policy, widens
+    /// the reference's seen range instead of moving `last_seen_sequence`
+    /// backward. A backward move breaks `first_seen <= last_seen`, which
+    /// PostgreSQL's `incident_policy_references` CHECK refuses. It must not
+    /// overwrite the newer event's policy version either.
+    #[test]
+    fn an_out_of_order_event_never_moves_a_policy_reference_backward() {
+        let mut uow = fresh_uow();
+        let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+        let addr: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 78));
+        let mut newer = event("det-order", 5, addr, 5_000_000);
+        newer.policy_version = 4;
+        let incident_id = uow
+            .ingest_detection_event(&correlator, &newer)
+            .unwrap()
+            .incident_id
+            .unwrap();
+
+        let mut older = event("det-order", 2, addr, 5_500_000);
+        older.policy_version = 3;
+        uow.ingest_detection_event(&correlator, &older).unwrap();
+
+        let reference = &uow.get(&incident_id).unwrap().policy_refs[0];
+        assert_eq!(reference.first_seen_sequence, 2);
+        assert_eq!(reference.last_seen_sequence, 5);
+        assert_eq!(reference.policy_version, 4);
     }
 
     /// FU-34: once `policy_refs` holds `POLICY_REFS_MAX` distinct policies,
