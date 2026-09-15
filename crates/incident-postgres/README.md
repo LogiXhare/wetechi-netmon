@@ -31,8 +31,17 @@
   against real PostgreSQL errors and that two concurrent first
   detections for one target open one incident.
 
-**Not here yet:** connection pool wiring and any production database
-connection. See
+- `src/outbox.rs` and `src/retention.rs` (5B-4). `OutboxConsumer` claims
+  outbox rows under ADR 0033's lease-aware `FOR UPDATE SKIP LOCKED`
+  query, marks each one published or failed, retries with backoff, and
+  dead-letters at the retry limit. `run_retention` purges expired
+  idempotency records, published outbox rows after 7 days, reviewed
+  dead-letter rows after 90 days, and closed incidents after 24 months.
+  It never purges audit or unreviewed dead-letter rows.
+  `tests/outbox_and_retention.rs` covers both.
+
+**Not here yet:** a scheduler for the consumer and retention jobs,
+connection pool wiring, and any production database connection. See
 [ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
 for why this is the crate's real, final placement, and
 [FU-42](../../docs/development/follow-ups.md) for the dependency probe it

@@ -75,6 +75,13 @@ pub mod service;
 /// Which failures are transient, and the backoff between attempts (5B-3(c)).
 pub mod retry;
 
+/// The outbox consumer: claim under a lease, publish, retry, dead-letter
+/// (5B-4, ADR 0033).
+pub mod outbox;
+
+/// Retention jobs for the persistence retention table (5B-4).
+pub mod retention;
+
 /// Never called. Exists only so every probed dependency's crate root is
 /// referenced by name, forcing the compiler to actually resolve and link
 /// each one rather than merely list it in `Cargo.toml`.
