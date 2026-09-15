@@ -267,6 +267,12 @@ retention and cleanup jobs per
 [incident-persistence.md](../architecture/incident-persistence.md)'s
 retention table.
 
+**Status (2026-09-15):** implemented in `crates/incident-postgres`.
+
+- **`src/outbox.rs`:** `OutboxConsumer` claims, publishes, retries and dead-letters. The starting defaults are a 60 s lease, a batch of 100, and 10 attempts with 1 s–5 min backoff; all are configurable. ADR 0033 asks that the lease default be revisited against the performance-test plan.
+- **`src/retention.rs`:** `run_retention`. Audit and unreviewed dead-letter rows are never purged.
+- **`tests/outbox_and_retention.rs`:** covers the lease, backoff, reclaim, lease-lost, dead-letter and retention paths. ADR 0033's full concurrency and crash test list remains 5B-5's.
+
 ### 5B-5 — Integration and performance tests
 
 Tests: all persistence tests, with **injected failure at each commit
