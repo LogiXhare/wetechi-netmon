@@ -39,6 +39,10 @@
   dead-letter rows after 90 days, and closed incidents after 24 months.
   It never purges audit or unreviewed dead-letter rows.
   `tests/outbox_and_retention.rs` covers both.
+- `src/platform.rs` (5B-5). The outbox consumer, its stats and retention
+  are the only cross-tenant paths, and each takes a `PlatformAuthority`.
+  Only a context holding `PlatformIncidentAdmin` can produce one
+  (ADR 0032, item 7). Every other function is scoped to a tenant.
 
 **Not here yet:** a scheduler for the consumer and retention jobs,
 connection pool wiring, and any production database connection. See

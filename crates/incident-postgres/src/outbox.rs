@@ -8,8 +8,9 @@
 //!   to be reclaimed when its lease expires. The downstream consumer
 //!   de-duplicates on `(aggregate_id, aggregate_version, event_type)`.
 //! - **Scope.** The outbox is read across tenants: a consumer such as the
-//!   analytics exporter serves the whole platform. Each message carries its
-//!   own `tenant_id`.
+//!   analytics exporter serves the whole platform, and each message carries
+//!   its own `tenant_id`. Building a consumer or reading the stats therefore
+//!   takes a [`PlatformAuthority`] (ADR 0032).
 //! - **Defaults are starting values, not measured ones.** ADR 0033 leaves
 //!   the lease, batch size and retry limit to configuration, and asks that
 //!   the lease default be informed by the performance-test plan.
@@ -19,6 +20,7 @@ use std::time::Duration;
 use tokio_postgres::{Client, GenericClient, IsolationLevel, Row};
 
 use crate::error::PersistError;
+use crate::platform::PlatformAuthority;
 use crate::retry::RetryPolicy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +158,13 @@ pub struct OutboxConsumer {
 }
 
 impl OutboxConsumer {
-    pub fn new(consumer_id: impl Into<String>, policy: OutboxPolicy) -> Self {
+    /// The authority is only checked here, at construction: a consumer is a
+    /// long-lived platform component, not a per-request operation.
+    pub fn new(
+        _authority: &PlatformAuthority,
+        consumer_id: impl Into<String>,
+        policy: OutboxPolicy,
+    ) -> Self {
         OutboxConsumer {
             consumer_id: consumer_id.into(),
             policy,
@@ -249,7 +257,10 @@ impl OutboxConsumer {
     }
 }
 
-pub async fn outbox_stats(client: &impl GenericClient) -> Result<OutboxStats, PersistError> {
+pub async fn outbox_stats(
+    _authority: &PlatformAuthority,
+    client: &impl GenericClient,
+) -> Result<OutboxStats, PersistError> {
     let row = client.query_one(STATS, &[]).await?;
     Ok(OutboxStats {
         pending: row.try_get("pending")?,
