@@ -13,7 +13,8 @@ name: Validate
 # them lets a single `target/` directory be reused within the job. The
 # split that remains is by *environment*, not by check:
 #
-#   rust    — needs only the preinstalled Rust toolchain
+#   rust    — needs the preinstalled Rust toolchain, plus an ephemeral
+#             PostgreSQL service container for crates/incident-postgres
 #   docs    — needs Node + Python
 #   history — needs full history (fetch-depth: 0), which the others do not
 #
@@ -38,6 +39,26 @@ jobs:
   rust:
     name: Rust (fmt, clippy, test, build)
     runs-on: ubuntu-latest
+    # Ephemeral, job-scoped PostgreSQL for crates/incident-postgres (FU-46).
+    # Mirrors crates/incident-postgres/docker-compose.yml: same image, same
+    # throwaway credential, same tmpfs-backed data directory, destroyed
+    # with the runner. Never a real database; nothing here is a secret.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: wetechinetmon_test
+          POSTGRES_PASSWORD: wetechinetmon_test_only
+          POSTGRES_DB: wetechinetmon_incident_test
+          PGDATA: /var/lib/postgresql/data/pgdata
+        ports:
+          - 55432:5432
+        options: >-
+          --tmpfs /var/lib/postgresql/data
+          --health-cmd "pg_isready -U wetechinetmon_test -d wetechinetmon_incident_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Formatting
@@ -45,7 +66,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Unit + property tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude wetechinetmon-incident-postgres
+      # The PostgreSQL tests skip (and pass) when their URL variable is
+      # unset, so a green run alone would not prove they ran. Run them in
+      # their own step with output uncaptured, and fail if any skipped.
+      # The pattern matches the skip message every such test prints
+      # ("skipping <test>: <VAR> is not set"); unanchored, because
+      # uncaptured stderr can land mid-line in libtest's own output.
+      - name: PostgreSQL tests (must not skip)
+        env:
+          WETECHINETMON_INCIDENT_POSTGRES_TEST_URL: "host=127.0.0.1 port=55432 user=wetechinetmon_test password=wetechinetmon_test_only dbname=wetechinetmon_incident_test"
+        run: |
+          set -euo pipefail
+          cargo test -p wetechinetmon-incident-postgres -- --nocapture 2>&1 | tee pg-test.log
+          if grep -qE "skipping [a-z_]+: WETECHINETMON_[A-Z_]+ is not set" pg-test.log; then
+            echo "A PostgreSQL test skipped even though the service container is up — failing."
+            exit 1
+          fi
       - name: Build (all targets)
         run: cargo build --workspace --all-targets
 
