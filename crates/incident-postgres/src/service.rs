@@ -4,13 +4,15 @@
 //! Each method opens a Read Committed transaction on the caller's client,
 //! loads the working set ([`crate::load`]), runs the unchanged domain call
 //! over a [`StagingStore`], flushes what it changed ([`crate::flush`]), and
-//! commits.
+//! commits. A transient failure rolls back and reruns all of that from a
+//! fresh load, under the [`RetryPolicy`] ([`crate::retry`]).
 //!
 //! The return type separates the two ways a call ends:
 //!
-//! - `Err(PersistError)`: nothing was committed. The load or flush failed,
-//!   the call looked up a key the load did not fetch, or the domain
-//!   reported a broken invariant. Rerunning from a fresh load is 5B-3(c).
+//! - `Err(PersistError)`: nothing was committed. The load or flush failed
+//!   and was not retryable, or still failed on the last attempt; the call
+//!   looked up a key the load did not fetch; or the domain reported a broken
+//!   invariant.
 //! - `Ok(domain_result)`: the transaction committed. A domain `Err` still
 //!   commits what the call recorded about it, such as a denied-permission
 //!   audit entry or a failed-outcome idempotency record, just as the
@@ -37,17 +39,19 @@ use wetechinetmon_incident::unit_of_work::{IncidentUnitOfWork, IngestResult};
 use crate::error::PersistError;
 use crate::flush::flush;
 use crate::load::{load_for_incident, load_for_ingest};
+use crate::retry::RetryPolicy;
 use crate::staging::StagingStore;
 
 /// The outer `Result` says whether the call committed; the inner one is
 /// the domain's own result. See the module doc.
 pub type Outcome<T> = Result<Result<T, IncidentError>, PersistError>;
 
-/// The shared, long-lived half of every call: id generation, the clock, and
-/// the unit of work's configuration.
+/// The shared, long-lived half of every call: id generation, the clock, the
+/// retry policy, and the unit of work's configuration.
 pub struct IncidentPersistence {
     generator: Arc<dyn IncidentGenerator>,
     clock: Arc<dyn Clock>,
+    retry: RetryPolicy,
     number_allocation_year: Option<u32>,
     policies: Option<(ClosurePolicy, ReopenPolicy)>,
 }
@@ -62,13 +66,20 @@ enum Load<'a> {
 }
 
 impl IncidentPersistence {
+    /// Uses [`RetryPolicy::approved_default`].
     pub fn new(generator: Arc<dyn IncidentGenerator>, clock: Arc<dyn Clock>) -> Self {
         IncidentPersistence {
             generator,
             clock,
+            retry: RetryPolicy::approved_default(),
             number_allocation_year: None,
             policies: None,
         }
+    }
+
+    pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
+        self.retry = retry;
+        self
     }
 
     pub fn with_number_allocation_year(mut self, year: u32) -> Self {
@@ -109,9 +120,8 @@ impl IncidentPersistence {
             id: incident_id,
             idempotency_key: idempotency_key.as_ref(),
         };
-        let key_for_call = idempotency_key.clone();
-        self.run(client, auth.tenant(), load, move |uow| {
-            uow.handle_command(auth, incident_id, command, key_for_call)
+        self.run(client, auth.tenant(), load, |uow| {
+            uow.handle_command(auth, incident_id, command.clone(), idempotency_key.clone())
         })
         .await
     }
@@ -123,7 +133,7 @@ impl IncidentPersistence {
         incident_id: IncidentId,
         reason: DetectionEndReason,
     ) -> Outcome<()> {
-        self.run(client, auth.tenant(), by_id(incident_id), move |uow| {
+        self.run(client, auth.tenant(), by_id(incident_id), |uow| {
             uow.enter_recovering(auth, incident_id, reason)
         })
         .await
@@ -136,7 +146,7 @@ impl IncidentPersistence {
         incident_id: IncidentId,
         recovery_confirmation: Duration,
     ) -> Outcome<bool> {
-        self.run(client, auth.tenant(), by_id(incident_id), move |uow| {
+        self.run(client, auth.tenant(), by_id(incident_id), |uow| {
             uow.confirm_recovery_if_due(auth, incident_id, recovery_confirmation)
         })
         .await
@@ -148,7 +158,7 @@ impl IncidentPersistence {
         auth: &AuthorizationContext,
         incident_id: IncidentId,
     ) -> Outcome<()> {
-        self.run(client, auth.tenant(), by_id(incident_id), move |uow| {
+        self.run(client, auth.tenant(), by_id(incident_id), |uow| {
             uow.abort_recovery(auth, incident_id)
         })
         .await
@@ -160,18 +170,40 @@ impl IncidentPersistence {
         auth: &AuthorizationContext,
         incident_id: IncidentId,
     ) -> Outcome<bool> {
-        self.run(client, auth.tenant(), by_id(incident_id), move |uow| {
+        self.run(client, auth.tenant(), by_id(incident_id), |uow| {
             uow.attempt_automatic_closure(auth, incident_id)
         })
         .await
     }
 
+    /// Reruns [`Self::attempt`] while it fails retryably and attempts remain.
     async fn run<T>(
         &self,
         client: &mut Client,
         tenant: &TenantId,
         load: Load<'_>,
-        call: impl FnOnce(&mut IncidentUnitOfWork) -> Result<T, IncidentError>,
+        mut call: impl FnMut(&mut IncidentUnitOfWork) -> Result<T, IncidentError>,
+    ) -> Outcome<T> {
+        let mut attempt = 1;
+        loop {
+            match self.attempt(client, tenant, load, &mut call).await {
+                Err(error) if error.is_retryable() && attempt < self.retry.max_attempts => {
+                    tokio::time::sleep(self.retry.delay_after(attempt)).await;
+                    attempt += 1;
+                }
+                result => return result,
+            }
+        }
+    }
+
+    /// One load–run–flush transaction. Any `Err` leaves it uncommitted:
+    /// dropping the transaction rolls it back.
+    async fn attempt<T>(
+        &self,
+        client: &mut Client,
+        tenant: &TenantId,
+        load: Load<'_>,
+        call: &mut impl FnMut(&mut IncidentUnitOfWork) -> Result<T, IncidentError>,
     ) -> Outcome<T> {
         let transaction = client
             .build_transaction()

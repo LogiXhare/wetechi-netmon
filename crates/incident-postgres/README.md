@@ -25,8 +25,13 @@
   `tests/service_round_trip.rs` covers it on PostgreSQL, including
   FU-44's gate that a connection killed mid-flush commits nothing.
 
-**Not here yet:** retrying a retryable failure from a fresh load
-(5B-3(c)), connection pool wiring, and any production database
+- `src/retry.rs`: which failures are transient under ADR 0026, and the
+  backoff. The service reruns a call from a fresh load on one, at most
+  3 attempts. `tests/retry_and_races.rs` checks the classification
+  against real PostgreSQL errors and that two concurrent first
+  detections for one target open one incident.
+
+**Not here yet:** connection pool wiring and any production database
 connection. See
 [ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
 for why this is the crate's real, final placement, and

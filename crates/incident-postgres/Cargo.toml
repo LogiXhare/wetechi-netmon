@@ -1,6 +1,6 @@
 [package]
 name = "wetechinetmon-incident-postgres"
-description = "PostgreSQL persistence for the incident domain: schema and forward-only refinery migrations (5B-2), the in-memory staging store for ADR 0034's load-run-flush (5B-3(a)), and the incident row mapping with per-incident insert/update/load SQL (5B-3(b)). No working-set load, history flush, connection pool wiring, or production database connection yet."
+description = "PostgreSQL persistence for the incident domain: schema and forward-only refinery migrations (5B-2), and ADR 0034's load-run-flush over it, from the staging store (5B-3(a)) through row mapping, load, flush and the transaction service (5B-3(b)) to retry (5B-3(c)). No connection pool wiring or production database connection yet."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,10 +23,9 @@ refinery.workspace = true
 serde = "1"
 serde_json = "1"
 thiserror.workspace = true
-
-[dev-dependencies]
 # Already an approved, existing workspace dependency (vendored since
-# Phase 2 in crates/collector, crates/storage, tools/flow-replay) — used
-# here only to drive the async PostgreSQL tests, not a new dependency for
-# this crate.
+# Phase 2 in crates/collector, crates/storage, tools/flow-replay). The retry
+# backoff sleeps with `tokio::time`, and the async PostgreSQL tests use its
+# runtime. ADR 0021 keeps Tokio out of crates/incident, not out of this
+# adapter.
 tokio = { workspace = true }
