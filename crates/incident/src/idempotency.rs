@@ -66,6 +66,19 @@ impl RequestFingerprint {
         let bytes = serde_json::to_vec(value).expect("command must serialize canonically");
         RequestFingerprint(bytes)
     }
+
+    /// The canonical bytes, as stored in
+    /// `incident_idempotency.request_fingerprint` (ADR 0028).
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// A fingerprint read back from storage. The bytes are compared, never
+    /// interpreted, so any value is safe to hold; one that was not produced
+    /// by [`Self::of`] simply never matches a live command.
+    pub fn from_persisted(bytes: Vec<u8>) -> Self {
+        RequestFingerprint(bytes)
+    }
 }
 
 /// What a previously completed command produced, stored so a replay can
@@ -153,6 +166,23 @@ impl IdempotencyStore {
         );
     }
 
+    /// Every record, in no particular order. Read-only: a persistence
+    /// adapter uses it to find the records one call added (ADR 0034).
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &TenantId,
+            &IdempotencyKey,
+            &RequestFingerprint,
+            &StoredOutcome,
+        ),
+    > + '_ {
+        self.records
+            .iter()
+            .map(|((tenant, key), record)| (tenant, key, &record.fingerprint, &record.outcome))
+    }
+
     pub fn len(&self) -> usize {
         self.records.len()
     }
@@ -166,6 +196,54 @@ impl IdempotencyStore {
 mod tests {
     use super::*;
     use serde::Serialize;
+
+    #[test]
+    fn iter_yields_every_recorded_entry() {
+        let mut store = IdempotencyStore::new();
+        let tenant = TenantId::new("acme");
+        let key = IdempotencyKey::new("iter-test-key-0001").unwrap();
+        let fingerprint = RequestFingerprint::of(&"command");
+        let outcome = StoredOutcome::Mutated {
+            incident_id: IncidentId::from_bytes([1; 16]),
+            version: 3,
+        };
+        store.record(
+            tenant.clone(),
+            key.clone(),
+            fingerprint.clone(),
+            outcome.clone(),
+        );
+
+        let entries: Vec<_> = store.iter().collect();
+        assert_eq!(entries.len(), 1);
+        let (t, k, f, o) = entries[0];
+        assert_eq!(
+            (t, k.as_str(), f, o),
+            (&tenant, "iter-test-key-0001", &fingerprint, &outcome)
+        );
+    }
+
+    /// ADR 0028: the stored bytes are the fingerprint, so one read back
+    /// from `incident_idempotency.request_fingerprint` must still replay.
+    #[test]
+    fn a_persisted_fingerprint_still_replays() {
+        let live = RequestFingerprint::of(&("acknowledge", 7));
+        let persisted = RequestFingerprint::from_persisted(live.as_bytes().to_vec());
+        assert_eq!(persisted, live);
+
+        let mut store = IdempotencyStore::new();
+        let tenant = TenantId::new("acme");
+        let key = IdempotencyKey::new("persisted-test-key-2").unwrap();
+        let outcome = StoredOutcome::Mutated {
+            incident_id: IncidentId::from_bytes([2; 16]),
+            version: 1,
+        };
+        store.record(tenant.clone(), key.clone(), persisted, outcome.clone());
+        assert_eq!(
+            store.check(&tenant, &key, &live),
+            IdempotencyCheck::Replay(outcome)
+        );
+    }
 
     #[derive(Serialize)]
     struct FakeCommand {

@@ -1,16 +1,22 @@
 # Incident PostgreSQL Adapter
 
-**Status:** Milestone 5B-2 — schema and migrations only. This crate now
-carries the forward-only, checksummed PostgreSQL schema for the incident
-domain (`migrations/`), a migration smoke test, and a compose file for an
-ephemeral local/CI PostgreSQL instance. **It still has no `IncidentStore`
-implementation, no connection pool wiring, and no production database
-connection** — see [FU-42](../../docs/development/follow-ups.md) for the
-dependency-probe acceptance gate this crate previously existed only to
-satisfy, and [ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
-for why this is the crate's real, final placement rather than a
-throwaway. Milestone 5B-3 implements the actual repository code against
-the schema this milestone builds.
+**Status:** Milestone 5B-3(a). This crate carries:
+
+- the forward-only, checksummed PostgreSQL schema for the incident domain
+  (`migrations/`, 5B-2), with a migration smoke test and a compose file
+  for an ephemeral local/CI PostgreSQL instance
+- `src/staging.rs`, the in-memory `IncidentStore` that one unit-of-work
+  call runs against under
+  [ADR 0034](../../docs/architecture/decisions/0034-phase5b-persistence-bridge-load-run-flush.md)'s
+  load–run–flush. It records what the call changed and refuses to hand
+  back changes if the call looked up a key the load step never fetched.
+
+**There is still no load/flush SQL, no connection pool wiring, and no
+production database connection.** Those are 5B-3(b) and (c). See
+[ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
+for why this is the crate's real, final placement, and
+[FU-42](../../docs/development/follow-ups.md) for the dependency probe it
+started as.
 
 The six conditionally-accepted dependencies (`uuid`, `tokio-postgres`,
 `deadpool-postgres`, `rustls`, `tokio-postgres-rustls`, `refinery`) remain
