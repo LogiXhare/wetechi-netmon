@@ -159,36 +159,41 @@ ClickHouse) demonstrates a real need, per Option C's note.
 - [ ] Define the concrete lease-duration default at Phase 5B-4
       implementation, informed by (not asserted before) the
       performance-test plan.
-- [ ] Add the stale-lease-reclaim and duplicate-consumer-idempotency
-      integration tests at Phase 5B-5.
+- [x] Add the stale-lease-reclaim and duplicate-consumer-idempotency
+      integration tests at Phase 5B-5. Done in
+      `crates/incident-postgres/tests/outbox_concurrency.rs`, alongside
+      `tests/outbox_and_retention.rs`: a crashed worker's message is
+      redelivered unchanged, carrying the downstream de-duplication key.
 - [ ] Confirm the ClickHouse exporter consumer (the only Phase 5B
       consumer) tolerates at-least-once delivery, per its existing
       design.
-- [ ] **Added 2026-08-30, from the lease-predicate correction above** —
+- [x] **Added 2026-08-30, from the lease-predicate correction above** —
       the following integration tests at Phase 5B-5, alongside the two
-      already listed:
-  - [ ] A second worker cannot immediately reclaim a row whose lease is
+      already listed. All done (2026-09-15) in
+      `crates/incident-postgres/tests/outbox_concurrency.rs` and
+      `tests/outbox_and_retention.rs`:
+  - [x] A second worker cannot immediately reclaim a row whose lease is
         still active.
-  - [ ] A row becomes eligible for reclaim only after its lease
+  - [x] A row becomes eligible for reclaim only after its lease
         genuinely expires (`locked_at + lease_interval <=
         transaction_timestamp()`), not merely after the first
         transaction commits.
-  - [ ] A crashed worker's claimed-but-never-published row is
+  - [x] A crashed worker's claimed-but-never-published row is
         eventually reclaimed by a different consumer.
-  - [ ] A successfully published row (`status = 'published'`) is never
+  - [x] A successfully published row (`status = 'published'`) is never
         reclaimed by any predicate.
-  - [ ] A `retrying` row does not become available before its
+  - [x] A `retrying` row does not become available before its
         backoff-advanced `available_at` elapses, independent of the
         lease predicate.
-  - [ ] Two simultaneous claimers against the same pending batch receive
+  - [x] Two simultaneous claimers against the same pending batch receive
         disjoint row sets (`FOR UPDATE SKIP LOCKED` holds under real
         concurrency, not only sequential test calls).
-  - [ ] A claiming transaction that rolls back leaves the row
+  - [x] A claiming transaction that rolls back leaves the row
         immediately claimable — `locked_at`/`locked_by` were never
         durably committed.
-  - [ ] The lease and backoff clocks are both PostgreSQL
+  - [x] The lease and backoff clocks are both PostgreSQL
         `transaction_timestamp()`, never client-supplied time.
-  - [ ] `attempts` increments exactly once per genuine claim-and-fail
+  - [x] `attempts` increments exactly once per genuine claim-and-fail
         cycle, not once per predicate evaluation.
-  - [ ] The dead-letter transition at the configured retry limit is
+  - [x] The dead-letter transition at the configured retry limit is
         deterministic and does not depend on claim timing.

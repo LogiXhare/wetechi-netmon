@@ -289,8 +289,8 @@ cascades into audit.
 
 **Status (2026-09-15):** in progress.
 
-- **Done:** the CI `postgres` job runs every PostgreSQL test against 15, 16, 17 and 18 and fails if any skips (ADR 0025, FU-46). Cross-tenant paths take a `PlatformAuthority` (ADR 0032 item 7). `tests/failure_injection.rs` injects a failure at each of the eight flush points and proves nothing commits, and runs a transient failure through the retry loop.
-- **Remaining:** ADR 0033's concurrency and crash test list, and the rest of the persistence plan's required integration tests.
+- **Done:** the CI `postgres` job runs every PostgreSQL test against 15, 16, 17 and 18 and fails if any skips (ADR 0025, FU-46). Cross-tenant paths take a `PlatformAuthority` (ADR 0032 item 7). `tests/failure_injection.rs` injects a failure at each of the eight flush points and proves nothing commits, and runs a transient failure through the retry loop. `tests/outbox_concurrency.rs` covers ADR 0033's concurrency and crash test list.
+- **Remaining:** the rest of the persistence plan's required integration tests.
 
 ## Milestone 5C — Ingestion and correlation
 
