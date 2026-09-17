@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "eventId": "det-row-0",
+  "detectionId": "det-row",
+  "sequence": 0,
+  "kind": "started",
+  "dedupKey": "det-row:started:0",
+  "policyId": "p-fixture",
+  "policyName": "p-fixture",
+  "policyVersion": 3,
+  "severity": "major",
+  "executionMode": "alertOnly",
+  "action": "alerted",
+  "labels": {},
+  "target": {
+    "tenant": "acme",
+    "scopeType": "host",
+    "scopeId": {
+      "kind": "host",
+      "addr": "203.0.113.90"
+    },
+    "display": "203.0.113.90",
+    "direction": "incoming",
+    "addressFamily": "ipv4"
+  },
+  "previousState": "pendingTrigger",
+  "state": "active",
+  "reason": "triggerSustained",
+  "detectedAtMs": 1700000000000,
+  "observedAtMs": 1700000000000,
+  "durationMs": 0,
+  "windowMs": 1000,
+  "matched": [
+    {
+      "metric": "bps",
+      "observed": 2000,
+      "threshold": 1000,
+      "excess": 1000,
+      "ratioPercent": 200
+    }
+  ],
+  "peak": [],
+  "skipped": [],
+  "rates": {
+    "bps": 0,
+    "pps": 0,
+    "fps": 0,
+    "tcpBps": 0,
+    "tcpPps": 0,
+    "udpBps": 0,
+    "udpPps": 0,
+    "icmpBps": 0,
+    "icmpPps": 0,
+    "tcpSynBps": 0,
+    "tcpSynPps": 0,
+    "fragmentedBps": 0,
+    "fragmentedPps": 0,
+    "droppedBps": 0,
+    "droppedPps": 0
+  },
+  "completeness": {
+    "protocolSeen": false,
+    "tcpFlagsSeen": false,
+    "fragmentationSeen": false,
+    "forwardingStatusSeen": false
+  },
+  "sampling": {
+    "corrected": false,
+    "usedGlobalDefault": false,
+    "maxRate": 0
+  },
+  "flowsObserved": 42,
+  "exportersObserved": 2,
+  "snapshotsInDetection": 1,
+  "executed": false,
+  "summary": "major 203.0.113.90 under policy p-fixture"
+}

@@ -107,6 +107,15 @@
     7 days.
   - `tests/detection_event_inbox.rs` also checks that a worker crashing
     between ingest and mark still yields one incident.
+- `src/producer.rs` (5C, ADR 0035) is the detector's side of the inbox.
+  - `InboxSink` is a `DetectionEventSink` that only pushes onto a bounded
+    queue. When the queue is full it refuses the newest event and never
+    evicts one it already accepted.
+  - `InboxDrain::run` writes batches with `enqueue`, removes a batch only
+    after it commits, and backs off on failure. On shutdown it closes the
+    sink, flushes what is left, and reports anything abandoned.
+  - `tests/inbox_producer.rs` takes the inbox offline and back to check
+    that no event is lost, then turns the events into one incident.
 
 **Not here yet:** a scheduler for the consumer and retention jobs, measured pool
 sizing, the operational runbook for the production connection string

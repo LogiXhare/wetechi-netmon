@@ -172,6 +172,6 @@ review and is never interpreted.
 
 - [x] V14 migration and the inbox enqueue, claim, mark and dead-letter
       functions, with PostgreSQL tests.
-- [ ] Detector-side sink with a bounded queue and a drain task.
+- [x] Detector-side sink with a bounded queue and a drain task.
 - [ ] Correlation worker loop and graceful shutdown drain (ADR 0012).
 - [ ] Inbox depth and detector-queue drop metrics (5C metrics).
