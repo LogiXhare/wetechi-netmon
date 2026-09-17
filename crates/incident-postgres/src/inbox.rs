@@ -19,6 +19,10 @@
 //!   takes a [`PlatformAuthority`]; each event is then ingested under its own
 //!   row's tenant.
 
+use std::future::Future;
+use std::time::Duration;
+
+use deadpool_postgres::Pool;
 use tokio_postgres::{Client, GenericClient, IsolationLevel, Row};
 use wetechinetmon_detector::DetectionEvent;
 use wetechinetmon_incident::authorization::AuthorizationContext;
@@ -29,6 +33,7 @@ use wetechinetmon_incident::unit_of_work::IngestOutcomeKind;
 use crate::error::PersistError;
 use crate::outbox::{micros, FailureOutcome, OutboxPolicy};
 use crate::platform::PlatformAuthority;
+use crate::pool::acquire;
 use crate::service::IncidentPersistence;
 
 /// Batch size, lease and retry limit for the worker. The same shape, and
@@ -374,6 +379,74 @@ impl InboxWorker {
         }
         Ok(report)
     }
+
+    /// Processes batches until `shutdown` completes (ADR 0012's shutdown
+    /// drain).
+    ///
+    /// - A batch is never interrupted: shutdown is only noticed between
+    ///   batches, so the batch in flight finishes and commits, and nothing
+    ///   more is claimed after it.
+    /// - After an empty claim the loop waits `idle_wait`, and after a failed
+    ///   batch it backs off with the policy's delays. Shutdown cuts either
+    ///   wait short.
+    /// - A failed batch never stops the loop. Rows it left leased are
+    ///   reclaimed when their lease expires.
+    pub async fn run(
+        &self,
+        service: &IncidentPersistence,
+        pool: &Pool,
+        idle_wait: Duration,
+        shutdown: impl Future<Output = ()>,
+    ) -> WorkerReport {
+        let mut report = WorkerReport::default();
+        let mut failures: u32 = 0;
+        tokio::pin!(shutdown);
+        loop {
+            let outcome = match acquire(pool).await {
+                Ok(mut client) => self.process_batch(service, &mut client).await,
+                Err(error) => Err(error),
+            };
+            let wait = match outcome {
+                Ok(batch) => {
+                    failures = 0;
+                    report.batches += 1;
+                    report.processed += batch.processed;
+                    report.retrying += batch.retrying;
+                    report.dead_lettered += batch.dead_lettered;
+                    report.lease_lost += batch.lease_lost;
+                    if batch.claimed > 0 {
+                        Duration::ZERO
+                    } else {
+                        idle_wait
+                    }
+                }
+                Err(_) => {
+                    report.failed_batches += 1;
+                    failures = failures.saturating_add(1);
+                    self.policy.retry.delay_after(failures)
+                }
+            };
+            tokio::select! {
+                biased;
+                () = &mut shutdown => break,
+                () = tokio::time::sleep(wait) => {}
+            }
+        }
+        report
+    }
+}
+
+/// Totals across one [`InboxWorker::run`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkerReport {
+    /// Batches that completed, empty ones included.
+    pub batches: u64,
+    /// Batches that failed on a database error.
+    pub failed_batches: u64,
+    pub processed: usize,
+    pub retrying: usize,
+    pub dead_lettered: usize,
+    pub lease_lost: usize,
 }
 
 fn count(report: &mut BatchReport, outcome: FailureOutcome) {

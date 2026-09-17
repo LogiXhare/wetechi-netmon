@@ -116,6 +116,11 @@
     sink, flushes what is left, and reports anything abandoned.
   - `tests/inbox_producer.rs` takes the inbox offline and back to check
     that no event is lost, then turns the events into one incident.
+- `InboxWorker::run` (5C) is the correlation worker loop. It processes
+  batches until shutdown, backs off after a database failure without
+  stopping, and notices shutdown only between batches: the batch in flight
+  commits, and nothing is claimed after. `tests/inbox_worker_loop.rs`
+  covers it.
 
 **Not here yet:** a scheduler for the consumer and retention jobs, measured pool
 sizing, the operational runbook for the production connection string
