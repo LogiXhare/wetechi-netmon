@@ -96,6 +96,9 @@ pub mod id;
 /// The connection pool: bounded waits, verified reuse (ADR 0022, 5B-5).
 pub mod pool;
 
+/// The detection-event inbox: enqueue, claim, ingest, record (5C, ADR 0035).
+pub mod inbox;
+
 /// The verifying rustls connector and the no-plaintext-off-loopback rule
 /// (ADR 0023, 5B-5).
 pub mod tls;
