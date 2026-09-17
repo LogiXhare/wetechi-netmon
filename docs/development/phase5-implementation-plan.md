@@ -298,7 +298,7 @@ Outbox producer on the detector side; the correlation worker; retry,
 backoff, dead-letter; the staleness sweep; recovery and auto-close
 timers; Prometheus metrics; structured logging.
 
-**Progress:** the detection-event inbox, with its enqueue, claim, ingest and dead-letter paths, follows [ADR 0035](../architecture/decisions/0035-phase5c-detection-event-inbox.md) (migration V14). Still to do: the detector-side sink and drain task, the worker loop, the staleness sweep and timers, metrics, logging, and the end-to-end test.
+**Progress:** the detection-event inbox, with its enqueue, claim, ingest and dead-letter paths, follows [ADR 0035](../architecture/decisions/0035-phase5c-detection-event-inbox.md) (migration V14). The detector-side sink and drain task are in `src/producer.rs`; wiring them into the collector binary comes with the worker loop. Still to do: the worker loop, the staleness sweep and timers, metrics, logging, and the end-to-end test.
 
 Tests: duplicate, late, and out-of-order events; poison event handling;
 replay safety; the five distinct end reasons; detector restart producing

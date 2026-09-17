@@ -99,6 +99,10 @@ pub mod pool;
 /// The detection-event inbox: enqueue, claim, ingest, record (5C, ADR 0035).
 pub mod inbox;
 
+/// The detector-side producer: a non-blocking sink and its drain task (5C,
+/// ADR 0035).
+pub mod producer;
+
 /// The verifying rustls connector and the no-plaintext-off-loopback rule
 /// (ADR 0023, 5B-5).
 pub mod tls;
