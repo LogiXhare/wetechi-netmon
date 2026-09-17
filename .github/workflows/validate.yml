@@ -131,8 +131,9 @@ jobs:
             -extfile server.ext -out server.crt
           id="${{ job.services.postgres.id }}"
           docker exec "$id" mkdir -p /var/lib/postgresql/tls
-          docker cp server.crt "$id":/var/lib/postgresql/tls/server.crt
-          docker cp server.key "$id":/var/lib/postgresql/tls/server.key
+          # docker cp cannot write into a tmpfs mount, so stream the files in.
+          docker exec -i "$id" sh -c "cat > /var/lib/postgresql/tls/server.crt" < server.crt
+          docker exec -i "$id" sh -c "cat > /var/lib/postgresql/tls/server.key" < server.key
           docker exec "$id" sh -c 'chown -R postgres:postgres /var/lib/postgresql/tls && chmod 600 /var/lib/postgresql/tls/server.key'
           docker exec "$id" psql -U wetechinetmon_test -d wetechinetmon_incident_test \
             -c "ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/tls/server.crt'" \
