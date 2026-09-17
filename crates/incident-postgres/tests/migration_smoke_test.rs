@@ -57,6 +57,7 @@ const EXPECTED_TABLES: &[&str] = &[
     "incident_idempotency",
     "incident_outbox",
     "incident_dead_letter",
+    "detection_event_inbox",
 ];
 
 /// The three target-type-specific partial unique indexes that make the
@@ -115,8 +116,8 @@ async fn migrations_apply_cleanly_are_idempotent_and_produce_the_expected_schema
         .expect("all migrations must apply cleanly against an empty schema");
     assert_eq!(
         report.applied_migrations().len(),
-        13,
-        "expected all 13 migration files (V1..V13) to apply on a fresh schema"
+        14,
+        "expected all 14 migration files (V1..V14) to apply on a fresh schema"
     );
 
     // --- Idempotency: refinery's own guarantee ---

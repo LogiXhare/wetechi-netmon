@@ -34,6 +34,9 @@ pub struct RetentionPolicy {
     pub closed_incident_months: i32,
     /// Published outbox rows are kept this long after publishing.
     pub published_outbox_age: Duration,
+    /// Processed detection-event inbox rows are kept this long after
+    /// processing (ADR 0035).
+    pub processed_inbox_age: Duration,
     /// Reviewed dead-letter rows are kept this long after first being seen.
     pub reviewed_dead_letter_age: Duration,
 }
@@ -45,6 +48,7 @@ impl RetentionPolicy {
         RetentionPolicy {
             closed_incident_months: 24,
             published_outbox_age: Duration::from_secs(7 * 24 * 60 * 60),
+            processed_inbox_age: Duration::from_secs(7 * 24 * 60 * 60),
             reviewed_dead_letter_age: Duration::from_secs(90 * 24 * 60 * 60),
         }
     }
@@ -61,6 +65,7 @@ impl Default for RetentionPolicy {
 pub struct RetentionReport {
     pub expired_idempotency: u64,
     pub published_outbox: u64,
+    pub processed_inbox: u64,
     pub reviewed_dead_letter: u64,
     pub closed_incidents: u64,
 }
@@ -72,6 +77,11 @@ const PURGE_PUBLISHED_OUTBOX: &str = "\
 DELETE FROM incident_outbox
 WHERE status = 'published'
   AND published_at <= transaction_timestamp() - $1::bigint * interval '1 microsecond'";
+
+const PURGE_PROCESSED_INBOX: &str = "\
+DELETE FROM detection_event_inbox
+WHERE status = 'processed'
+  AND processed_at <= transaction_timestamp() - $1::bigint * interval '1 microsecond'";
 
 const PURGE_REVIEWED_DEAD_LETTER: &str = "\
 DELETE FROM incident_dead_letter
@@ -101,6 +111,12 @@ pub async fn run_retention(
             .execute(
                 PURGE_PUBLISHED_OUTBOX,
                 &[&micros(policy.published_outbox_age)],
+            )
+            .await?,
+        processed_inbox: client
+            .execute(
+                PURGE_PROCESSED_INBOX,
+                &[&micros(policy.processed_inbox_age)],
             )
             .await?,
         reviewed_dead_letter: client

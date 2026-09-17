@@ -97,6 +97,16 @@
   turned on by a throwaway, per-run CA: a verified connection is really
   encrypted, and an untrusted CA or a certificate for another name is
   refused. Mutual TLS is supported but not yet exercised against a server.
+- `src/inbox.rs` and `V14` (5C, ADR 0035), the detection-event inbox.
+  - `enqueue` adds a batch for one tenant. It is idempotent per
+    `(tenant_id, dedup_key)` and refuses another tenant's event.
+  - `InboxWorker` claims rows under ADR 0033's lease, ingests each event
+    under its row's tenant, and records the outcome.
+  - A payload it cannot read is dead-lettered at once. Other failures back
+    off, then go to `incident_dead_letter`. Processed rows are purged after
+    7 days.
+  - `tests/detection_event_inbox.rs` also checks that a worker crashing
+    between ingest and mark still yields one incident.
 
 **Not here yet:** a scheduler for the consumer and retention jobs, measured pool
 sizing, the operational runbook for the production connection string
@@ -115,9 +125,9 @@ rows 32–37).
 
 ## Migrations
 
-`migrations/` holds thirteen `refinery`-compatible SQL files
+`migrations/` holds fourteen `refinery`-compatible SQL files
 (`V1__enable_extensions.sql` through
-`V13__policy_refs_omitted.sql`). V1–V11 follow the dependency order
+`V14__detection_event_inbox.sql`). V1–V11 follow the dependency order
 [phase5-implementation-plan.md](../../docs/development/phase5-implementation-plan.md)'s
 5B-2 section fixes: extensions, `incidents`, detection-event links,
 timeline, audit, notes/tags/assignments, policy references and number
@@ -126,7 +136,8 @@ partial unique indexes, and the RLS-ready application role (ADR
 0032). V12 (5B-3(b)) adds `ref_index` so a load keeps policy references
 in the order the domain holds them. V13 (5B-5) adds
 `policy_refs_omitted`, so a policy past the per-incident cap is counted
-rather than silently dropped (FU-34).
+rather than silently dropped (FU-34). V14 (5C) adds the
+detection-event inbox (ADR 0035).
 
 They are embedded into this crate's binary at compile time via
 [`refinery::embed_migrations!`] (`src/lib.rs`'s `migrations` module) —

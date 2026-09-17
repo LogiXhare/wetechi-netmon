@@ -301,6 +301,7 @@ async fn the_outbox_leases_retries_and_dead_letters_and_retention_purges_only_wh
         RetentionReport {
             expired_idempotency: 1,
             published_outbox: 1,
+            processed_inbox: 0,
             reviewed_dead_letter: 1,
             closed_incidents: 1,
         }
