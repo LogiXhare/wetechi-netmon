@@ -74,9 +74,24 @@
   `tests/uuidv7_round_trip.rs` checks that ids keep their text, bytes and
   version through PostgreSQL's `uuid` column, and sort in generation
   order on the server.
+- `tests/timeouts_and_restart.rs` (5B-5). A statement timeout on a held
+  lock fails the call with `57014`. It is not retried, commits nothing,
+  and the same command succeeds once the lock is released. After a
+  restart, a new service on a new connection claims the outbox messages
+  left pending, still treats a replayed event as a duplicate, links to
+  the open incident, and continues numbering from the database's
+  allocator.
+- `src/pool.rs` (5B-5, ADR 0022). `build_pool` verifies every reused
+  connection (`RecyclingMethod::Verified`) and bounds waiting for,
+  opening and verifying a connection. `acquire` returns
+  `PersistError::Unavailable` when no connection comes in time, and that
+  error is not retried. `tests/pool_exhaustion.rs` checks that a full
+  pool fails within its wait timeout, that a released connection is
+  reused, and that a connection killed while idle is replaced.
 
-**Not here yet:** a scheduler for the consumer and retention jobs,
-connection pool wiring, and any production database connection. See
+**Not here yet:** a scheduler for the consumer and retention jobs, the
+pool's TLS (rustls) connector from ADR 0023, measured pool sizing, and
+any production database connection. See
 [ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
 for why this is the crate's real, final placement, and
 [FU-42](../../docs/development/follow-ups.md) for the dependency probe it

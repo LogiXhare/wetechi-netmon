@@ -52,6 +52,12 @@ pub enum PersistError {
         transient: bool,
     },
 
+    /// No database connection was available in time: the pool was
+    /// exhausted, or a connection could not be opened or verified (ADR
+    /// 0022). Surfaced as unavailable (`503`) and not retried here.
+    #[error("no database connection available: {0}")]
+    Unavailable(String),
+
     #[error("database error: {0}")]
     Database(#[from] tokio_postgres::Error),
 }
