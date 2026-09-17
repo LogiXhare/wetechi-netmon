@@ -103,8 +103,15 @@ MIT. Both compatible with the Apache-2.0 core.
 
 ## Follow-Up
 
-- [ ] Run the Phase 5B-1 probe including both TLS crates in the measured
+- [x] Run the Phase 5B-1 probe including both TLS crates in the measured
       closure.
 - [ ] Document the exact production connection-string / configuration
       shape (`sslmode=verify-full`, CA path) in the operational runbook
       once Phase 5B-3 implements it.
+- [x] Implement the connector (5B-5): `crates/incident-postgres/src/tls.rs`.
+      `tokio-postgres` has no `verify-full` mode. `sslmode=require` with
+      this connector is the equivalent, because the connector always
+      verifies the chain and the host name. `sslmode=prefer` is refused off
+      loopback because it can fall back to plaintext. The provider is
+      aws-lc-rs, named explicitly. `tests/tls_connector.rs` covers it in
+      CI against PostgreSQL 15–18 with TLS on.
