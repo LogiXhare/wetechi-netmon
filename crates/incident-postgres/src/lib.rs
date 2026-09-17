@@ -103,6 +103,9 @@ pub mod inbox;
 /// ADR 0035).
 pub mod producer;
 
+/// The staleness sweep, recovery confirmation and automatic closure (5C).
+pub mod maintenance;
+
 /// The verifying rustls connector and the no-plaintext-off-loopback rule
 /// (ADR 0023, 5B-5).
 pub mod tls;
