@@ -1490,3 +1490,109 @@ fn capacity_exceeded_replays_as_the_same_capacity_error() {
 // `injected_failure_does_not_poison_an_idempotency_key` moved to
 // `crates/incident/src/unit_of_work.rs`'s own `#[cfg(test)] mod tests`
 // for the same reason as above.
+
+/// FU-40: automatic closure waits for `automatic_closure_delay` after
+/// `resolved_at`, measured on the unit of work's decision time.
+#[test]
+fn automatic_closure_waits_for_the_closure_delay() {
+    let (mut uow, clock) = uow_with_shared_clock();
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 41));
+    let started = event(
+        "det-delay",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        9_000_000,
+        1_000_000,
+    );
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+    uow.enter_recovering(
+        &correlator,
+        incident_id,
+        wetechinetmon_incident::transition::DetectionEndReason::TrafficCleared,
+    )
+    .unwrap();
+    assert!(uow
+        .confirm_recovery_if_due(&correlator, incident_id, Duration::ZERO)
+        .unwrap());
+
+    let delay =
+        wetechinetmon_incident::closure::ClosurePolicy::approved_default().automatic_closure_delay;
+    assert!(!uow
+        .attempt_automatic_closure(&correlator, incident_id)
+        .unwrap());
+    clock.advance(delay - Duration::from_secs(1));
+    assert!(
+        !uow.attempt_automatic_closure(&correlator, incident_id)
+            .unwrap(),
+        "one second before the delay elapses, the incident stays resolved"
+    );
+    assert_eq!(
+        uow.get(&incident_id).unwrap().state,
+        IncidentState::Resolved
+    );
+    clock.advance(Duration::from_secs(1));
+    assert!(uow
+        .attempt_automatic_closure(&correlator, incident_id)
+        .unwrap());
+    assert_eq!(uow.get(&incident_id).unwrap().state, IncidentState::Closed);
+}
+
+/// The staleness sweep's transition: silence for `silent_after` moves an
+/// open incident to `Recovering` as `DetectorSilent`; a recent detection
+/// keeps it open.
+#[test]
+fn a_silent_detector_moves_an_incident_to_recovering_only_after_the_threshold() {
+    let (mut uow, clock) = uow_with_shared_clock();
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 42));
+    let started = event(
+        "det-silent",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        9_000_000,
+        1_000_000,
+    );
+    let incident_id = uow
+        .ingest_detection_event(&correlator, &started)
+        .unwrap()
+        .incident_id
+        .unwrap();
+    let silent_after = Duration::from_secs(300);
+
+    clock.advance(silent_after - Duration::from_secs(1));
+    assert!(!uow
+        .enter_recovering_if_silent(&correlator, incident_id, silent_after)
+        .unwrap());
+    assert_eq!(uow.get(&incident_id).unwrap().state, IncidentState::Open);
+
+    clock.advance(Duration::from_secs(1));
+    assert!(uow
+        .enter_recovering_if_silent(&correlator, incident_id, silent_after)
+        .unwrap());
+    assert_eq!(
+        uow.get(&incident_id).unwrap().state,
+        IncidentState::Recovering
+    );
+
+    let operator_without_ingest = AuthorizationContext::new(
+        TenantId::new("acme"),
+        Actor::Operator {
+            id: "viewer".to_string(),
+        },
+        FixedBundleResolver.permissions_for("viewer"),
+    );
+    assert!(uow
+        .enter_recovering_if_silent(&operator_without_ingest, incident_id, silent_after)
+        .is_err());
+}

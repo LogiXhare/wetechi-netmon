@@ -957,6 +957,42 @@ impl IncidentUnitOfWork {
         Ok(())
     }
 
+    /// The staleness sweep's transition (5C): an active incident whose
+    /// detector has said nothing for `silent_after` moves to `Recovering`
+    /// with reason `DetectorSilent`. `Ok(false)` if a detection arrived
+    /// recently enough, checked here against the incident as this call
+    /// reads it, so an event that landed after the sweep chose the incident
+    /// keeps it open.
+    pub fn enter_recovering_if_silent(
+        &mut self,
+        auth: &AuthorizationContext,
+        incident_id: IncidentId,
+        silent_after: Duration,
+    ) -> Result<bool, IncidentError> {
+        // Not yet resolved or tenant-checked — `Unresolved` (L4), same
+        // rationale as `handle_command`'s permission check.
+        self.check_permission(
+            auth,
+            Permission::IncidentIngest,
+            AttemptedResource::Unresolved(incident_id.to_string()),
+        )?;
+        let now = self.decision_time()?;
+        let incident = self
+            .store
+            .get(&incident_id)
+            .ok_or(IncidentError::NotFound)?;
+        self.check_tenant(auth, incident)?;
+        if now.checked_elapsed_since(&incident.last_detected_at)? < silent_after {
+            return Ok(false);
+        }
+        self.enter_recovering(
+            auth,
+            incident_id,
+            transition::DetectionEndReason::DetectorSilent,
+        )?;
+        Ok(true)
+    }
+
     /// Driven by the correlator or scheduler — see [`Self::enter_recovering`].
     pub fn confirm_recovery_if_due(
         &mut self,
@@ -1074,6 +1110,22 @@ impl IncidentUnitOfWork {
         self.check_tenant(auth, incident)?;
         match transition::attempt_automatic_closure(incident, &self.closure_policy) {
             Ok(()) => {
+                // FU-40: the delay is enforced here, where the incident is
+                // read under the call's own consistency, not only by the
+                // scheduler's query that chose it. An incident reopened and
+                // resolved again since that query must wait a full delay.
+                let resolved_at =
+                    incident
+                        .resolved_at
+                        .ok_or(IncidentError::InternalInvariantViolation(
+                            "Resolved incident has no resolved_at",
+                        ))?;
+                let now = self.decision_time()?;
+                if now.checked_elapsed_since(&resolved_at)?
+                    < self.closure_policy.automatic_closure_delay
+                {
+                    return Ok(false);
+                }
                 self.close_internal(
                     auth,
                     incident_id,

@@ -119,6 +119,13 @@ impl IncidentPersistence {
         self
     }
 
+    /// The closure policy every call runs under: the configured one, or the
+    /// domain's approved default.
+    pub fn closure_policy(&self) -> ClosurePolicy {
+        self.policies
+            .map_or_else(ClosurePolicy::approved_default, |(closure, _)| closure)
+    }
+
     pub async fn ingest_detection_event(
         &self,
         client: &mut Client,
@@ -158,6 +165,21 @@ impl IncidentPersistence {
     ) -> Outcome<()> {
         self.run(client, auth.tenant(), by_id(incident_id), |uow| {
             uow.enter_recovering(auth, incident_id, reason)
+        })
+        .await
+    }
+
+    /// The staleness sweep's call: see
+    /// `IncidentUnitOfWork::enter_recovering_if_silent`.
+    pub async fn enter_recovering_if_silent(
+        &self,
+        client: &mut Client,
+        auth: &AuthorizationContext,
+        incident_id: IncidentId,
+        silent_after: Duration,
+    ) -> Outcome<bool> {
+        self.run(client, auth.tenant(), by_id(incident_id), |uow| {
+            uow.enter_recovering_if_silent(auth, incident_id, silent_after)
         })
         .await
     }

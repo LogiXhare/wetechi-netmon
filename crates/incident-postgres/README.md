@@ -121,6 +121,12 @@
   stopping, and notices shutdown only between batches: the batch in flight
   commits, and nothing is claimed after. `tests/inbox_worker_loop.rs`
   covers it.
+- `src/maintenance.rs` (5C) runs the incident timers as one cross-tenant
+  pass: the staleness sweep (`detector_silent`), recovery confirmation, and
+  automatic closure. SQL on `transaction_timestamp()` proposes due
+  incidents, and each domain call re-checks its own timer before acting.
+  Critical incidents are never proposed for automatic closure (BQ-8).
+  `tests/maintenance_timers.rs` covers it.
 
 **Not here yet:** a scheduler for the consumer and retention jobs, measured pool
 sizing, the operational runbook for the production connection string
