@@ -106,6 +106,48 @@ jobs:
         run: |
           docker exec "${{ job.services.postgres.id }}" \
             psql -U wetechinetmon_test -d wetechinetmon_incident_test -tAc "SHOW server_version"
+      # ADR 0023: tests/tls_connector.rs needs a server with TLS on. A
+      # throwaway CA and a server certificate naming only `localhost` are
+      # generated per run under RUNNER_TEMP and die with the runner; a
+      # second, unrelated CA is the one the test must refuse. None of it is
+      # a secret or committed. TLS is turned on by reload, so plaintext
+      # connections the other tests make keep working.
+      - name: Turn on TLS with a throwaway CA
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/pg-tls"
+          mkdir -p "$dir"
+          cd "$dir"
+          for ca in ca other-ca; do
+            openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=wetechinetmon CI $ca" \
+              -addext "basicConstraints=critical,CA:TRUE" \
+              -addext "keyUsage=critical,keyCertSign,cRLSign" \
+              -keyout "$ca.key" -out "$ca.pem"
+          done
+          openssl req -newkey rsa:2048 -nodes -subj "/CN=localhost" -keyout server.key -out server.csr
+          printf '%s\n' "subjectAltName=DNS:localhost" "basicConstraints=critical,CA:FALSE" \
+            "keyUsage=critical,digitalSignature,keyEncipherment" "extendedKeyUsage=serverAuth" > server.ext
+          openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 \
+            -extfile server.ext -out server.crt
+          id="${{ job.services.postgres.id }}"
+          docker exec "$id" mkdir -p /var/lib/postgresql/tls
+          # docker cp cannot write into a tmpfs mount, so stream the files in.
+          docker exec -i "$id" sh -c "cat > /var/lib/postgresql/tls/server.crt" < server.crt
+          docker exec -i "$id" sh -c "cat > /var/lib/postgresql/tls/server.key" < server.key
+          docker exec "$id" sh -c 'chown -R postgres:postgres /var/lib/postgresql/tls && chmod 600 /var/lib/postgresql/tls/server.key'
+          docker exec "$id" psql -U wetechinetmon_test -d wetechinetmon_incident_test \
+            -c "ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/tls/server.crt'" \
+            -c "ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/tls/server.key'" \
+            -c "ALTER SYSTEM SET ssl = on" \
+            -c "SELECT pg_reload_conf()"
+          for attempt in $(seq 1 20); do
+            state=$(docker exec "$id" psql -U wetechinetmon_test -d wetechinetmon_incident_test -tAc "SHOW ssl")
+            [ "$state" = "on" ] && break
+            sleep 0.5
+          done
+          [ "$state" = "on" ] || { echo "TLS did not turn on"; docker logs "$id" | tail -20; exit 1; }
+          echo "WETECHINETMON_INCIDENT_POSTGRES_TEST_TLS_CA=$dir/ca.pem" >> "$GITHUB_ENV"
+          echo "WETECHINETMON_INCIDENT_POSTGRES_TEST_TLS_OTHER_CA=$dir/other-ca.pem" >> "$GITHUB_ENV"
       # The PostgreSQL tests skip (and pass) when their URL variable is
       # unset, so a green run alone would not prove they ran. Run them with
       # output uncaptured, and fail if any skipped. The pattern matches the

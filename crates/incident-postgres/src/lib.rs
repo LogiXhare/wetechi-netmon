@@ -96,6 +96,10 @@ pub mod id;
 /// The connection pool: bounded waits, verified reuse (ADR 0022, 5B-5).
 pub mod pool;
 
+/// The verifying rustls connector and the no-plaintext-off-loopback rule
+/// (ADR 0023, 5B-5).
+pub mod tls;
+
 /// Never called. Exists only so every probed dependency's crate root is
 /// referenced by name, forcing the compiler to actually resolve and link
 /// each one rather than merely list it in `Cargo.toml`.

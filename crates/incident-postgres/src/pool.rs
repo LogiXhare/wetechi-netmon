@@ -14,8 +14,8 @@
 //!   a starting value, not a measured one. ADR 0022 leaves sizing to the
 //!   performance-test plan.
 //!
-//! The caller supplies the TLS connector. ADR 0023's rustls configuration
-//! is not wired here yet.
+//! The caller supplies the TLS connector: `crate::tls::build_tls_pool`
+//! builds this pool with ADR 0023's verifying rustls connector.
 
 use std::time::Duration;
 
@@ -86,12 +86,30 @@ where
         .map_err(|error| PersistError::Unavailable(format!("the pool could not be built: {error}")))
 }
 
-/// Takes a connection from the pool. A database error while opening one is
-/// [`PersistError::Database`]; running out of time or connections is
-/// [`PersistError::Unavailable`].
+/// Takes a connection from the pool. An error the server reported while
+/// opening one (it carries a SQLSTATE, such as a refused login) is
+/// [`PersistError::Database`]. Everything else is
+/// [`PersistError::Unavailable`]: running out of time or connections, and a
+/// connection that could not be established at all, including a refused
+/// TLS handshake (ADR 0023).
 pub async fn acquire(pool: &Pool) -> Result<Object, PersistError> {
     pool.get().await.map_err(|error| match error {
-        PoolError::Backend(database) => PersistError::Database(database),
+        PoolError::Backend(database) if database.as_db_error().is_some() => {
+            PersistError::Database(database)
+        }
+        PoolError::Backend(connection) => PersistError::Unavailable(with_sources(&connection)),
         other => PersistError::Unavailable(other.to_string()),
     })
+}
+
+/// An error and its causes on one line, so a handshake failure says why.
+fn with_sources(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }

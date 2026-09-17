@@ -58,6 +58,12 @@ pub enum PersistError {
     #[error("no database connection available: {0}")]
     Unavailable(String),
 
+    /// The TLS configuration was refused before connecting: no usable
+    /// trust anchors, an unreadable client identity, or a connection that
+    /// could reach a non-loopback host without TLS (ADR 0023).
+    #[error("TLS configuration refused: {0}")]
+    TlsConfiguration(String),
+
     #[error("database error: {0}")]
     Database(#[from] tokio_postgres::Error),
 }

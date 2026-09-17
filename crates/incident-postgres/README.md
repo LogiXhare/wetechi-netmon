@@ -88,10 +88,19 @@
   error is not retried. `tests/pool_exhaustion.rs` checks that a full
   pool fails within its wait timeout, that a released connection is
   reused, and that a connection killed while idle is replaced.
+- `src/tls.rs` (5B-5, ADR 0023). `build_tls_pool` is the production pool.
+  It refuses a configuration that could reach a non-loopback host without
+  TLS (`sslmode=prefer` included, since it falls back to plaintext), and
+  its rustls connector trusts only the CA certificates it is given and
+  checks the host name. A refused handshake is `Unavailable` and is not
+  retried. `tests/tls_connector.rs` runs against the CI server with TLS
+  turned on by a throwaway, per-run CA: a verified connection is really
+  encrypted, and an untrusted CA or a certificate for another name is
+  refused. Mutual TLS is supported but not yet exercised against a server.
 
-**Not here yet:** a scheduler for the consumer and retention jobs, the
-pool's TLS (rustls) connector from ADR 0023, measured pool sizing, and
-any production database connection. See
+**Not here yet:** a scheduler for the consumer and retention jobs, measured pool
+sizing, the operational runbook for the production connection string
+(ADR 0023 follow-up), and any production database connection. See
 [ADR 0029](../../docs/architecture/decisions/0029-phase5b-repository-and-unit-of-work-seam.md)
 for why this is the crate's real, final placement, and
 [FU-42](../../docs/development/follow-ups.md) for the dependency probe it
