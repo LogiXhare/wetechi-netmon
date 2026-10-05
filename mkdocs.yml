@@ -120,6 +120,7 @@ nav:
   - API Reference:
       - Overview: api/index.md
       - Incident API Plan: api/incident-api-plan.md
+      - Error Codes: api/error-codes.md
   - Commercial: commercial/index.md
   - Development:
       - Overview: development/index.md

@@ -1,0 +1,75 @@
+//! The OpenAPI document, generated from the handlers (ADR 0037).
+//!
+//! The generated document is committed at `docs/api/openapi.json`, and a
+//! test fails when the two differ, so every API change arrives with a
+//! reviewable spec diff. To regenerate after an intended change:
+//!
+//! ```sh
+//! WETECHINETMON_UPDATE_OPENAPI=1 cargo test -p wetechinetmon-api openapi
+//! ```
+
+use serde::Serialize;
+use utoipa::{OpenApi, ToSchema};
+
+/// RFC 9457 problem details, as every error response carries them.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProblemDocument {
+    /// `https://wetechi.com/probs/` and the code, as an identifier.
+    #[serde(rename = "type")]
+    pub type_uri: String,
+    pub title: String,
+    pub status: u16,
+    #[schema(nullable = false)]
+    pub detail: Option<String>,
+    /// The stable machine-readable code; see `docs/api/error-codes.md`.
+    pub error: String,
+    /// The UUIDv7 also returned in `X-Request-Id`.
+    pub request_id: String,
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "WetechiNetMon Incident API",
+        description = "Incident management REST API. Errors are RFC 9457 problem details with a stable `error` code.",
+        license(name = "Apache-2.0", identifier = "Apache-2.0"),
+    ),
+    paths(crate::healthz, crate::readyz),
+    components(schemas(ProblemDocument, crate::Health)),
+    tags((name = "operations", description = "Liveness and readiness"))
+)]
+pub struct ApiDoc;
+
+/// The document as committed: pretty JSON with a trailing newline.
+pub fn document() -> String {
+    let mut json = ApiDoc::openapi()
+        .to_pretty_json()
+        .expect("the OpenAPI document serializes");
+    json.push('\n');
+    json
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const COMMITTED: &str = "../../docs/api/openapi.json";
+
+    #[test]
+    fn openapi_document_matches_the_committed_file() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(COMMITTED);
+        let generated = document();
+        if std::env::var_os("WETECHINETMON_UPDATE_OPENAPI").is_some() {
+            std::fs::write(&path, &generated).expect("write docs/api/openapi.json");
+            return;
+        }
+        let committed = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
+        assert!(
+            committed == generated,
+            "docs/api/openapi.json is out of date; regenerate it with \
+             WETECHINETMON_UPDATE_OPENAPI=1 cargo test -p wetechinetmon-api openapi"
+        );
+    }
+}
