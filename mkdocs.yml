@@ -117,6 +117,7 @@ nav:
       - Aggregator Monitoring: operations/aggregator-monitoring.md
       - Detection Monitoring: operations/detection-monitoring.md
       - Capacity Planning: operations/capacity-planning.md
+      - Backup and Restore: operations/backup-and-restore.md
       - Incident Runbook (plan): operations/incident-runbook-plan.md
   - API Reference:
       - Overview: api/index.md
