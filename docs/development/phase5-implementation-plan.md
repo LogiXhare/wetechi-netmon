@@ -385,7 +385,9 @@ Adding a note is `POST .../notes` (5D-7). It needs no version, because notes are
 
 Tags are a sub-resource (5D-8): `PUT .../tags/{key}` sets one and `DELETE` removes one. `incident.update` joins the `noc_lead` bundle, by Shorif's decision of 5 Oct 2026. Until then only `platform_admin`, which no token can hold, had it.
 
-Next: manual creation (`senior_operator` and up) and the JSON export bundle.
+Manual creation is `POST /api/v1/incidents` (5D-9, [ADR 0039](../architecture/decisions/0039-phase5d-manual-incidents.md)). It needs `incident.create` (`senior_operator` and up) and an `Idempotency-Key`. A manual incident takes the correlation key of its target, so a second incident for an active target is refused and later detections attach to it.
+
+Next: the JSON export bundle.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and

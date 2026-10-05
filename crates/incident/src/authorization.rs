@@ -19,6 +19,8 @@ use crate::correlation::TenantId;
 pub enum Permission {
     IncidentRead,
     IncidentList,
+    /// Open an incident by hand (ADR 0039).
+    IncidentCreate,
     IncidentUpdate,
     IncidentAcknowledge,
     IncidentAssign,
@@ -153,6 +155,7 @@ impl PermissionResolver for FixedBundleResolver {
                 IncidentResolve,
                 IncidentClose,
                 IncidentReopen,
+                IncidentCreate,
             ]);
             v
         };
