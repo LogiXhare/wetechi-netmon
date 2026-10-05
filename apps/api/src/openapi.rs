@@ -56,6 +56,8 @@ pub struct ProblemDocument {
         crate::transitions::severity,
         crate::transitions::priority,
         crate::transitions::add_note,
+        crate::transitions::set_tag,
+        crate::transitions::remove_tag,
     ),
     components(schemas(
         ProblemDocument,
@@ -84,6 +86,7 @@ pub struct ProblemDocument {
         crate::transitions::PriorityRequest,
         crate::transitions::NoteVisibilityValue,
         crate::transitions::NoteRequest,
+        crate::transitions::TagRequest,
         crate::history::NoteView,
         crate::history::NoteList,
     )),
