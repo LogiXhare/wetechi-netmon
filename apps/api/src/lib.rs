@@ -13,6 +13,7 @@
 pub mod auth;
 pub mod config;
 pub mod incidents;
+pub mod list;
 pub mod openapi;
 pub mod problem;
 pub mod rate_limit;
@@ -69,6 +70,7 @@ pub fn router(state: AppState) -> Router {
     // Every /api/v1 route requires a principal. `route_layer` applies only
     // to matched routes, so an unknown path is a plain 404 either way.
     let api = Router::new()
+        .route("/incidents", get(list::list_incidents))
         .route("/incidents/{incident_id}", get(incidents::get_incident))
         .route_layer(axum::middleware::from_fn_with_state(
             state.auth.clone(),

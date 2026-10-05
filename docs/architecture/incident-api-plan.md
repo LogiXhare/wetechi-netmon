@@ -45,9 +45,16 @@ incident at the top shifts every subsequent row down one, so page 2 shows
 an item already seen on page 1 and skips another entirely. Cursor
 pagination over an immutable sort key does not drift.
 
-Cursors are opaque, signed, and encode the sort key plus tenant. A cursor
+Cursors are opaque and encode the sort key plus tenant. A cursor
 from another tenant is rejected rather than honoured, so cursors cannot
 be used to cross the tenant boundary.
+
+**As implemented (5D-4):** cursors are not signed. Every list query is
+scoped to the caller's tenant in SQL, so an edited cursor can only move
+the position within the caller's own incidents, which the caller may
+read anyway. Signing would add a secret to manage and protect nothing
+further. A cursor naming another tenant, another sort or another order
+is refused with `400`.
 
 ### Error body
 

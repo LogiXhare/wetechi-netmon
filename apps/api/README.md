@@ -45,6 +45,7 @@ answers. Neither needs a token.
 |---|---|---|---|
 | `GET` | `/healthz` | none | none |
 | `GET` | `/readyz` | none | none |
+| `GET` | `/api/v1/incidents` | `incident.list` | 120/min per actor; `include_total` costs 2 |
 | `GET` | `/api/v1/incidents/{id}` | `incident.read` | 120/min per actor |
 
 The full contract is the generated [OpenAPI document](../../docs/api/openapi.json). Another tenant's incident is `404 incident.not_found`, indistinguishable from a missing one.
