@@ -2242,6 +2242,7 @@ dependencies = [
  "tokio-rustls",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "utoipa",
  "uuid",
  "wetechinetmon-common",
