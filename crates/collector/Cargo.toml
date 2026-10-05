@@ -29,3 +29,9 @@ thiserror.workspace = true
 time = "0.3"
 
 [dev-dependencies]
+# tests/incident_end_to_end.rs runs the real collector and the real incident
+# manager against PostgreSQL. Workspace crates and workspace dependencies
+# only.
+wetechinetmon-incident-manager = { path = "../incident-manager" }
+tokio-postgres.workspace = true
+serde_json = "1"

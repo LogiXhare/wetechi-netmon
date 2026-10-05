@@ -106,7 +106,8 @@ their tenants.
 ## Follow-ups
 
 - [x] Attach the inbox producer to the collector's detection stage.
-- [ ] The end-to-end test from synthetic IPFIX bytes to an incident.
+- [x] The end-to-end test from synthetic IPFIX bytes to an incident
+      (`crates/collector/tests/incident_end_to_end.rs`).
 - [ ] `wetechinetmon_incident_events_ingested_total{result}` by ingest
       outcome (FU-52).
 - [ ] Per-policy staleness timeout for the timers (FU-51).
