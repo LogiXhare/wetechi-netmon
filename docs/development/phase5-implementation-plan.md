@@ -324,6 +324,16 @@ asserted against an allowlist.
 | 7 | API error model — RFC 9457 problem details with stable `error` codes |
 | 8 | Dependency review for the framework and its closure, gates 6–13 of 5B |
 
+**Gate status (2026-10-05):** gates 1–2 are decided in [ADR 0037](../architecture/decisions/0037-phase5d-http-framework-and-openapi.md): `axum` 0.8, and an OpenAPI document generated from code with `utoipa` and checked against a committed file. Gates 3–7 are decided in [ADR 0038](../architecture/decisions/0038-phase5d-api-boundary.md):
+
+- TLS at the service off loopback;
+- opaque, hashed API tokens behind an `Authenticator` seam;
+- the existing `PermissionResolver`;
+- in-memory GCRA limits per actor and surface;
+- RFC 9457 errors with stable codes.
+
+Gate 8, the measured dependency probe, is next. No endpoint is written before it closes.
+
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
 sorting through an allowlist; rate limiting; RFC 9457 error bodies; the
