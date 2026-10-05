@@ -391,7 +391,9 @@ The export is `POST .../export` (5D-10). It needs `incident.export` and returns 
 
 Every endpoint in the API plan now exists, except `PATCH` for title and description (FU-56).
 
-Next: the tenant-isolation suite across every endpoint, the 5D exit criterion, then FU-54.
+The tenant-isolation suite (`apps/api/tests/tenant_isolation.rs`) reads every per-incident operation from the committed OpenAPI document, so a new endpoint without a case fails it. Another tenant's broadest role gets a `404` identical to a missing incident on every one of them, sending a body the endpoint would accept. The incident is unchanged afterwards, and the other tenant's list never shows it. This meets the first exit criterion. The second, OpenAPI matching the implementation, is the drift test.
+
+Remaining 5D gaps, all recorded: FU-54 (representation fields), FU-55 (acknowledge note), FU-56 (title and description).
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
