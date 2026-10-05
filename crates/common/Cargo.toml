@@ -10,3 +10,15 @@ publish.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Optional, for `metrics_server`: both are existing workspace dependencies,
+# so nothing new enters Cargo.lock. Off by default so the pure crates
+# (protocol-ipfix, classifier, aggregator) never pull in a runtime.
+tokio = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+
+[features]
+# The hand-rolled `/metrics` endpoint every service binary serves.
+metrics-server = ["dep:tokio", "dep:prometheus"]
+
+[dev-dependencies]
+tokio.workspace = true

@@ -2080,7 +2080,9 @@ dependencies = [
 name = "wetechinetmon-common"
 version = "0.0.0"
 dependencies = [
+ "prometheus",
  "thiserror 2.0.20",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2116,6 +2118,22 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "wetechinetmon-detector",
+]
+
+[[package]]
+name = "wetechinetmon-incident-manager"
+version = "0.0.0"
+dependencies = [
+ "deadpool-postgres",
+ "prometheus",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "wetechinetmon-common",
+ "wetechinetmon-detector",
+ "wetechinetmon-incident",
+ "wetechinetmon-incident-postgres",
 ]
 
 [[package]]
