@@ -206,6 +206,10 @@ impl From<&IncidentError> for Problem {
                 .with("expected_version", *expected)
                 .with("current_version", *current)
                 .with("current_state", current_state.as_str()),
+            // Same tenant by construction: the key includes the tenant.
+            (ErrorCode::DuplicateActive, E::DuplicateActiveIncident(existing)) => {
+                problem.with("incident_id", existing.to_canonical_string())
+            }
             (ErrorCode::ClockSkew, _) => problem.retry_after(1),
             _ => problem,
         }

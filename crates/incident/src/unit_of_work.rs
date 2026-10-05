@@ -54,6 +54,7 @@ use crate::incident::{
     validate_note_body, Incident, Note, NoteVisibility, INCIDENT_SCHEMA_VERSION,
 };
 use crate::limits::{AFFECTED_TARGETS_MAX, POLICY_REFS_MAX, TAG_KEY_MAX_LEN, TAG_VALUE_MAX_LEN};
+use crate::manual::ManualIncident;
 use crate::number::NumberAllocator;
 use crate::outbox::{OutboxEvent, OutboxMessage};
 use crate::reopen::ReopenPolicy;
@@ -461,6 +462,160 @@ impl IncidentUnitOfWork {
             outcome_kind: IngestOutcomeKind::Created,
             incident_id: Some(incident_id),
         })
+    }
+
+    /// Opens an incident an operator asked for (ADR 0039). Needs
+    /// `incident.create`.
+    ///
+    /// The incident takes the correlation key a detection for the same
+    /// target would, so where one is already active the request is refused
+    /// with [`IncidentError::DuplicateActiveIncident`] naming it, and while
+    /// this one is active, detections attach to it. With an idempotency
+    /// key, a retry replays the first outcome.
+    pub fn create_manual_incident(
+        &mut self,
+        auth: &AuthorizationContext,
+        request: ManualIncident,
+        idempotency_key: Option<IdempotencyKey>,
+    ) -> Result<IncidentId, IncidentError> {
+        self.check_permission(
+            auth,
+            Permission::IncidentCreate,
+            AttemptedResource::Unresolved("new incident".to_string()),
+        )?;
+        let fingerprint = RequestFingerprint::of(&("create_manual_incident", &request));
+        if let Some(key) = &idempotency_key {
+            match self
+                .store
+                .idempotency()
+                .check(auth.tenant(), key, &fingerprint)
+            {
+                IdempotencyCheck::Replay(StoredOutcome::Mutated { incident_id, .. }) => {
+                    return Ok(incident_id)
+                }
+                IdempotencyCheck::Replay(StoredOutcome::Failed(err)) => return Err(err),
+                IdempotencyCheck::Conflict => return Err(IncidentError::IdempotencyConflict),
+                IdempotencyCheck::New => {}
+            }
+        }
+
+        let result = self.open_manual_incident(auth, &request);
+
+        if let Some(key) = idempotency_key {
+            let outcome = match &result {
+                // Never persisted: a retry may succeed once it clears.
+                Err(IncidentError::InternalInvariantViolation(_)) => None,
+                Ok(incident_id) => Some(StoredOutcome::Mutated {
+                    incident_id: *incident_id,
+                    version: 1,
+                }),
+                Err(err) => Some(StoredOutcome::Failed(err.clone())),
+            };
+            if let Some(outcome) = outcome {
+                self.store.idempotency_mut().record(
+                    auth.tenant().clone(),
+                    key,
+                    fingerprint,
+                    outcome,
+                );
+            }
+        }
+        result
+    }
+
+    fn open_manual_incident(
+        &mut self,
+        auth: &AuthorizationContext,
+        request: &ManualIncident,
+    ) -> Result<IncidentId, IncidentError> {
+        request.validate()?;
+        let tenant = auth.tenant().clone();
+        let key = request.correlation_key(&tenant);
+        if let Some(existing) = self.store.open_index_get(&key) {
+            return Err(IncidentError::DuplicateActiveIncident(existing));
+        }
+        let now = self.decision_time()?;
+        let incident_id = self.incident_generator.generate()?;
+        let incident_number = self
+            .number_allocator
+            .allocate(tenant.as_str(), self.number_allocation_year)?;
+        let matched_metrics = BTreeSet::new();
+        let category = derive_category(&matched_metrics);
+        let actor = auth.actor().clone();
+
+        let incident = Incident {
+            incident_id,
+            incident_number,
+            schema_version: INCIDENT_SCHEMA_VERSION,
+            tenant_id: tenant.clone(),
+            correlation_key: key.clone(),
+            address_family: request.address_family,
+            direction: request.direction,
+            target_type: request.target_type,
+            target_identity: request.target_identity.clone(),
+            created_by: actor.clone(),
+            title: request.title.clone(),
+            description: request.description.clone(),
+            state: IncidentState::Open,
+            severity: request.severity,
+            severity_source: SeveritySource::Operator,
+            ever_critical: request.severity == wetechinetmon_detector::Severity::Critical,
+            maximum_detected_severity: request.severity,
+            priority: request
+                .priority
+                .unwrap_or_else(|| Priority::default_for(request.severity)),
+            closure_reason: None,
+            state_before_recovering: None,
+            suppression: None,
+            version: 1,
+            category,
+            matched_metrics,
+            first_detected_at: now,
+            opened_at: now,
+            last_detected_at: now,
+            last_updated_at: now,
+            acknowledged_at: None,
+            recovering_since: None,
+            resolved_at: None,
+            closed_at: None,
+            reopened_at: None,
+            reopen_count: 0,
+            assignment: crate::assignment::Assignment::unassigned(),
+            updated_by: actor.clone(),
+            evidence: crate::evidence::EvidenceLedger::new(),
+            notes: Vec::new(),
+            tags: std::collections::BTreeMap::new(),
+            policy_refs: Vec::new(),
+            policy_refs_omitted: 0,
+        };
+
+        self.store.insert(incident);
+        self.store.open_index_claim(key, incident_id);
+        self.maybe_fail()?;
+
+        let ts = self.next_timeline_sequence();
+        self.store.append_timeline(TimelineEntry::new(
+            ts,
+            incident_id,
+            actor.clone(),
+            TimelinePayload::Opened,
+        ));
+        let asq = self.next_audit_sequence();
+        self.store.append_audit(AuditEntry::allowed(
+            asq,
+            tenant.clone(),
+            actor,
+            Permission::IncidentCreate,
+            incident_id,
+        ));
+        let osq = self.next_outbox_sequence();
+        self.store.append_outbox(OutboxMessage::new(
+            osq,
+            tenant,
+            incident_id,
+            OutboxEvent::IncidentOpened,
+        ));
+        Ok(incident_id)
     }
 
     fn create_incident_internal(
@@ -3206,5 +3361,119 @@ mod tests {
                 panic!("a pre-lookup denial must use Unresolved, not Incident")
             }
         }
+    }
+
+    fn manual_host(addr: IpAddr) -> ManualIncident {
+        ManualIncident {
+            title: "Upstream reports spoofed sources".to_string(),
+            description: Some("Seen by the transit provider, not by us".to_string()),
+            severity: Severity::Major,
+            priority: None,
+            target_type: ScopeType::Host,
+            target_identity: ScopeId::Host { addr },
+            direction: TrafficDirection::Incoming,
+            address_family: AddressFamily::Ipv4,
+        }
+    }
+
+    /// ADR 0039: a manual incident is a full incident, and a later
+    /// detection for the same target attaches to it.
+    #[test]
+    fn a_manual_incident_opens_and_later_detections_attach_to_it() {
+        let mut uow = fresh_uow();
+        let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5));
+        let auth = senior_operator("acme");
+        let id = uow
+            .create_manual_incident(&auth, manual_host(addr), None)
+            .unwrap();
+        let incident = uow.get(&id).unwrap();
+        assert_eq!(incident.state, IncidentState::Open);
+        assert_eq!(incident.version, 1);
+        assert_eq!(incident.priority, Priority::P2);
+        assert_eq!(incident.severity_source, SeveritySource::Operator);
+        assert_eq!(
+            incident.created_by,
+            Actor::Operator {
+                id: "u1".to_string()
+            }
+        );
+        assert!(uow
+            .audit()
+            .iter()
+            .any(|entry| entry.permission == Permission::IncidentCreate));
+        assert!(uow
+            .outbox()
+            .iter()
+            .any(|message| message.event == OutboxEvent::IncidentOpened));
+
+        let linked = uow
+            .ingest_detection_event(
+                &AuthorizationContext::correlator(TenantId::new("acme")),
+                &event("d-manual", 0, addr, 2_000_000),
+            )
+            .unwrap();
+        assert_eq!(
+            linked.incident_id,
+            Some(id),
+            "attached, not a second incident"
+        );
+    }
+
+    #[test]
+    fn a_manual_incident_is_refused_where_one_is_already_active() {
+        let mut uow = fresh_uow();
+        let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 6));
+        let auth = senior_operator("acme");
+        let first = uow
+            .create_manual_incident(&auth, manual_host(addr), None)
+            .unwrap();
+        assert_eq!(
+            uow.create_manual_incident(&auth, manual_host(addr), None),
+            Err(IncidentError::DuplicateActiveIncident(first))
+        );
+    }
+
+    #[test]
+    fn an_operator_without_incident_create_is_refused_and_audited() {
+        let mut uow = fresh_uow();
+        let operator = AuthorizationContext::new(
+            TenantId::new("acme"),
+            Actor::Operator {
+                id: "u2".to_string(),
+            },
+            FixedBundleResolver.permissions_for("operator"),
+        );
+        let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7));
+        assert_eq!(
+            uow.create_manual_incident(&operator, manual_host(addr), None),
+            Err(IncidentError::Unauthorized)
+        );
+        assert!(uow
+            .audit()
+            .iter()
+            .any(|entry| entry.permission == Permission::IncidentCreate
+                && entry.outcome == crate::audit::AuditOutcome::Denied));
+    }
+
+    #[test]
+    fn a_keyed_manual_create_replays_and_refuses_a_different_body() {
+        let mut uow = fresh_uow();
+        let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 8));
+        let auth = senior_operator("acme");
+        let key = IdempotencyKey::new("manual-create-key-0001").unwrap();
+        let first = uow
+            .create_manual_incident(&auth, manual_host(addr), Some(key.clone()))
+            .unwrap();
+        assert_eq!(
+            uow.create_manual_incident(&auth, manual_host(addr), Some(key.clone())),
+            Ok(first),
+            "the same key and body replay the first outcome"
+        );
+        let mut other = manual_host(addr);
+        other.title = "Something else".to_string();
+        assert_eq!(
+            uow.create_manual_incident(&auth, other, Some(key)),
+            Err(IncidentError::IdempotencyConflict)
+        );
     }
 }

@@ -47,6 +47,7 @@ pub mod id;
 pub mod idempotency;
 pub mod incident;
 pub mod limits;
+pub mod manual;
 pub mod number;
 pub mod outbox;
 pub mod reconstitute;

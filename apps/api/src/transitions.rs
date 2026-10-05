@@ -56,7 +56,7 @@ pub const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 pub const MAX_SUPPRESSION: Duration = Duration::from_secs(30 * 24 * 3_600);
 
 /// The `Idempotency-Key` header, or the `400` to return.
-fn idempotency_key(headers: &HeaderMap) -> Result<IdempotencyKey, Problem> {
+pub(crate) fn idempotency_key(headers: &HeaderMap) -> Result<IdempotencyKey, Problem> {
     let value = headers
         .get(IDEMPOTENCY_KEY_HEADER)
         .ok_or_else(|| {

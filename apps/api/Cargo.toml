@@ -35,6 +35,8 @@ tokio-rustls = "0.26.4"
 # Workspace crates and existing workspace dependencies.
 wetechinetmon-common = { path = "../../crates/common" }
 wetechinetmon-incident = { path = "../../crates/incident" }
+# The target vocabulary a manual incident names (ADR 0039).
+wetechinetmon-detector = { path = "../../crates/detector" }
 wetechinetmon-incident-postgres = { path = "../../crates/incident-postgres" }
 deadpool-postgres.workspace = true
 tokio-postgres.workspace = true
@@ -52,4 +54,3 @@ tower = { version = "0.5.3", features = ["util"] }
 proptest.workspace = true
 # tests/get_incident.rs builds detection events with the shared
 # PostgreSQL fixtures.
-wetechinetmon-detector = { path = "../../crates/detector" }

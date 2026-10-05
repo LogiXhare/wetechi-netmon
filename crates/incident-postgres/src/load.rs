@@ -128,26 +128,61 @@ pub async fn load_for_incident(
     }
 
     if let Some(key) = idempotency_key {
-        if let Some(row) = client
-            .query_opt(SELECT_IDEMPOTENCY, &[&tenant.as_str(), &key.as_str()])
-            .await?
-        {
-            let status: String = row.try_get("response_status")?;
-            let resource_id: Option<String> = row.try_get("resource_id")?;
-            let body: Option<String> = row.try_get("response_body_ref")?;
-            let body = body.ok_or_else(|| {
-                PersistError::corrupt("response_body_ref", "an idempotency record has no outcome")
-            })?;
-            let outcome = history::stored_outcome(&status, resource_id.as_deref(), &body)?;
-            store.load_idempotency(
-                tenant.clone(),
-                key.clone(),
-                RequestFingerprint::from_persisted(row.try_get("request_fingerprint")?),
-                outcome,
-            );
-        }
+        load_idempotency(client, tenant, key, &mut store).await?;
     }
     Ok(store)
+}
+
+/// Loads what opening a manual incident can look up (ADR 0039): the
+/// tenant's number allocator, locked; whether the key already has an
+/// active incident; and the request's unexpired idempotency record.
+pub async fn load_for_create(
+    client: &impl GenericClient,
+    tenant: &TenantId,
+    key: &CorrelationKey,
+    idempotency_key: Option<&IdempotencyKey>,
+) -> Result<IngestLoad, PersistError> {
+    let mut store = StagingStore::new();
+    // Locked first, as ingestion does, so two creates for one tenant
+    // serialize and the active check below sees the other's commit.
+    let next_number = lock_allocator(client, tenant).await?;
+    let active = sql::active_incident_id(client, key).await?;
+    store.load_open_index(key.clone(), active);
+    if let Some(idempotency_key) = idempotency_key {
+        load_idempotency(client, tenant, idempotency_key, &mut store).await?;
+    }
+    Ok(IngestLoad {
+        store,
+        next_number: Some(next_number),
+    })
+}
+
+/// Stages the unexpired idempotency record for `key`, if there is one.
+async fn load_idempotency(
+    client: &impl GenericClient,
+    tenant: &TenantId,
+    key: &IdempotencyKey,
+    store: &mut StagingStore,
+) -> Result<(), PersistError> {
+    if let Some(row) = client
+        .query_opt(SELECT_IDEMPOTENCY, &[&tenant.as_str(), &key.as_str()])
+        .await?
+    {
+        let status: String = row.try_get("response_status")?;
+        let resource_id: Option<String> = row.try_get("resource_id")?;
+        let body: Option<String> = row.try_get("response_body_ref")?;
+        let body = body.ok_or_else(|| {
+            PersistError::corrupt("response_body_ref", "an idempotency record has no outcome")
+        })?;
+        let outcome = history::stored_outcome(&status, resource_id.as_deref(), &body)?;
+        store.load_idempotency(
+            tenant.clone(),
+            key.clone(),
+            RequestFingerprint::from_persisted(row.try_get("request_fingerprint")?),
+            outcome,
+        );
+    }
+    Ok(())
 }
 
 async fn lock_allocator(

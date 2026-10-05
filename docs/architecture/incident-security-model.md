@@ -74,6 +74,7 @@ permissions are what the code checks.
 |---|---|
 | `incident.read` | Read one incident |
 | `incident.list` | List and search within a tenant |
+| `incident.create` | Open an incident by hand ([ADR 0039](decisions/0039-phase5d-manual-incidents.md)) |
 | `incident.update` | Title, description, tags |
 | `incident.acknowledge` | Acknowledge |
 | `incident.assign` | Assign, reassign, unassign, claim, release |
@@ -99,7 +100,7 @@ Suggested bundles, deployment-configurable:
 |---|---|
 | `viewer` | read, list |
 | `operator` | viewer + acknowledge, assign, investigate, note.create |
-| `senior_operator` | operator + severity.change, priority.change, resolve, close, reopen |
+| `senior_operator` | operator + severity.change, priority.change, resolve, close, reopen, create |
 | `noc_lead` | senior_operator + suppress, export, audit.read, config.read, update |
 | `platform_admin` | all, including platform permissions |
 

@@ -205,6 +205,149 @@
             "bearer": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "incidents"
+        ],
+        "summary": "Opens an incident by hand. Needs `incident.create`.",
+        "operationId": "create_incident",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "16 to 255 characters; a retry with the same key and body answers with the incident the first call opened",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIncidentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The incident opened, or on a replay the one the first call opened",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The incident's URL"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad header or body, or an unknown field",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No usable token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role lacks incident.create",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An incident for the target is already active (its incident_id is given), the key was reused, or a limit is reached",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is over 64 KiB",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not application/json",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The title, description or target is invalid",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unreachable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/api/v1/incidents/{incident_id}": {
@@ -3222,6 +3365,63 @@
           "other"
         ]
       },
+      "CreateIncidentRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "severity",
+          "target_scope",
+          "target",
+          "direction"
+        ],
+        "properties": {
+          "address_family": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "4 or 6. Taken from `target` when it is an address or network;\nrequired for `hostgroup_total`.",
+            "minimum": 0
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Up to 8000 characters."
+          },
+          "direction": {
+            "$ref": "#/components/schemas/DirectionValue"
+          },
+          "priority": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PriorityValue",
+                "description": "Defaults from the severity: critical P1, major P2, minor P3, info P4."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "severity": {
+            "$ref": "#/components/schemas/SeverityValue"
+          },
+          "target": {
+            "type": "string",
+            "description": "An address, a network in CIDR form, or a hostgroup name."
+          },
+          "target_scope": {
+            "$ref": "#/components/schemas/TargetScope"
+          },
+          "title": {
+            "type": "string",
+            "description": "Up to 200 characters."
+          }
+        },
+        "additionalProperties": false
+      },
       "DetectionPage": {
         "type": "object",
         "required": [
@@ -3296,6 +3496,14 @@
             "type": "string"
           }
         }
+      },
+      "DirectionValue": {
+        "type": "string",
+        "enum": [
+          "incoming",
+          "outgoing",
+          "internal"
+        ]
       },
       "Health": {
         "type": "object",
@@ -3912,6 +4120,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "TargetScope": {
+        "type": "string",
+        "description": "What kind of target, in the detector's own vocabulary.",
+        "enum": [
+          "host",
+          "prefix",
+          "slash24",
+          "hostgroup_total"
+        ]
       },
       "TimelineEntryView": {
         "type": "object",

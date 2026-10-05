@@ -27,10 +27,11 @@ use wetechinetmon_incident::authorization::AuthorizationContext;
 use wetechinetmon_incident::clock::Clock;
 use wetechinetmon_incident::closure::ClosurePolicy;
 use wetechinetmon_incident::command::Command;
-use wetechinetmon_incident::correlation::TenantId;
+use wetechinetmon_incident::correlation::{CorrelationKey, TenantId};
 use wetechinetmon_incident::error::IncidentError;
 use wetechinetmon_incident::id::{IncidentGenerator, IncidentId};
 use wetechinetmon_incident::idempotency::IdempotencyKey;
+use wetechinetmon_incident::manual::ManualIncident;
 use wetechinetmon_incident::number::{IncidentNumber, NumberAllocator};
 use wetechinetmon_incident::reopen::ReopenPolicy;
 use wetechinetmon_incident::transition::DetectionEndReason;
@@ -38,7 +39,7 @@ use wetechinetmon_incident::unit_of_work::{IncidentUnitOfWork, IngestResult};
 
 use crate::error::PersistError;
 use crate::flush::flush;
-use crate::load::{load_for_incident, load_for_ingest};
+use crate::load::{load_for_create, load_for_incident, load_for_ingest};
 use crate::retry::RetryPolicy;
 use crate::staging::StagingStore;
 
@@ -71,6 +72,10 @@ enum DecisionTime {
 #[derive(Clone, Copy)]
 enum Load<'a> {
     Ingest(&'a DetectionEvent),
+    Create {
+        key: &'a CorrelationKey,
+        idempotency_key: Option<&'a IdempotencyKey>,
+    },
     Incident {
         id: IncidentId,
         idempotency_key: Option<&'a IdempotencyKey>,
@@ -152,6 +157,25 @@ impl IncidentPersistence {
         };
         self.run(client, auth.tenant(), load, |uow| {
             uow.handle_command(auth, incident_id, command.clone(), idempotency_key.clone())
+        })
+        .await
+    }
+
+    /// Opens an incident an operator asked for (ADR 0039).
+    pub async fn create_manual_incident(
+        &self,
+        client: &mut Client,
+        auth: &AuthorizationContext,
+        request: &ManualIncident,
+        idempotency_key: Option<IdempotencyKey>,
+    ) -> Outcome<IncidentId> {
+        let key = request.correlation_key(auth.tenant());
+        let load = Load::Create {
+            key: &key,
+            idempotency_key: idempotency_key.as_ref(),
+        };
+        self.run(client, auth.tenant(), load, |uow| {
+            uow.create_manual_incident(auth, request.clone(), idempotency_key.clone())
         })
         .await
     }
@@ -267,7 +291,7 @@ impl IncidentPersistence {
 
         let event = match load {
             Load::Ingest(event) => Some(event),
-            Load::Incident { .. } => None,
+            Load::Incident { .. } | Load::Create { .. } => None,
         };
         let (store, next_number) = match load {
             Load::Ingest(event) if event.target.tenant == tenant.as_str() => {
@@ -284,6 +308,13 @@ impl IncidentPersistence {
                 load_for_incident(&transaction, tenant, id, idempotency_key).await?,
                 None,
             ),
+            Load::Create {
+                key,
+                idempotency_key,
+            } => {
+                let loaded = load_for_create(&transaction, tenant, key, idempotency_key).await?;
+                (loaded.store, loaded.next_number)
+            }
         };
 
         // The domain call is synchronous and awaits nothing.
