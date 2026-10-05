@@ -431,6 +431,25 @@ impl IncidentUnitOfWork {
         let reopen_candidate = self.store.reopen_candidate(&key, &tenant);
 
         if let Some(candidate) = reopen_candidate {
+            // T-18: news about what was already resolved never reopens it.
+            // A detection ending, or any event of a detection episode the
+            // incident already holds as evidence, is late: it links as
+            // evidence and leaves the state alone. A recurrence is a new
+            // episode, with a new detection id (ADR 0009). Comparing
+            // detection ids rather than timestamps keeps the detector's
+            // clock out of the decision (ADR 0031). Past the evidence cap
+            // an old id may no longer be retained; the event then reopens,
+            // which errs toward visibility.
+            let already_held = candidate
+                .evidence
+                .retained()
+                .iter()
+                .any(|reference| reference.detection_id == event.detection_id);
+            if event.kind == EventKind::Ended || already_held {
+                let incident_id = candidate.incident_id;
+                self.store.dedup_record(dedup, incident_id);
+                return self.link_event(auth, incident_id, event, true);
+            }
             let now = self.decision_time()?;
             // ADR 0031: a decision time before the candidate's reference is
             // clock skew. Returned, never read as "outside the window": that
@@ -789,6 +808,19 @@ impl IncidentUnitOfWork {
         incident_id: IncidentId,
         event: &DetectionEvent,
     ) -> Result<IngestResult, IncidentError> {
+        self.link_event(auth, incident_id, event, false)
+    }
+
+    /// Links `event` as evidence. `late` forces a late link, which never
+    /// moves `last_detected_at`; otherwise an event is late when the
+    /// decision time is behind `last_detected_at`.
+    fn link_event(
+        &mut self,
+        auth: &AuthorizationContext,
+        incident_id: IncidentId,
+        event: &DetectionEvent,
+        late: bool,
+    ) -> Result<IngestResult, IncidentError> {
         let now = self.decision_time()?;
 
         let (evidence_ref, is_late, category_changed, old_category, new_category) = {
@@ -796,7 +828,7 @@ impl IncidentUnitOfWork {
                 .store
                 .get_mut(&incident_id)
                 .ok_or(IncidentError::NotFound)?;
-            let is_late = now < incident.last_detected_at;
+            let is_late = late || now < incident.last_detected_at;
             let new_version = incident.version.checked_add(1).ok_or(
                 IncidentError::InternalInvariantViolation("incident version overflowed u64"),
             )?;

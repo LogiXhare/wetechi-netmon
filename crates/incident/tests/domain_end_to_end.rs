@@ -1596,3 +1596,99 @@ fn a_silent_detector_moves_an_incident_to_recovering_only_after_the_threshold() 
         .enter_recovering_if_silent(&operator_without_ingest, incident_id, silent_after)
         .is_err());
 }
+
+/// T-18: news about what was already resolved never reopens it. A late
+/// event of the resolved detection episode, and a detection ending, link
+/// as evidence; only a new episode reopens.
+#[test]
+fn late_news_about_a_resolved_incident_links_and_never_reopens() {
+    let resolver = FixedBundleResolver;
+    let correlator = AuthorizationContext::correlator(TenantId::new("acme"));
+    let senior = resolver_context(&resolver, "acme", "senior_operator", "u1");
+    let (mut uow, _clock) = uow_with_shared_clock();
+    let addr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 40));
+    let opening = event(
+        "det-old",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        5_000_000,
+        1_000_000,
+    );
+    let id = uow
+        .ingest_detection_event(&correlator, &opening)
+        .unwrap()
+        .incident_id
+        .unwrap();
+    let version = uow.get(&id).unwrap().version;
+    uow.handle_command(
+        &senior,
+        id,
+        Command::ResolveIncident {
+            expected_version: version,
+            resolution_note: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    // A delayed event of the episode the incident already holds.
+    let delayed = event(
+        "det-old",
+        1,
+        EventKind::Updated,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        4_000_000,
+        1_000_000,
+    );
+    let linked = uow.ingest_detection_event(&correlator, &delayed).unwrap();
+    assert_eq!(linked.outcome_kind, IngestOutcomeKind::LinkedLate);
+    assert_eq!(linked.incident_id, Some(id));
+    assert_eq!(
+        uow.get(&id).unwrap().state,
+        IncidentState::Resolved,
+        "not reopened"
+    );
+
+    // A detection ending, even of an episode never seen, is not a recurrence.
+    let ended = event(
+        "det-other",
+        7,
+        EventKind::Ended,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        0,
+        1_000_000,
+    );
+    let linked = uow.ingest_detection_event(&correlator, &ended).unwrap();
+    assert_eq!(linked.outcome_kind, IngestOutcomeKind::LinkedLate);
+    assert_eq!(
+        uow.get(&id).unwrap().state,
+        IncidentState::Resolved,
+        "not reopened"
+    );
+    assert_eq!(uow.get(&id).unwrap().reopen_count, 0);
+
+    // A new episode is a recurrence, and reopens.
+    let recurrence = event(
+        "det-new",
+        0,
+        EventKind::Started,
+        "acme",
+        addr,
+        MetricKind::Bps,
+        5_000_000,
+        1_000_000,
+    );
+    let reopened = uow
+        .ingest_detection_event(&correlator, &recurrence)
+        .unwrap();
+    assert_eq!(reopened.outcome_kind, IngestOutcomeKind::Reopened);
+    assert_eq!(uow.get(&id).unwrap().state, IncidentState::Open);
+    assert_eq!(uow.incident_count(), 1);
+}

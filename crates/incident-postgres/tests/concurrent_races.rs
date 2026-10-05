@@ -22,7 +22,7 @@ mod support;
 
 use std::sync::Arc;
 
-use support::{all_scopes, event, host_scope, Scope};
+use support::{all_scopes, event, host_scope, in_episode, Scope};
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Client;
 use wetechinetmon_detector::{EventKind, MetricKind, TestClock};
@@ -230,8 +230,15 @@ async fn each_active_index_holds_under_concurrent_creates_and_a_reopen_race_reop
         .await
         .unwrap();
 
-    let recur_a = event(&scope, 2, EventKind::Started, "p-opening", MetricKind::Bps);
-    let recur_b = event(&scope, 3, EventKind::Started, "p-opening", MetricKind::Bps);
+    // Recurrences are new detection episodes (T-18).
+    let recur_a = in_episode(
+        event(&scope, 2, EventKind::Started, "p-opening", MetricKind::Bps),
+        "det-recur",
+    );
+    let recur_b = in_episode(
+        event(&scope, 3, EventKind::Started, "p-opening", MetricKind::Bps),
+        "det-recur",
+    );
     let (left, right) = tokio::join!(
         service.ingest_detection_event(&mut client, &auth, &recur_a),
         service.ingest_detection_event(&mut other, &auth, &recur_b),
