@@ -73,6 +73,15 @@
             }
           },
           {
+            "name": "incident_number",
+            "in": "query",
+            "description": "Exact, such as `WNM-2026-000123`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "opened_from",
             "in": "query",
             "description": "RFC 3339 UTC, inclusive. Needs `opened_to`; at most 90 days apart.",

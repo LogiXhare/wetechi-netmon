@@ -81,3 +81,4 @@ yet:
 | [0037](0037-phase5d-http-framework-and-openapi.md) | Phase 5D HTTP Framework and OpenAPI | Accepted |
 | [0038](0038-phase5d-api-boundary.md) | Phase 5D API Boundary: TLS, Identity, Authorization, Rate Limits, Errors | Accepted |
 | [0039](0039-phase5d-manual-incidents.md) | Phase 5D Manual Incidents | Accepted |
+| [0040](0040-phase5e-cli-client.md) | Phase 5E CLI Client | Accepted |

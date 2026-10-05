@@ -219,6 +219,30 @@ async fn cursor_pages_cover_the_tenant_exactly_once_and_nothing_else() {
         body["items"].as_array().unwrap().len(),
         usize::from(ACME_INCIDENTS)
     );
+    // --- An exact incident number finds that one, and only in the tenant ---
+    let (_, all) = get(&app, "/api/v1/incidents?limit=1", &acme).await;
+    let number = all["items"][0]["incident_number"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let by_number = format!("/api/v1/incidents?incident_number={number}");
+    let (status, body) = get(&app, &by_number, &acme).await;
+    assert_eq!(status, StatusCode::OK);
+    let found = body["items"].as_array().unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0]["incident_number"], number.as_str());
+    let (_, body) = get(&app, &by_number, &globex).await;
+    // Numbers are per tenant, so globex may hold the same number for its
+    // own incident; it must never get acme's.
+    let theirs = body["items"].as_array().unwrap();
+    assert!(
+        theirs
+            .iter()
+            .all(|item| item["incident_id"] != found[0]["incident_id"]),
+        "a number never reaches across tenants: {body}"
+    );
+    let (status, _) = get(&app, "/api/v1/incidents?incident_number=WNM%27%3B", &acme).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = get(&app, "/api/v1/incidents?tenant_id=globex", &acme).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "api.unknown_field");

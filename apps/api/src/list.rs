@@ -66,6 +66,8 @@ pub struct ListParams {
     direction: Option<String>,
     /// host, network, hostgroup.
     target_type: Option<String>,
+    /// Exact, such as `WNM-2026-000123`.
+    incident_number: Option<String>,
     /// RFC 3339 UTC, inclusive. Needs `opened_to`; at most 90 days apart.
     opened_from: Option<String>,
     /// RFC 3339 UTC, exclusive.
@@ -205,6 +207,7 @@ pub fn parse(pairs: &[(String, String)], tenant: &str) -> Result<ListRequest, Pr
         priorities: Vec::new(),
         direction: None,
         target_type: None,
+        incident_number: None,
         opened_between: None,
         sort: ListSort::OpenedAt,
         order: SortOrder::Desc,
@@ -236,6 +239,18 @@ pub fn parse(pairs: &[(String, String)], tenant: &str) -> Result<ListRequest, Pr
             "target_type" => {
                 single(seen.entry("target_type").or_default(), name)?;
                 filter.target_type = Some(one_of("target_type", value, TARGET_TYPES)?);
+            }
+            "incident_number" => {
+                single(seen.entry("incident_number").or_default(), name)?;
+                let well_formed = !value.is_empty()
+                    && value.len() <= 32
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if !well_formed {
+                    return Err(invalid("incident_number is not an incident number"));
+                }
+                filter.incident_number = Some(value.clone());
             }
             "opened_from" => {
                 single(seen.entry("opened_from").or_default(), name)?;

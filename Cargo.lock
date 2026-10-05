@@ -2260,6 +2260,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wetechinetmon-cli"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "wetechinetmon-common",
+]
+
+[[package]]
 name = "wetechinetmon-collector"
 version = "0.0.0"
 dependencies = [
@@ -2287,6 +2304,7 @@ name = "wetechinetmon-common"
 version = "0.0.0"
 dependencies = [
  "prometheus",
+ "proptest",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

@@ -413,6 +413,17 @@ matching the implementation.
 output; exit codes; confirmations; per-command idempotency keys reused
 across retries.
 
+**Progress:** `apps/cli` is `wetechinetmonctl` ([ADR 0040](../architecture/decisions/0040-phase5e-cli-client.md)). It adds no new crates: hyper and tokio-rustls, which are already in the tree, and a hand-written parser. 5E-1 adds the read commands:
+
+- `list`, `show`, `timeline`, `detections`, `audit`, `note list`;
+- table, wide and verbatim JSON output;
+- the exit codes;
+- retries only on connection errors and `5xx`;
+- credentials never accepted as flags, and plaintext only to loopback;
+- an incident number resolved through the API's new exact `incident_number` filter.
+
+The RFC 3339 helpers moved to `wetechinetmon_common::rfc3339`, so the API and the CLI share them. Next: the commands that change incidents, with confirmations and idempotency keys reused across retries.
+
 Tests: output formats; exit codes per error class; confirmation required
 without `--yes`; **no TTY plus no `--yes` is an error, never an assumed
 yes**; keys reused on retry.

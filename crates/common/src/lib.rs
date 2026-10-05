@@ -7,6 +7,7 @@
 
 pub mod flow;
 pub mod logging;
+pub mod rfc3339;
 #[cfg(feature = "metrics-server")]
 pub mod metrics_server;
 pub mod sampling;
