@@ -2063,6 +2063,7 @@ dependencies = [
 name = "wetechinetmon-collector"
 version = "0.0.0"
 dependencies = [
+ "deadpool-postgres",
  "prometheus",
  "thiserror 2.0.21",
  "time",
@@ -2072,6 +2073,8 @@ dependencies = [
  "wetechinetmon-classifier",
  "wetechinetmon-common",
  "wetechinetmon-detector",
+ "wetechinetmon-incident",
+ "wetechinetmon-incident-postgres",
  "wetechinetmon-protocol-ipfix",
  "wetechinetmon-storage",
 ]

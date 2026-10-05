@@ -65,6 +65,19 @@ required to change any of them. Source of truth:
 | Verification | Stop sending traffic for an open detection and watch the counter after this many seconds |
 | Troubleshooting | A rising count while traffic looks normal usually means an exporter stopped, not that attacks ended — cross-check `wetechinetmon_collector_flow_datagrams_received_total`. Closes carry reason `stale` and a zeroed rate. |
 
+### `WETECHINETMON_COLLECTOR_INCIDENT_DATABASE_URL`
+
+Also: `..._INCIDENT_DATABASE_CA_FILE`, `..._INCIDENT_DATABASE_CLIENT_CERT_FILE`, `..._INCIDENT_DATABASE_CLIENT_KEY_FILE`.
+
+| Field | Value |
+|---|---|
+| Type | libpq-style connection string; PEM file paths |
+| Default | Unset: detection events do not become incidents |
+| Security implications | The connection string can carry a password and is never logged. Without a CA file, it must reach only this host; a remote database without TLS is refused, never contacted in plaintext ([ADR 0023](../architecture/decisions/0023-phase5b-postgresql-tls.md)). A client certificate needs its key and a CA file. CA bundles and keys never belong in Git. |
+| Related metrics | `wetechinetmon_collector_incident_inbox_queued`, `..._incident_inbox_written_total`, `..._incident_inbox_write_failures_total`, `wetechinetmon_detector_events_failed_total{sink="postgres_inbox"}` |
+| Verification | `incident_inbox_written_total` climbs when detections fire, and the incident manager's `wetechinetmon_incident_inbox_events_total{result="processed"}` follows it |
+| Troubleshooting | Each policy's tenant gets its own in-memory queue, written to `detection_event_inbox` by its own task ([ADR 0036](../architecture/decisions/0036-phase5c-incident-manager-process.md)). The collector never migrates this database: until the incident manager has run once, writes fail and `write_failures_total` climbs, with the reason logged. A full queue refuses the newest event, counted under `sink="postgres_inbox"`. If the inbox cannot start at all (a bad URL, missing TLS, an unreadable CA file), detection still runs and the error is logged. On shutdown, the queues are flushed for up to 10 seconds; anything left is logged as lost. |
+
 A policy document that cannot be read or compiled **disables detection
 for the run** rather than stopping the collector — decoding,
 normalizing, and aggregating stay useful, and a collector that refuses to

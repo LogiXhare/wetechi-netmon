@@ -18,6 +18,7 @@ pub mod clickhouse_export;
 pub mod config;
 pub mod detection;
 pub mod exporter;
+pub mod incident_inbox;
 pub mod metrics;
 pub mod normalize;
 pub mod pipeline;
@@ -114,10 +115,31 @@ pub async fn run(config: Config) -> std::io::Result<()> {
     // rather than stopping the collector: decode/normalize/aggregate
     // stays useful, and a collector that refuses to start over a typo in
     // one policy is a collector that loses telemetry to a config error.
+    // The incident inbox (ADR 0036) follows the same rule: if it cannot
+    // start, detection still runs and the error says incidents will not be
+    // opened.
+    let mut incident_inbox: Option<incident_inbox::IncidentInbox> = None;
     let mut detection = match &config.detection_policy_file {
         Some(path) => match detection::load_policy_file(path) {
             Ok(policies) => {
                 let count = policies.policies.len();
+                let extra_sinks = match &config.incident_database {
+                    Some(database) => {
+                        let tenants: std::collections::BTreeSet<String> = policies
+                            .policies
+                            .iter()
+                            .map(|policy| policy.tenant.clone())
+                            .collect();
+                        start_incident_inbox(database, tenants, &metrics_registry)
+                            .map(|inbox| {
+                                let sink = inbox.sink();
+                                incident_inbox = Some(inbox);
+                                vec![sink]
+                            })
+                            .unwrap_or_default()
+                    }
+                    None => Vec::new(),
+                };
                 let clickhouse_sink = config.clickhouse_url.as_ref().map(|_| {
                     Arc::new(detection::ClickHouseEventSink::new(
                         config.detection_event_buffer,
@@ -149,6 +171,7 @@ pub async fn run(config: Config) -> std::io::Result<()> {
                             policies,
                             Arc::new(detection_metrics),
                             clickhouse_sink,
+                            extra_sinks,
                             Instant::now(),
                         ))
                     }
@@ -165,6 +188,9 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         },
         None => {
             tracing::info!("no detection policy file configured; detection is off");
+            if config.incident_database.is_some() {
+                tracing::warn!("an incident database is configured but detection is off, so no detection events will reach it");
+            }
             None
         }
     };
@@ -238,6 +264,9 @@ pub async fn run(config: Config) -> std::io::Result<()> {
             _ = detection_interval.tick(), if detection.is_some() => {
                 if let Some(stage) = detection.as_mut() {
                     let report = stage.tick(Instant::now(), SystemTime::now());
+                    if let Some(inbox) = incident_inbox.as_ref() {
+                        inbox.refresh();
+                    }
                     if report.events_built > 0 {
                         tracing::debug!(
                             opened = report.detections_opened,
@@ -283,9 +312,53 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         }
     }
 
+    if let Some(inbox) = incident_inbox.take() {
+        let report = inbox.shutdown().await;
+        if report.abandoned > 0 {
+            tracing::error!(
+                abandoned = report.abandoned,
+                "detection events could not be written to the incident inbox before shutdown and are lost"
+            );
+        }
+        tracing::info!(
+            enqueued = report.enqueued,
+            failed_writes = report.failed_writes,
+            "incident inbox flushed"
+        );
+    }
     receiver_task.abort();
     metrics_server.abort();
     Ok(())
+}
+
+/// Starts the incident inbox, logging how it connects or why it could not
+/// start.
+fn start_incident_inbox(
+    database: &config::IncidentDatabase,
+    tenants: std::collections::BTreeSet<String>,
+    registry: &prometheus::Registry,
+) -> Option<incident_inbox::IncidentInbox> {
+    let count = tenants.len();
+    match incident_inbox::IncidentInbox::start(database, tenants, registry) {
+        Ok((inbox, transport)) => {
+            match transport {
+                wetechinetmon_incident_postgres::connect::Transport::VerifiedTls => {
+                    tracing::info!(tenants = count, "incident inbox enabled over verified TLS")
+                }
+                wetechinetmon_incident_postgres::connect::Transport::LoopbackPlaintext => {
+                    tracing::warn!(
+                        tenants = count,
+                        "incident inbox enabled without TLS, allowed only because the database is on this host"
+                    )
+                }
+            }
+            Some(inbox)
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "incident inbox could not start; detection events will not become incidents this run");
+            None
+        }
+    }
 }
 
 async fn receive_loop(
@@ -685,6 +758,7 @@ mod tests {
             policies,
             detector_metrics.clone(),
             Some(sink.clone()),
+            Vec::new(),
             start,
         );
 

@@ -105,7 +105,7 @@ their tenants.
 
 ## Follow-ups
 
-- [ ] Attach the inbox producer to the collector's detection stage.
+- [x] Attach the inbox producer to the collector's detection stage.
 - [ ] The end-to-end test from synthetic IPFIX bytes to an incident.
 - [ ] `wetechinetmon_incident_events_ingested_total{result}` by ingest
       outcome (FU-52).

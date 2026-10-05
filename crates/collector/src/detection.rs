@@ -303,6 +303,7 @@ impl DetectionStage {
         policies: CompiledPolicies,
         metrics: Arc<dyn DetectionMetrics>,
         clickhouse: Option<Arc<ClickHouseEventSink>>,
+        extra_sinks: Vec<Box<dyn DetectionEventSink>>,
         now: Instant,
     ) -> Self {
         let mut sinks: Vec<Box<dyn DetectionEventSink>> =
@@ -310,6 +311,7 @@ impl DetectionStage {
         if let Some(sink) = clickhouse.clone() {
             sinks.push(Box::new(SharedSink(sink)));
         }
+        sinks.extend(extra_sinks);
         let engine = ThresholdDetectionEngine::new(config.engine)
             .with_policies(policies.policies)
             .with_sink(Arc::new(wetechinetmon_detector::FanOutSink::new(sinks)))
@@ -474,6 +476,7 @@ mod tests {
             policies,
             Arc::new(CountingMetrics::new()),
             clickhouse,
+            Vec::new(),
             now,
         )
     }
