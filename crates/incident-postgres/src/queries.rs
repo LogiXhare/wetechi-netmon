@@ -18,7 +18,7 @@
 //!   much history the tenant has.
 
 use tokio_postgres::types::ToSql;
-use tokio_postgres::{Client, IsolationLevel, Row};
+use tokio_postgres::{Client, GenericClient, IsolationLevel, Row};
 use wetechinetmon_incident::authorization::{AuthorizationContext, Permission};
 use wetechinetmon_incident::error::IncidentError;
 use wetechinetmon_incident::id::IncidentId;
@@ -319,7 +319,7 @@ pub struct DetectionLinkRow {
 /// history and a missing incident are told apart only within one's own
 /// tenant.
 async fn require_incident(
-    client: &Client,
+    client: &impl GenericClient,
     auth: &AuthorizationContext,
     incident_id: &IncidentId,
 ) -> Result<Result<(), IncidentError>, PersistError> {
@@ -359,9 +359,21 @@ pub async fn timeline(
     if !auth.has(Permission::IncidentRead) {
         return Ok(Err(IncidentError::Unauthorized));
     }
-    if let Err(missing) = require_incident(client, auth, incident_id).await? {
+    if let Err(missing) = require_incident(&*client, auth, incident_id).await? {
         return Ok(Err(missing));
     }
+    Ok(Ok(
+        timeline_rows(&*client, auth, incident_id, after, limit).await?
+    ))
+}
+
+async fn timeline_rows(
+    client: &impl GenericClient,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+    after: Option<i64>,
+    limit: u32,
+) -> Result<HistoryPage<TimelineEntryRow>, PersistError> {
     let rows = client
         .query(
             TIMELINE,
@@ -392,7 +404,7 @@ pub async fn timeline(
             })
         })
         .collect::<Result<Vec<_>, PersistError>>()?;
-    Ok(Ok(page(items, limit)))
+    Ok(page(items, limit))
 }
 
 const AUDIT: &str = "\
@@ -415,9 +427,21 @@ pub async fn audit(
     if !auth.has(Permission::IncidentAuditRead) {
         return Ok(Err(IncidentError::Unauthorized));
     }
-    if let Err(missing) = require_incident(client, auth, incident_id).await? {
+    if let Err(missing) = require_incident(&*client, auth, incident_id).await? {
         return Ok(Err(missing));
     }
+    Ok(Ok(
+        audit_rows(&*client, auth, incident_id, after, limit).await?
+    ))
+}
+
+async fn audit_rows(
+    client: &impl GenericClient,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+    after: Option<i64>,
+    limit: u32,
+) -> Result<HistoryPage<AuditRow>, PersistError> {
     let rows = client
         .query(
             AUDIT,
@@ -446,7 +470,7 @@ pub async fn audit(
             })
         })
         .collect::<Result<Vec<_>, PersistError>>()?;
-    Ok(Ok(page(items, limit)))
+    Ok(page(items, limit))
 }
 
 const DETECTIONS: &str = "\
@@ -471,9 +495,26 @@ pub async fn detections(
     if !auth.has(Permission::IncidentRead) {
         return Ok(Err(IncidentError::Unauthorized));
     }
-    if let Err(missing) = require_incident(client, auth, incident_id).await? {
+    if let Err(missing) = require_incident(&*client, auth, incident_id).await? {
         return Ok(Err(missing));
     }
+    Ok(Ok(detection_rows(
+        &*client,
+        auth,
+        incident_id,
+        after,
+        limit,
+    )
+    .await?))
+}
+
+async fn detection_rows(
+    client: &impl GenericClient,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+    after: Option<(i64, String)>,
+    limit: u32,
+) -> Result<HistoryPage<DetectionLinkRow>, PersistError> {
     // Without a cursor, start before any real detection: 0001-01-01, well
     // inside PostgreSQL's timestamp range.
     let (key, id) = after.unwrap_or((-62_135_596_800_000_000, String::new()));
@@ -507,7 +548,7 @@ pub async fn detections(
             })
         })
         .collect::<Result<Vec<_>, PersistError>>()?;
-    Ok(Ok(page(items, limit)))
+    Ok(page(items, limit))
 }
 
 /// One page of the caller's tenant's incidents, under `incident.list`.
@@ -651,4 +692,57 @@ mod tests {
         let (sql, _) = where_clause(&auth(), &f, true);
         assert!(sql.contains("(last_detected_at, incident_id) > ("), "{sql}");
     }
+}
+
+/// Everything an export carries, read from one snapshot.
+#[derive(Debug, Clone)]
+pub struct ExportBundle {
+    pub incident: Incident,
+    pub timeline: HistoryPage<TimelineEntryRow>,
+    pub detections: HistoryPage<DetectionLinkRow>,
+    /// Only for a caller who also holds `incident.audit.read`.
+    pub audit: Option<HistoryPage<AuditRow>>,
+}
+
+/// An incident and its histories, each up to `max_rows` (`has_more`
+/// says one was cut short), under `incident.export`. One read-only
+/// repeatable-read snapshot, so the sections agree with each other.
+///
+/// This only reads. The caller records the export in the audit trail
+/// first ([`crate::service::IncidentPersistence::record_export`]), so no
+/// export leaves unaudited.
+pub async fn export(
+    client: &mut Client,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+    max_rows: u32,
+) -> Outcome<ExportBundle> {
+    if !auth.has(Permission::IncidentExport) {
+        return Ok(Err(IncidentError::Unauthorized));
+    }
+    let transaction = client
+        .build_transaction()
+        .isolation_level(IsolationLevel::RepeatableRead)
+        .read_only(true)
+        .start()
+        .await?;
+    let Some(incident) =
+        load_incident(&transaction, auth.tenant(), incident_id, Locking::NoLock).await?
+    else {
+        return Ok(Err(IncidentError::NotFound));
+    };
+    let timeline = timeline_rows(&transaction, auth, incident_id, None, max_rows).await?;
+    let detections = detection_rows(&transaction, auth, incident_id, None, max_rows).await?;
+    let audit = if auth.has(Permission::IncidentAuditRead) {
+        Some(audit_rows(&transaction, auth, incident_id, None, max_rows).await?)
+    } else {
+        None
+    };
+    transaction.commit().await?;
+    Ok(Ok(ExportBundle {
+        incident,
+        timeline,
+        detections,
+        audit,
+    }))
 }

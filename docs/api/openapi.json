@@ -1129,6 +1129,103 @@
         ]
       }
     },
+    "/api/v1/incidents/{incident_id}/export": {
+      "post": {
+        "tags": [
+          "incidents"
+        ],
+        "summary": "Exports one incident. Needs `incident.export`.",
+        "operationId": "export",
+        "parameters": [
+          {
+            "name": "incident_id",
+            "in": "path",
+            "description": "The incident's UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export, as an attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentExport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id is not a UUID",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No usable token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role lacks incident.export",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such incident in the caller's tenant",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unreachable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/incidents/{incident_id}/investigate": {
       "post": {
         "tags": [
@@ -3517,6 +3614,72 @@
           }
         }
       },
+      "IncidentExport": {
+        "type": "object",
+        "description": "One incident and its history.",
+        "required": [
+          "format",
+          "format_version",
+          "exported_at",
+          "exported_by",
+          "incident",
+          "timeline",
+          "notes",
+          "detections",
+          "truncated"
+        ],
+        "properties": {
+          "audit": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AuditEntryView"
+            },
+            "description": "`null` unless the caller holds `incident.audit.read`."
+          },
+          "detections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetectionView"
+            }
+          },
+          "exported_at": {
+            "type": "string"
+          },
+          "exported_by": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "description": "Always `wetechinetmon.incident-export`."
+          },
+          "format_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "incident": {
+            "$ref": "#/components/schemas/IncidentView"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteView"
+            }
+          },
+          "timeline": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineEntryView"
+            }
+          },
+          "truncated": {
+            "$ref": "#/components/schemas/Truncation"
+          }
+        }
+      },
       "IncidentPage": {
         "type": "object",
         "description": "A page of incidents.",
@@ -4204,6 +4367,26 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "Truncation": {
+        "type": "object",
+        "description": "Which sections were cut short at [`EXPORT_MAX_ROWS`].",
+        "required": [
+          "timeline",
+          "detections",
+          "audit"
+        ],
+        "properties": {
+          "audit": {
+            "type": "boolean"
+          },
+          "detections": {
+            "type": "boolean"
+          },
+          "timeline": {
+            "type": "boolean"
           }
         }
       },

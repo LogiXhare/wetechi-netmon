@@ -114,7 +114,7 @@ fn json(text: Option<String>) -> Option<Value> {
     text.map(|text| serde_json::from_str(&text).unwrap_or(Value::String(text)))
 }
 
-fn actor(actor_type: &str, actor_id: Option<String>) -> String {
+pub(crate) fn actor(actor_type: &str, actor_id: Option<String>) -> String {
     match (actor_type, actor_id) {
         ("system", _) => "system:correlator".to_string(),
         ("operator", Some(id)) => id,

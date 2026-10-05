@@ -618,6 +618,36 @@ impl IncidentUnitOfWork {
         Ok(incident_id)
     }
 
+    /// Records that `auth` is exporting the incident: an allowed audit
+    /// entry under `incident.export`, and nothing else. Exports carry an
+    /// incident's whole history out of the system, so each one is
+    /// attributable; the caller records it before reading.
+    pub fn record_export(
+        &mut self,
+        auth: &AuthorizationContext,
+        incident_id: IncidentId,
+    ) -> Result<(), IncidentError> {
+        self.check_permission(
+            auth,
+            Permission::IncidentExport,
+            AttemptedResource::Unresolved(incident_id.to_string()),
+        )?;
+        let incident = self
+            .store
+            .get(&incident_id)
+            .ok_or(IncidentError::NotFound)?;
+        self.check_tenant(auth, incident)?;
+        let asq = self.next_audit_sequence();
+        self.store.append_audit(AuditEntry::allowed(
+            asq,
+            auth.tenant().clone(),
+            auth.actor().clone(),
+            Permission::IncidentExport,
+            incident_id,
+        ));
+        Ok(())
+    }
+
     fn create_incident_internal(
         &mut self,
         auth: &AuthorizationContext,

@@ -5,6 +5,8 @@
 //! - Audit needs `incident.audit.read`: a viewer gets 403, a NOC lead 200.
 //! - **Another tenant gets 404 on every sub-resource**, identical to a
 //!   missing incident (ADR 0038).
+//! - The export (5D-10) carries the same histories in one document, needs
+//!   `incident.export`, and audits itself before it reads.
 //!
 //! Like the other PostgreSQL tests, this only connects to the opt-in,
 //! ephemeral database named by `WETECHINETMON_INCIDENT_POSTGRES_TEST_URL`,
@@ -65,17 +67,19 @@ async fn token(client: &Client, tenant: &str, role: Role) -> String {
 }
 
 async fn get(app: &axum::Router, path: &str, token: &str) -> (StatusCode, Value) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(path)
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    send(
+        app,
+        Request::builder()
+            .uri(path)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+}
+
+async fn send(app: &axum::Router, request: Request<Body>) -> (StatusCode, Value) {
+    let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
         .await
@@ -224,6 +228,49 @@ async fn histories_page_completely_and_stay_inside_the_tenant() {
         assert_eq!(cross["error"], "incident.not_found", "{sub}");
         assert_eq!(shape(&cross), shape(&absent), "{sub}");
     }
+
+    // --- Export: incident.export only, audited, one bundle ---
+    let export = |token: &str, path: String| {
+        Request::post(path)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (status, body) = send(&app, export(&viewer, format!("{base}/export"))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, body) = send(&app, export(&outsider, format!("{base}/export"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let response = app
+        .clone()
+        .oneshot(export(&lead, format!("{base}/export")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let disposition = response.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
+        .await
+        .unwrap();
+    let bundle: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(bundle["format"], "wetechinetmon.incident-export");
+    assert_eq!(bundle["incident"]["incident_id"], id.as_str());
+    let number = bundle["incident"]["incident_number"].as_str().unwrap();
+    assert!(
+        disposition.contains(&format!("{number}.json")),
+        "{disposition}"
+    );
+    assert_eq!(bundle["timeline"].as_array().unwrap().len() as i64, stored);
+    assert_eq!(bundle["detections"].as_array().unwrap().len(), 3);
+    assert_eq!(bundle["truncated"]["timeline"], false);
+    let audit = bundle["audit"].as_array().unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|entry| entry["action"] == "incident_export"),
+        "the export audited itself before reading: {audit:?}"
+    );
 
     // --- Bad cursors and unknown parameters are refused ---
     let (status, _) = get(&app, &format!("{base}/timeline?cursor=abc"), &viewer).await;
