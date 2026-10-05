@@ -259,6 +259,257 @@ fn where_clause(
     (sql, params)
 }
 
+/// A page of one incident's history, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryPage<T> {
+    pub items: Vec<T>,
+    pub has_more: bool,
+}
+
+/// One timeline entry. JSON columns are returned as text, exactly as
+/// stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimelineEntryRow {
+    pub timeline_id: i64,
+    pub occurred_at: i64,
+    pub entry_type: String,
+    pub actor_type: String,
+    pub actor_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub command_id: Option<String>,
+    pub source_event_id: Option<String>,
+    pub previous_value: Option<String>,
+    pub new_value: Option<String>,
+    pub payload: String,
+    pub schema_version: i32,
+}
+
+/// One audit record for an incident.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditRow {
+    pub audit_id: i64,
+    pub occurred_at: i64,
+    pub actor_type: String,
+    pub actor_id: Option<String>,
+    pub action: String,
+    pub result: String,
+    pub reason: Option<String>,
+    pub request_id: Option<String>,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// One detection event linked to an incident.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectionLinkRow {
+    pub detection_event_id: String,
+    pub detection_id: String,
+    pub policy_id: String,
+    pub policy_version: i32,
+    pub kind: String,
+    pub severity: String,
+    pub link_type: String,
+    pub detected_at: i64,
+    pub observed_at: i64,
+    pub matched: String,
+    pub rates: String,
+}
+
+/// `NotFound` unless the caller's tenant holds the incident, so an empty
+/// history and a missing incident are told apart only within one's own
+/// tenant.
+async fn require_incident(
+    client: &Client,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+) -> Result<Result<(), IncidentError>, PersistError> {
+    let found = client
+        .query_opt(
+            "SELECT 1 FROM incidents WHERE tenant_id = $1 AND incident_id = $2::text::uuid",
+            &[&auth.tenant().as_str(), &incident_id.to_canonical_string()],
+        )
+        .await?;
+    Ok(found.map(|_| ()).ok_or(IncidentError::NotFound))
+}
+
+fn page<T>(mut items: Vec<T>, limit: u32) -> HistoryPage<T> {
+    let has_more = items.len() > limit as usize;
+    items.truncate(limit as usize);
+    HistoryPage { items, has_more }
+}
+
+const TIMELINE: &str = "\
+SELECT timeline_id, occurred_at, entry_type, actor_type, actor_id, correlation_id, command_id,
+    source_event_id, previous_value::text AS previous_value, new_value::text AS new_value,
+    payload::text AS payload, schema_version
+FROM incident_timeline
+WHERE tenant_id = $1 AND incident_id = $2::text::uuid AND timeline_id > $3
+ORDER BY timeline_id
+LIMIT $4";
+
+/// An incident's timeline after `after` (a `timeline_id`), under
+/// `incident.read`.
+pub async fn timeline(
+    client: &mut Client,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+    after: Option<i64>,
+    limit: u32,
+) -> Outcome<HistoryPage<TimelineEntryRow>> {
+    if !auth.has(Permission::IncidentRead) {
+        return Ok(Err(IncidentError::Unauthorized));
+    }
+    if let Err(missing) = require_incident(client, auth, incident_id).await? {
+        return Ok(Err(missing));
+    }
+    let rows = client
+        .query(
+            TIMELINE,
+            &[
+                &auth.tenant().as_str(),
+                &incident_id.to_canonical_string(),
+                &after.unwrap_or(0),
+                &(i64::from(limit) + 1),
+            ],
+        )
+        .await?;
+    let items = rows
+        .iter()
+        .map(|row| {
+            Ok(TimelineEntryRow {
+                timeline_id: row.try_get("timeline_id")?,
+                occurred_at: required_micros(row, "occurred_at")?,
+                entry_type: row.try_get("entry_type")?,
+                actor_type: row.try_get("actor_type")?,
+                actor_id: row.try_get("actor_id")?,
+                correlation_id: row.try_get("correlation_id")?,
+                command_id: row.try_get("command_id")?,
+                source_event_id: row.try_get("source_event_id")?,
+                previous_value: row.try_get("previous_value")?,
+                new_value: row.try_get("new_value")?,
+                payload: row.try_get("payload")?,
+                schema_version: row.try_get("schema_version")?,
+            })
+        })
+        .collect::<Result<Vec<_>, PersistError>>()?;
+    Ok(Ok(page(items, limit)))
+}
+
+const AUDIT: &str = "\
+SELECT audit_id, occurred_at, actor_type, actor_id, action, result, reason, request_id,
+    before::text AS before, after::text AS after
+FROM incident_audit
+WHERE tenant_id = $1 AND resource_type = 'incident' AND resource_id = $2 AND audit_id > $3
+ORDER BY audit_id
+LIMIT $4";
+
+/// An incident's audit records after `after` (an `audit_id`), under
+/// `incident.audit.read`.
+pub async fn audit(
+    client: &mut Client,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+    after: Option<i64>,
+    limit: u32,
+) -> Outcome<HistoryPage<AuditRow>> {
+    if !auth.has(Permission::IncidentAuditRead) {
+        return Ok(Err(IncidentError::Unauthorized));
+    }
+    if let Err(missing) = require_incident(client, auth, incident_id).await? {
+        return Ok(Err(missing));
+    }
+    let rows = client
+        .query(
+            AUDIT,
+            &[
+                &auth.tenant().as_str(),
+                &incident_id.to_canonical_string(),
+                &after.unwrap_or(0),
+                &(i64::from(limit) + 1),
+            ],
+        )
+        .await?;
+    let items = rows
+        .iter()
+        .map(|row| {
+            Ok(AuditRow {
+                audit_id: row.try_get("audit_id")?,
+                occurred_at: required_micros(row, "occurred_at")?,
+                actor_type: row.try_get("actor_type")?,
+                actor_id: row.try_get("actor_id")?,
+                action: row.try_get("action")?,
+                result: row.try_get("result")?,
+                reason: row.try_get("reason")?,
+                request_id: row.try_get("request_id")?,
+                before: row.try_get("before")?,
+                after: row.try_get("after")?,
+            })
+        })
+        .collect::<Result<Vec<_>, PersistError>>()?;
+    Ok(Ok(page(items, limit)))
+}
+
+const DETECTIONS: &str = "\
+SELECT detection_event_id, detection_id, policy_id, policy_version, kind, severity, link_type,
+    detected_at, observed_at, matched::text AS matched, rates::text AS rates
+FROM incident_detection_events
+WHERE tenant_id = $1 AND incident_id = $2::text::uuid
+  AND (detected_at, detection_event_id)
+      > (TIMESTAMPTZ 'epoch' + $3::bigint * interval '1 microsecond', $4)
+ORDER BY detected_at, detection_event_id
+LIMIT $5";
+
+/// The detection events linked to an incident after `after` (detection
+/// time in microseconds and event id), under `incident.read`.
+pub async fn detections(
+    client: &mut Client,
+    auth: &AuthorizationContext,
+    incident_id: &IncidentId,
+    after: Option<(i64, String)>,
+    limit: u32,
+) -> Outcome<HistoryPage<DetectionLinkRow>> {
+    if !auth.has(Permission::IncidentRead) {
+        return Ok(Err(IncidentError::Unauthorized));
+    }
+    if let Err(missing) = require_incident(client, auth, incident_id).await? {
+        return Ok(Err(missing));
+    }
+    // Without a cursor, start before any real detection: 0001-01-01, well
+    // inside PostgreSQL's timestamp range.
+    let (key, id) = after.unwrap_or((-62_135_596_800_000_000, String::new()));
+    let rows = client
+        .query(
+            DETECTIONS,
+            &[
+                &auth.tenant().as_str(),
+                &incident_id.to_canonical_string(),
+                &key,
+                &id,
+                &(i64::from(limit) + 1),
+            ],
+        )
+        .await?;
+    let items = rows
+        .iter()
+        .map(|row| {
+            Ok(DetectionLinkRow {
+                detection_event_id: row.try_get("detection_event_id")?,
+                detection_id: row.try_get("detection_id")?,
+                policy_id: row.try_get("policy_id")?,
+                policy_version: row.try_get("policy_version")?,
+                kind: row.try_get("kind")?,
+                severity: row.try_get("severity")?,
+                link_type: row.try_get("link_type")?,
+                detected_at: required_micros(row, "detected_at")?,
+                observed_at: required_micros(row, "observed_at")?,
+                matched: row.try_get("matched")?,
+                rates: row.try_get("rates")?,
+            })
+        })
+        .collect::<Result<Vec<_>, PersistError>>()?;
+    Ok(Ok(page(items, limit)))
+}
+
 /// One page of the caller's tenant's incidents, under `incident.list`.
 pub async fn list_incidents(
     client: &mut Client,

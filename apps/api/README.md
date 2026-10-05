@@ -47,6 +47,10 @@ answers. Neither needs a token.
 | `GET` | `/readyz` | none | none |
 | `GET` | `/api/v1/incidents` | `incident.list` | 120/min per actor; `include_total` costs 2 |
 | `GET` | `/api/v1/incidents/{id}` | `incident.read` | 120/min per actor |
+| `GET` | `/api/v1/incidents/{id}/timeline` | `incident.read` | 120/min per actor |
+| `GET` | `/api/v1/incidents/{id}/notes` | `incident.read` | 120/min per actor |
+| `GET` | `/api/v1/incidents/{id}/detections` | `incident.read` | 120/min per actor |
+| `GET` | `/api/v1/incidents/{id}/audit` | `incident.audit.read` | 30/min per actor |
 
 The full contract is the generated [OpenAPI document](../../docs/api/openapi.json). Another tenant's incident is `404 incident.not_found`, indistinguishable from a missing one.
 

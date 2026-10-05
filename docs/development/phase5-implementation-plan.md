@@ -367,7 +367,13 @@ The first incident endpoint is `GET /api/v1/incidents/{id}`. It goes through `in
 - 90-day ranges;
 - an optional count.
 
-Next: the timeline, notes, detections and audit reads, then the transitions.
+An incident's history is read through four sub-resources (5D-5): `timeline`, `notes`, `detections` and `audit`. Each one:
+
+- checks the incident is in the caller's tenant, and otherwise returns the same 404 as a missing incident;
+- needs `incident.read`, except `audit`, which needs `incident.audit.read` and has the tighter audit limit;
+- is keyset-paginated oldest first, except notes, which the domain bounds and which are returned whole.
+
+Next: the transitions, with `Idempotency-Key` and `expected_version`.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
