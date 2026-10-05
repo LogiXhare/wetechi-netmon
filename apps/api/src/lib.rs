@@ -10,12 +10,14 @@
 //! Every response that is not a success is RFC 9457 problem details,
 //! including unknown paths and wrong methods.
 
+pub mod auth;
 pub mod config;
 pub mod openapi;
 pub mod problem;
 pub mod rate_limit;
 pub mod request_id;
 pub mod server;
+pub mod token_admin;
 
 use axum::extract::State;
 use axum::http::StatusCode;

@@ -62,7 +62,9 @@ revocable, scoped tokens of the GitHub or GitLab personal-access-token
 kind. OIDC/JWT and SSO are Phase 8.
 
 - **Token format:** `wnm_` followed by 32 random bytes from the OS CSPRNG
-  (`getrandom`), base64url without padding. The prefix makes a leaked
+  (`getrandom`), as 64 lowercase hex characters. Hex rather than base64url
+  means no encoding dependency, and the shape is trivial to validate
+  before any lookup. The prefix makes a leaked
   token recognisable to secret scanners.
 - **Storage:** only `SHA-256(token)` is stored, in a new `api_tokens`
   table (a new migration). Each row has the tenant, the actor id, the
@@ -204,7 +206,7 @@ database leak yields no tokens. Error handling is one mapping.
 
 ## Follow-ups
 
-- [ ] The `api_tokens` migration, the `Authenticator` trait and the
+- [x] The `api_tokens` migration (V15), the `Authenticator` trait and the
   token subcommand.
 - [x] `docs/api/error-codes.md`, with a test that every code the API can
   emit is listed.

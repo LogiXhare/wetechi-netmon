@@ -349,7 +349,14 @@ Endpoints may now be written.
 - `/healthz` and `/readyz`;
 - the OpenAPI document committed at `docs/api/openapi.json` and checked by a test.
 
-Next: the `api_tokens` table and `Authenticator`, then the endpoints.
+Authentication is in place:
+
+- `api_tokens` (migration V15) stores SHA-256 only and forbids `platform_admin`;
+- the `Authenticator` seam with the token-table implementation;
+- the bearer middleware: one `401` for every failure, per-address failure limiting, and `503` on an outage;
+- the `wetechinetmon-api token create|revoke|list` subcommand.
+
+Next: the incident endpoints.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and

@@ -119,6 +119,21 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
         Ok(())
     }
 
+    /// Whether a request for `key` at `now` would be allowed, without
+    /// counting it. Used to refuse a limited caller before doing any work,
+    /// while only failures are counted.
+    pub fn peek(&self, key: &K, now: Instant) -> Result<(), Refusal> {
+        let tolerance = self.quota.tolerance();
+        let tats = self.locked();
+        match tats.get(key) {
+            Some(tat) => match tat.checked_sub(tolerance) {
+                Some(allow_at) if now < allow_at => Err(Refusal::RetryAfter(allow_at - now)),
+                _ => Ok(()),
+            },
+            None => Ok(()),
+        }
+    }
+
     /// Keys currently held, for tests and the sweep.
     pub fn tracked(&self) -> usize {
         self.locked().len()
@@ -180,6 +195,18 @@ mod tests {
         let later = now + Duration::from_secs(61);
         assert!(limiter.check(&"c", later).is_ok());
         assert_eq!(limiter.tracked(), 1);
+    }
+
+    #[test]
+    fn peek_never_counts() {
+        let limiter = limiter(1, 60);
+        let now = Instant::now();
+        for _ in 0..5 {
+            assert!(limiter.peek(&"a", now).is_ok());
+        }
+        assert!(limiter.check(&"a", now).is_ok());
+        assert!(limiter.peek(&"a", now).is_err());
+        assert!(limiter.peek(&"a", now + Duration::from_secs(60)).is_ok());
     }
 
     #[test]

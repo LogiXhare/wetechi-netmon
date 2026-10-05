@@ -23,8 +23,11 @@ axum = { version = "0.8.9", default-features = false, features = [
 ] }
 # ADR 0037: OpenAPI generated from the handlers.
 utoipa = "6.0.0"
-# ADR 0038: OS CSPRNG for API tokens (5D-2). Already in Cargo.lock.
+# ADR 0038: OS CSPRNG for API tokens. Already in Cargo.lock.
 getrandom = "0.4.3"
+# ADR 0038: SHA-256 of API tokens. Already in Cargo.lock through the
+# PostgreSQL SCRAM client (licence matrix row 43).
+sha2 = "0.11"
 # ADR 0038 gate 3: TLS at the service off loopback. Both already in
 # Cargo.lock through the PostgreSQL TLS connector (ADR 0023).
 rustls.workspace = true
@@ -34,6 +37,7 @@ wetechinetmon-common = { path = "../../crates/common" }
 wetechinetmon-incident = { path = "../../crates/incident" }
 wetechinetmon-incident-postgres = { path = "../../crates/incident-postgres" }
 deadpool-postgres.workspace = true
+tokio-postgres.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 tracing.workspace = true
