@@ -7,9 +7,9 @@
 
 pub mod flow;
 pub mod logging;
-pub mod rfc3339;
 #[cfg(feature = "metrics-server")]
 pub mod metrics_server;
+pub mod rfc3339;
 pub mod sampling;
 
 pub use flow::{FlowError, NormalizedFlow, NormalizedFlowBuilder, Protocol};
