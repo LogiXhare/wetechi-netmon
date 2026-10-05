@@ -276,7 +276,16 @@ resurrects an incident an operator has closed.
 
 **Prevent** Late events — older than `last_detected_at` — may link but
 may not transition or reopen; reopen requires an event inside the reopen
-window measured on server time. **Detect** `events_late_total`.
+window measured on server time. **As implemented (Phase 5F):** "late" is decided by
+detection identity, not by timestamp, so the detector's clock never enters
+the decision (ADR 0031). Two kinds of event link as late evidence and never
+reopen a resolved or closed incident: a detection ending, and any event of a
+detection episode the incident already holds. A recurrence is a new episode
+with a new detection id (ADR 0009). Only a recurrence reopens, and only inside
+the window. Past the evidence cap an old episode id may no longer be retained;
+its late event then reopens the incident, which errs toward visibility.
+Found during the 5F security review: until then, both kinds of event
+reopened an incident inside the window. **Detect** `events_late_total`.
 **Test** a late event after resolution links as evidence and does not
 reopen. **Residual** An event delayed by less than the reopen window is
 indistinguishable from a genuine recurrence. Accepted.

@@ -219,3 +219,13 @@ pub fn worked_incident(scope: &Scope, seed: u64) -> (IncidentUnitOfWork, Inciden
     });
     (uow, id)
 }
+
+/// `event` as part of another detection episode: a recurrence carries a
+/// new detection id (ADR 0009), and only a new episode may reopen a
+/// resolved incident (T-18).
+pub fn in_episode(mut event: DetectionEvent, detection_id: &str) -> DetectionEvent {
+    event.event_id = format!("{detection_id}-{}", event.sequence);
+    event.dedup_key = format!("{detection_id}:{}:{}", event.kind.as_str(), event.sequence);
+    event.detection_id = detection_id.to_string();
+    event
+}

@@ -4,7 +4,8 @@
 //! recurrence whose decision time precedes the persisted `resolved_at` is
 //! refused with a structured `ClockSkew`. It neither reopens nor opens a
 //! duplicate incident. Once the reference is in the database's past, the same
-//! event reopens. The injected test clock sits at 1970, so that reopen
+//! event reopens. A late event of the resolved episode links as evidence
+//! and does not reopen (T-18). The injected test clock sits at 1970, so that reopen
 //! proves the decision time came from the database.
 //!
 //! Like the other PostgreSQL tests, this only connects to the opt-in,
@@ -16,7 +17,7 @@ mod support;
 
 use std::sync::Arc;
 
-use support::{event, host_scope};
+use support::{event, host_scope, in_episode};
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Client;
 use wetechinetmon_detector::{EventKind, MetricKind, TestClock};
@@ -114,7 +115,11 @@ async fn a_recurrence_before_the_persisted_reference_is_refused_and_time_comes_f
         .await
         .unwrap();
 
-    let recurrence = event(&scope, 2, EventKind::Started, "p-opening", MetricKind::Bps);
+    // A new detection episode (T-18): only that may reopen.
+    let recurrence = in_episode(
+        event(&scope, 2, EventKind::Started, "p-opening", MetricKind::Bps),
+        "det-recur",
+    );
     let refused = service
         .ingest_detection_event(&mut client, &auth, &recurrence)
         .await
@@ -171,6 +176,39 @@ async fn a_recurrence_before_the_persisted_reference_is_refused_and_time_comes_f
     assert!(
         matches!(injected, Err(IncidentError::ClockSkew { .. })),
         "got {injected:?}"
+    );
+
+    // T-18: a late event of the resolved episode links and does not reopen.
+    let late = service
+        .ingest_detection_event(
+            &mut client,
+            &auth,
+            &event(&scope, 9, EventKind::Updated, "p-opening", MetricKind::Bps),
+        )
+        .await
+        .unwrap()
+        .expect("a late event is accepted");
+    assert_eq!(late.outcome_kind, IngestOutcomeKind::LinkedLate);
+    assert_eq!(late.incident_id, Some(incident_id));
+    assert_eq!(
+        scalar(
+            &client,
+            "SELECT count(*) FROM incidents WHERE state = 'resolved' AND reopen_count = 0",
+            &[],
+        )
+        .await,
+        1,
+        "still resolved"
+    );
+    assert_eq!(
+        scalar(
+            &client,
+            "SELECT count(*) FROM incident_detection_events WHERE link_type = 'late'",
+            &[],
+        )
+        .await,
+        1,
+        "linked as late evidence"
     );
 
     // On database time, it reopens.
