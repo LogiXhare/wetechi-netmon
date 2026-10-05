@@ -59,6 +59,7 @@ pub struct ProblemDocument {
         crate::transitions::add_note,
         crate::transitions::set_tag,
         crate::transitions::remove_tag,
+        crate::export::export,
     ),
     components(schemas(
         ProblemDocument,
@@ -91,6 +92,8 @@ pub struct ProblemDocument {
         crate::create::TargetScope,
         crate::create::DirectionValue,
         crate::create::CreateIncidentRequest,
+        crate::export::Truncation,
+        crate::export::IncidentExport,
         crate::history::NoteView,
         crate::history::NoteList,
     )),

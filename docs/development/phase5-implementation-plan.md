@@ -387,7 +387,11 @@ Tags are a sub-resource (5D-8): `PUT .../tags/{key}` sets one and `DELETE` remov
 
 Manual creation is `POST /api/v1/incidents` (5D-9, [ADR 0039](../architecture/decisions/0039-phase5d-manual-incidents.md)). It needs `incident.create` (`senior_operator` and up) and an `Idempotency-Key`. A manual incident takes the correlation key of its target, so a second incident for an active target is refused and later detections attach to it.
 
-Next: the JSON export bundle.
+The export is `POST .../export` (5D-10). It needs `incident.export` and returns one JSON document read from a single snapshot. Each history is capped at 5000 entries, and the audit section is included only with `incident.audit.read`. The export is audited before it is read, and it has its own limit of 10 per minute.
+
+Every endpoint in the API plan now exists, except `PATCH` for title and description (FU-56).
+
+Next: the tenant-isolation suite across every endpoint, the 5D exit criterion, then FU-54.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and

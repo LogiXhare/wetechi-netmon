@@ -180,6 +180,19 @@ impl IncidentPersistence {
         .await
     }
 
+    /// Audits an export before it is read (`queries::export`).
+    pub async fn record_export(
+        &self,
+        client: &mut Client,
+        auth: &AuthorizationContext,
+        incident_id: IncidentId,
+    ) -> Outcome<()> {
+        self.run(client, auth.tenant(), by_id(incident_id), |uow| {
+            uow.record_export(auth, incident_id)
+        })
+        .await
+    }
+
     pub async fn enter_recovering(
         &self,
         client: &mut Client,

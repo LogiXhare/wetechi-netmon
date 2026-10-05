@@ -184,6 +184,7 @@ suppression is how a real attack gets missed.
 - **A note answers `201` with the incident.** The domain numbers notes by position, so the response does not identify the note. `GET .../notes` lists them.
 - **Tags are a sub-resource, not a `PATCH`.** `PUT /incidents/{id}/tags/{key}` sets one tag and `DELETE` removes one. Each is one domain command, so it is atomic. A `PATCH` carrying several tag changes would have been several commands, and not atomic. `PATCH /incidents/{id}` stays reserved for title and description, which have no domain command yet (FU-56).
 - **A manual incident names its target in the detector's vocabulary** (`target_scope`, `target`, `direction`, `address_family`) and takes that correlation key ([ADR 0039](../architecture/decisions/0039-phase5d-manual-incidents.md)). A second incident for an active target is `409 incident.duplicate_active`, and its body names the active incident's `incident_id`.
+- **An export is one JSON document,** audited before it is read and capped at 5000 entries per history. Its audit section is `null` unless the caller also holds `incident.audit.read`. It answers with `Content-Disposition: attachment`.
 - **A version conflict carries extension members.** It includes `expected_version`, `current_version` and `current_state`.
 
 ## Draft OpenAPI

@@ -38,6 +38,8 @@ use crate::AppState;
 pub const READ_QUOTA: Quota = Quota::per_minute(120);
 pub const MUTATION_QUOTA: Quota = Quota::per_minute(60);
 pub const AUDIT_QUOTA: Quota = Quota::per_minute(30);
+/// Exports read an incident's whole history, so they get the tightest.
+pub const EXPORT_QUOTA: Quota = Quota::per_minute(10);
 /// Actors tracked per surface at once.
 const MAX_ACTORS: usize = 100_000;
 
@@ -46,6 +48,7 @@ pub struct Limits {
     pub reads: RateLimiter<(String, String)>,
     pub mutations: RateLimiter<(String, String)>,
     pub audit: RateLimiter<(String, String)>,
+    pub exports: RateLimiter<(String, String)>,
 }
 
 impl Default for Limits {
@@ -54,6 +57,7 @@ impl Default for Limits {
             reads: RateLimiter::new(READ_QUOTA, MAX_ACTORS),
             mutations: RateLimiter::new(MUTATION_QUOTA, MAX_ACTORS),
             audit: RateLimiter::new(AUDIT_QUOTA, MAX_ACTORS),
+            exports: RateLimiter::new(EXPORT_QUOTA, MAX_ACTORS),
         }
     }
 }
@@ -72,7 +76,7 @@ pub fn limit(
     })
 }
 
-fn actor_text(actor: &wetechinetmon_incident::authorization::Actor) -> String {
+pub(crate) fn actor_text(actor: &wetechinetmon_incident::authorization::Actor) -> String {
     use wetechinetmon_incident::authorization::Actor;
     match actor {
         Actor::Operator { id } => id.clone(),

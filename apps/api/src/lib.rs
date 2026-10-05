@@ -14,6 +14,7 @@ pub mod auth;
 pub mod body;
 pub mod config;
 pub mod create;
+pub mod export;
 pub mod history;
 pub mod incidents;
 pub mod list;
@@ -137,6 +138,7 @@ pub fn router(state: AppState) -> Router {
             "/incidents/{incident_id}/priority",
             post(transitions::priority),
         )
+        .route("/incidents/{incident_id}/export", post(export::export))
         .route(
             "/incidents/{incident_id}/tags/{key}",
             put(transitions::set_tag).delete(transitions::remove_tag),
