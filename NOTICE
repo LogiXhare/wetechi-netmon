@@ -56,6 +56,22 @@ are also vendored:
   tokio-postgres-rustls   MIT             https://github.com/jbg/tokio-postgres-rustls
   refinery (tokio-postgres feature only)  MIT  https://github.com/rust-db/refinery
 
+Starting Phase 5D (apps/api, the incident REST API), the following are
+also vendored:
+
+  axum                    MIT             https://github.com/tokio-rs/axum
+  utoipa                  MIT OR Apache-2.0  https://github.com/juhaku/utoipa
+  getrandom (direct use)  MIT OR Apache-2.0  https://github.com/rust-random/getrandom
+
+One transitive dependency of axum carries an attribution licence:
+
+  matchit (via axum)      MIT AND BSD-3-Clause  https://github.com/ibraheemdev/matchit
+    Portions are derived from httprouter, Copyright (c) 2013, Julien
+    Schmidt, licensed under the BSD 3-Clause License (the crate's
+    LICENSE.httprouter). Redistribution in binary form must reproduce
+    that copyright notice, its conditions and its disclaimer. Shipping
+    third-party licence texts with release binaries is tracked as FU-53.
+
 This list covers direct dependencies only. Transitive dependencies are
 recorded in Cargo.lock (committed to this repository) and are pulled in
 by the above crates' own dependency graphs, not chosen directly by

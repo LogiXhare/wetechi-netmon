@@ -332,7 +332,13 @@ asserted against an allowlist.
 - in-memory GCRA limits per actor and surface;
 - RFC 9457 errors with stable codes.
 
-Gate 8, the measured dependency probe, is next. No endpoint is written before it closes.
+Gate 8 closed on 2026-10-05 with the dependency probe in `apps/api`:
+
+- `axum`, `utoipa` and `getrandom` approved: 16 new third-party crates, `cargo audit` clean over 270, no `unsafe` in the framework or OpenAPI crates, Windows-GNU and Linux builds.
+- `governor` rejected on closure: about 920 `unsafe` occurrences for a limiter. GCRA is implemented in-house instead.
+- `matchit`'s BSD-3-Clause notice recorded in `NOTICE` (FU-53).
+
+Endpoints may now be written.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and

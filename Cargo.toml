@@ -11,6 +11,7 @@ members = [
     "crates/incident-manager",
     "crates/storage",
     "crates/collector",
+    "apps/api",
     "tools/flow-replay",
 ]
 

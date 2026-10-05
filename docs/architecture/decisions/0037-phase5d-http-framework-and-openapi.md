@@ -1,8 +1,10 @@
 # 0037. Phase 5D HTTP Framework and OpenAPI
 
-Status: **Conditionally Accepted**, pending the 5D dependency probe
-(entry gate 8). The probe measures the closure, `cargo audit`, the
-`unsafe` inventory, and the Windows-GNU and Linux builds.
+Status: **Accepted**. The 5D dependency probe (gate 8) passed on 2026-10-05:
+16 new third-party crates, `cargo audit` clean over 270, no `unsafe` in
+axum, axum-core, tower, tower-layer, utoipa or utoipa-gen, and a clean
+Windows-GNU build, with Linux checked by CI. See the
+[licence matrix](../../dependency-license-matrix.md), rows 38 and 39.
 Date: 2026-10-05
 Deciders: Repository owner. On 2026-10-05 the owner delegated the choice
 to industry practice and standards ("industry practice & standard se
@@ -128,7 +130,7 @@ Rejected:
 
 ## Follow-ups
 
-- [ ] The 5D dependency probe (gate 8):
+- [x] The 5D dependency probe (gate 8):
   - measured `cargo tree` for `axum` and `utoipa` with the selected
     features;
   - `cargo audit`;
