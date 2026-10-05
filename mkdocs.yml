@@ -93,6 +93,7 @@ nav:
       - Security Policy: security/security-policy.md
       - Detection Safety: security/detection-safety.md
       - Incident Threat Model: security/incident-threat-model.md
+      - Incident Threat Tests: security/incident-threat-tests.md
   - Licensing:
       - Dependency License Matrix: dependency-license-matrix.md
       - License Recommendation: license-recommendation.md

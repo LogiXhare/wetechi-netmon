@@ -577,7 +577,15 @@ async fn tag_command(
         limit(&state.limits.mutations, &principal)?;
         let id = parse_id(&incident_id)?;
         let key = optional_key(&headers, false)?;
-        execute(&state, &principal, id, key, command()?).await
+        let command = command()?;
+        // A tag key arrives in the path, outside the body's NUL check.
+        if let Command::AddTag { key: tag, .. } | Command::RemoveTag { key: tag } = &command {
+            if tag.contains(' ') {
+                return Err(Problem::new(ErrorCode::InvalidRequest)
+                    .with_detail("text may not contain a NUL character"));
+            }
+        }
+        execute(&state, &principal, id, key, command).await
     }
     .await;
     match result {
