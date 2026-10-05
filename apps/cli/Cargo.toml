@@ -22,6 +22,8 @@ rustls.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wetechinetmon-common = { path = "../../crates/common" }
+# One Idempotency-Key per logical command (ADR 0040).
+uuid.workspace = true
 
 [dev-dependencies]
 # A stand-in API server for the tests: axum is already the API's framework.

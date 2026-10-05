@@ -10,12 +10,13 @@ pub mod config;
 pub mod exit;
 pub mod output;
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 
 use hyper::Method;
-use serde_json::Value;
+use serde_json::{json, Value};
+use wetechinetmon_common::rfc3339::{parse_rfc3339, rfc3339};
 
-use crate::args::{Command, IncidentRef, Invocation, Output};
+use crate::args::{Action, Command, IncidentRef, Invocation, Output, Until};
 use crate::client::{Call, Client, Reply};
 use crate::config::Environment;
 
@@ -23,7 +24,10 @@ use crate::config::Environment;
 pub struct Io<'a> {
     pub out: &'a mut dyn Write,
     pub err: &'a mut dyn Write,
-    /// Microseconds since the epoch, for relative ages.
+    /// The operator's answers to confirmation prompts: `None` when stdin
+    /// is not a terminal, so a prompt is an error rather than an assumed yes.
+    pub input: Option<&'a mut dyn BufRead>,
+    /// Microseconds since the epoch, for relative ages and `--for`.
     pub now_micros: i64,
 }
 
@@ -311,6 +315,225 @@ async fn execute(client: &Client, invocation: &Invocation, io: &mut Io<'_>) -> R
             let _ = write!(io.out, "{}", output::notes(&list));
             Ok(())
         }
+        Command::Change {
+            incident,
+            action,
+            expected_version,
+            yes,
+        } => {
+            change(
+                client,
+                incident,
+                action,
+                *expected_version,
+                *yes,
+                io,
+                output,
+            )
+            .await
+        }
+    }
+}
+
+/// One key per logical command: a UUIDv7, the same on every retry
+/// (`Client::send` resends the same `Call`), so a retried change the
+/// server already applied is replayed, never applied twice.
+fn idempotency_key(now_micros: i64) -> String {
+    let micros = u64::try_from(now_micros).unwrap_or(0);
+    let timestamp = uuid::Timestamp::from_unix(
+        uuid::NoContext,
+        micros / 1_000_000,
+        u32::try_from(micros % 1_000_000).unwrap_or(0) * 1_000,
+    );
+    format!("wnmctl-{}", uuid::Uuid::new_v7(timestamp))
+}
+
+const SEVERITIES: [&str; 4] = ["info", "minor", "major", "critical"];
+
+/// The question to ask before `action`, if it needs one: closing,
+/// reopening, suppressing, and lowering severity (the CLI plan).
+fn confirmation(action: &Action, current: Option<&Value>, name: &str) -> Option<String> {
+    let state = current
+        .and_then(|incident| incident["state"].as_str())
+        .map(|state| format!(", now {}", output::clean(state)))
+        .unwrap_or_default();
+    match action {
+        Action::Close { reason, .. } => {
+            Some(format!("Close {name}{state} as {}?", output::clean(reason)))
+        }
+        Action::Reopen { .. } => Some(format!("Reopen {name}{state}?")),
+        Action::Suppress { .. } => Some(format!(
+            "Suppress {name}{state}? Detections will not alert while it lasts."
+        )),
+        Action::Severity { level, .. } => {
+            let from = current.and_then(|incident| incident["severity"].as_str())?;
+            let rank = |text: &str| SEVERITIES.iter().position(|s| *s == text);
+            match (rank(from), rank(level)) {
+                (Some(from_rank), Some(to_rank)) if to_rank < from_rank => Some(format!(
+                    "Lower {name} from {from} to {}?",
+                    output::clean(level)
+                )),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Asks `question`; only `y` or `yes` proceeds. Without a terminal there
+/// is no one to ask, and that is an error, never an assumed yes.
+fn confirm(io: &mut Io<'_>, question: &str, verb: &str) -> Result<(), Stop> {
+    let Some(input) = io.input.as_mut() else {
+        return Err(Stop::new(
+            exit::USAGE,
+            format!(
+                "Error: incidents {verb} asks for confirmation, and there is no terminal \
+                 to ask. Pass --yes to confirm in advance.\n"
+            ),
+        ));
+    };
+    let _ = write!(io.err, "{question} [y/N] ");
+    let _ = io.err.flush();
+    let mut answer = String::new();
+    let _ = input.read_line(&mut answer);
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => Ok(()),
+        _ => Err(Stop::new(exit::FAILURE, "Aborted; nothing was changed.\n")),
+    }
+}
+
+/// The JSON body the API action takes.
+fn body(action: &Action, version: Option<u64>, now_micros: i64) -> Result<Value, Stop> {
+    let mut body = match action {
+        Action::Acknowledge
+        | Action::Investigate
+        | Action::Monitor
+        | Action::Unassign
+        | Action::Unsuppress => json!({}),
+        Action::Resolve { note } => json!({ "resolution_note": note }),
+        Action::Close { reason, detail } => json!({ "closure_reason": reason, "detail": detail }),
+        Action::Reopen { reason } => json!({ "reason": reason }),
+        Action::Suppress { until, reason } => {
+            let expires_at = match until {
+                Until::At(text) => {
+                    parse_rfc3339(text).ok_or_else(|| {
+                        Stop::new(
+                            exit::USAGE,
+                            format!(
+                                "Error: --until {:?} is not RFC 3339 UTC, such as \
+                                 2026-10-06T02:00:00Z\n",
+                                output::clean(text)
+                            ),
+                        )
+                    })?;
+                    text.clone()
+                }
+                Until::For(duration) => {
+                    let micros = i64::try_from(duration.as_micros()).unwrap_or(i64::MAX);
+                    rfc3339(now_micros.saturating_add(micros))
+                }
+            };
+            json!({ "reason": reason, "expires_at": expires_at })
+        }
+        Action::AssignUser(user) => json!({ "user_id": user }),
+        Action::AssignTeam(team) => json!({ "team_id": team }),
+        Action::Severity { level, reason } => json!({ "severity": level, "reason": reason }),
+        Action::Priority { level } => json!({ "priority": level }),
+        Action::Note { body } => json!({ "body": body }),
+    };
+    let object = body.as_object_mut().expect("every body is an object");
+    // Optional fields the operator left out are omitted, not sent as null.
+    object.retain(|_, value| !value.is_null());
+    if let Some(version) = version {
+        object.insert("expected_version".into(), version.into());
+    }
+    Ok(body)
+}
+
+/// One change: resolve, read the version (unless pinned), confirm where
+/// the plan asks, then one request with one idempotency key, reused by
+/// every retry.
+async fn change(
+    client: &Client,
+    incident: &IncidentRef,
+    action: &Action,
+    expected_version: Option<u64>,
+    yes: bool,
+    io: &mut Io<'_>,
+    output: Output,
+) -> Result<(), Stop> {
+    let id = resolve_id(client, incident, io, output).await?;
+    let needs_current = (action.is_versioned() && expected_version.is_none())
+        || matches!(action, Action::Severity { .. });
+    let current = if needs_current {
+        let reply = fetch(client, get(format!("/api/v1/incidents/{id}")), io, output).await?;
+        Some(parse_json(&reply.body)?)
+    } else {
+        None
+    };
+    let version = if action.is_versioned() {
+        Some(
+            expected_version
+                .or_else(|| current.as_ref().and_then(|c| c["version"].as_u64()))
+                .ok_or_else(|| Stop::new(exit::FAILURE, "Error: the incident has no version\n"))?,
+        )
+    } else {
+        None
+    };
+    let name = current
+        .as_ref()
+        .and_then(|c| c["incident_number"].as_str())
+        .map(output::clean)
+        .unwrap_or_else(|| output::clean(&incident.0));
+    let verb = action.path();
+    if let Some(question) = confirmation(action, current.as_ref(), &name) {
+        if !yes {
+            confirm(io, &question, verb)?;
+        }
+    }
+    let call = Call {
+        method: Method::POST,
+        path: format!("/api/v1/incidents/{id}/{}", action.path()),
+        body: Some(
+            body(action, version, io.now_micros)?
+                .to_string()
+                .into_bytes(),
+        ),
+        idempotency_key: Some(idempotency_key(io.now_micros)),
+    };
+    let reply = match fetch(client, call, io, output).await {
+        Ok(reply) => reply,
+        Err(mut stop) => {
+            if stop.code == exit::CONFLICT && output != Output::Json {
+                stop.message.push_str(&format!(
+                    "\nRe-read the incident and decide again:\n  wetechinetmonctl incidents show {}\n",
+                    output::clean(&incident.0)
+                ));
+            }
+            return Err(stop);
+        }
+    };
+    if output == Output::Json {
+        print_verbatim(io, &reply.body);
+        return Ok(());
+    }
+    let after = parse_json(&reply.body)?;
+    let _ = writeln!(
+        io.out,
+        "{}: {} done; state {}, version {}",
+        field_or(&after, "incident_number", &name),
+        verb,
+        field_or(&after, "state", "?"),
+        field_or(&after, "version", "?"),
+    );
+    Ok(())
+}
+
+fn field_or(value: &Value, name: &str, fallback: &str) -> String {
+    match &value[name] {
+        Value::String(text) => output::clean(text),
+        Value::Null => output::clean(fallback),
+        other => other.to_string(),
     }
 }
 

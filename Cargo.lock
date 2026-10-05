@@ -2273,6 +2273,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-rustls",
+ "uuid",
  "wetechinetmon-common",
 ]
 

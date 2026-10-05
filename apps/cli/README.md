@@ -10,8 +10,8 @@ using it.
 
 ## Status
 
-The read commands are implemented. The commands that change incidents
-come next in 5E.
+The read commands and the commands that change an incident are
+implemented. `claim`, `export` and opening an incident come next in 5E.
 
 ## Connecting
 
@@ -63,7 +63,24 @@ incidents timeline INCIDENT [--limit N] [--cursor C]
 incidents detections INCIDENT [--limit N] [--cursor C]
 incidents audit INCIDENT [--limit N] [--cursor C]
 incidents note list INCIDENT
+
+incidents acknowledge | investigate | monitor | unassign | release | unsuppress INCIDENT
+incidents assign INCIDENT --user U | --team T
+incidents resolve INCIDENT [--note TEXT]
+incidents close INCIDENT --reason R [--detail TEXT]           (confirms)
+incidents reopen INCIDENT --reason TEXT                       (confirms)
+incidents suppress INCIDENT (--until TIME | --for 2h) --reason TEXT   (confirms)
+incidents severity set INCIDENT LEVEL [--reason TEXT]    (confirms when lowering)
+incidents priority set INCIDENT LEVEL
+incidents note add INCIDENT --message TEXT
 ```
+
+### Changing an incident safely
+
+- **The version is read first.** A change sends the version it read, so if someone else changed the incident in between, the API refuses with `409`. `--expected-version N` pins the version instead of reading it.
+- **A `409` is never re-issued.** It exits `4` and shows the current version and state. Someone else changed the incident, so you decide again.
+- **One `Idempotency-Key` per command, reused on every retry.** A change that timed out and was retried is replayed by the server, never applied twice.
+- **Some changes ask first:** closing, reopening, suppressing, and lowering severity. `--yes` answers in advance. With no terminal and no `--yes` the command is an error and sends nothing. Missing confirmation is never taken as a yes.
 
 `INCIDENT` is the incident's id or its number, such as `WNM-2026-000123`.
 A number is looked up in your tenant.
