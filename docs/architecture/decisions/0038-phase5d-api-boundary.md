@@ -206,7 +206,7 @@ database leak yields no tokens. Error handling is one mapping.
 
 - [ ] The `api_tokens` migration, the `Authenticator` trait and the
   token subcommand.
-- [ ] `docs/api/error-codes.md`, with a test that every code the API can
+- [x] `docs/api/error-codes.md`, with a test that every code the API can
   emit is listed.
 - [ ] The rate-limit numbers and the multi-instance caveat in the
   operations docs.

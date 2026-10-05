@@ -138,5 +138,5 @@ Rejected:
   - Windows-GNU and Linux builds;
   - the [licence matrix](../../dependency-license-matrix.md) and
     `NOTICE` updated.
-- [ ] `docs/api/openapi.json` generated, committed, and checked by a
+- [x] `docs/api/openapi.json` generated, committed, and checked by a
   test.

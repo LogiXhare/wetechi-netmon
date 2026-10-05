@@ -340,6 +340,17 @@ Gate 8 closed on 2026-10-05 with the dependency probe in `apps/api`:
 
 Endpoints may now be written.
 
+**Progress:** the API foundation is `apps/api` (`wetechinetmon-api`):
+
+- RFC 9457 errors behind an `ErrorCode` registry that `docs/api/error-codes.md` must match;
+- a UUIDv7 request id;
+- a std GCRA rate limiter;
+- loopback-or-TLS binding;
+- `/healthz` and `/readyz`;
+- the OpenAPI document committed at `docs/api/openapi.json` and checked by a test.
+
+Next: the `api_tokens` table and `Authenticator`, then the endpoints.
+
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
 sorting through an allowlist; rate limiting; RFC 9457 error bodies; the
