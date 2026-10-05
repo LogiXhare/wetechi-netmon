@@ -383,7 +383,9 @@ A stale version names the current version and state. A suppression is bounded at
 
 Adding a note is `POST .../notes` (5D-7). It needs no version, because notes are append-only, and the key is optional. A customer-visible note is refused with `501`.
 
-Next: manual creation, tags and export, which need domain and authorization decisions first.
+Tags are a sub-resource (5D-8): `PUT .../tags/{key}` sets one and `DELETE` removes one. `incident.update` joins the `noc_lead` bundle, by Shorif's decision of 5 Oct 2026. Until then only `platform_admin`, which no token can hold, had it.
+
+Next: manual creation (`senior_operator` and up) and the JSON export bundle.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and

@@ -163,6 +163,7 @@ impl PermissionResolver for FixedBundleResolver {
                 IncidentExport,
                 IncidentAuditRead,
                 IncidentConfigRead,
+                IncidentUpdate,
             ]);
             v
         };
@@ -177,7 +178,6 @@ impl PermissionResolver for FixedBundleResolver {
                     IncidentClosurePolicyOverride,
                     PlatformIncidentReadAll,
                     PlatformIncidentAdmin,
-                    IncidentUpdate,
                     IncidentNoteCustomerVisible,
                 ]);
                 v

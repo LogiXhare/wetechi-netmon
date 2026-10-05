@@ -28,7 +28,7 @@ pub mod transitions;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use deadpool_postgres::Pool;
 use serde::Serialize;
@@ -132,6 +132,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/incidents/{incident_id}/priority",
             post(transitions::priority),
+        )
+        .route(
+            "/incidents/{incident_id}/tags/{key}",
+            put(transitions::set_tag).delete(transitions::remove_tag),
         )
         .route_layer(axum::middleware::from_fn_with_state(
             state.auth.clone(),

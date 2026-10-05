@@ -100,7 +100,7 @@ Suggested bundles, deployment-configurable:
 | `viewer` | read, list |
 | `operator` | viewer + acknowledge, assign, investigate, note.create |
 | `senior_operator` | operator + severity.change, priority.change, resolve, close, reopen |
-| `noc_lead` | senior_operator + suppress, export, audit.read, config.read |
+| `noc_lead` | senior_operator + suppress, export, audit.read, config.read, update |
 | `platform_admin` | all, including platform permissions |
 
 `incident.closure_policy.override` appears in **no** default bundle, not

@@ -182,6 +182,7 @@ suppression is how a real attack gets missed.
 - **A suppression ends at most 30 days ahead.** `expires_at` must be in the future and no further away than that. Otherwise the request is refused with `422 incident.validation_failed`.
 - **A transition answers with the incident as it now is.** On a replay, that is the current incident, not a stored copy of the first answer.
 - **A note answers `201` with the incident.** The domain numbers notes by position, so the response does not identify the note. `GET .../notes` lists them.
+- **Tags are a sub-resource, not a `PATCH`.** `PUT /incidents/{id}/tags/{key}` sets one tag and `DELETE` removes one. Each is one domain command, so it is atomic. A `PATCH` carrying several tag changes would have been several commands, and not atomic. `PATCH /incidents/{id}` stays reserved for title and description, which have no domain command yet (FU-56).
 - **A version conflict carries extension members.** It includes `expected_version`, `current_version` and `current_state`.
 
 ## Draft OpenAPI

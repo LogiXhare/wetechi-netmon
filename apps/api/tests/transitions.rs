@@ -1,5 +1,5 @@
-//! Milestones 5D-6 and 5D-7: state transitions and notes over HTTP against
-//! PostgreSQL.
+//! Milestones 5D-6 to 5D-8: state transitions, notes and tags over HTTP
+//! against PostgreSQL.
 //! - One incident walks the whole lifecycle through the API, every step
 //!   under the role that holds its permission.
 //! - **The same `Idempotency-Key` and body replays**; the same key with a
@@ -334,6 +334,41 @@ async fn transitions_are_idempotent_versioned_and_tenant_scoped() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["items"].as_array().unwrap().len(), 2, "{body}");
+
+    // --- Tags: PUT sets, DELETE removes, only with incident.update ---
+    let tag = format!("{base}/tags/env");
+    let put_tag = |token: &str, value: &str| {
+        Request::put(&tag)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({ "value": value }).to_string()))
+            .unwrap()
+    };
+    let (status, body) = send(&app, put_tag(&senior, "prod")).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "senior_operator lacks incident.update: {body}"
+    );
+    let (status, body) = send(&app, put_tag(&lead, "prod")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["tags"]["env"], "prod");
+    version += 1;
+    let (status, body) = send(&app, put_tag(&outsider, "prod")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    for _ in 0..2 {
+        let (status, body) = send(
+            &app,
+            Request::delete(&tag)
+                .header(header::AUTHORIZATION, format!("Bearer {lead}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "removing twice succeeds: {body}");
+        assert_eq!(body["tags"].get("env"), None);
+        version = body["version"].as_u64().unwrap();
+    }
 
     // --- Every other transition, each under its own role ---
     let step = |path: &'static str, token: &str, body: Value| {

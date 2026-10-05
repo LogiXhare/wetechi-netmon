@@ -1,5 +1,5 @@
-//! State transitions and safety-relevant field changes (5D-6), and adding
-//! a note (5D-7).
+//! State transitions and safety-relevant field changes (5D-6), adding a
+//! note (5D-7), and setting or removing a tag (5D-8).
 //!
 //! Each is a `POST` action on one incident, never a `PATCH` of `state`
 //! (the API plan): a transition has its own permission, its own fields
@@ -33,6 +33,7 @@ use utoipa::ToSchema;
 use wetechinetmon_incident::assignment::Assignee;
 use wetechinetmon_incident::closure::ClosureReason;
 use wetechinetmon_incident::command::Command;
+use wetechinetmon_incident::id::IncidentId;
 use wetechinetmon_incident::idempotency::IdempotencyKey;
 use wetechinetmon_incident::incident::NoteVisibility;
 use wetechinetmon_incident::severity::{Priority, Severity};
@@ -85,13 +86,29 @@ async fn apply<T: DeserializeOwned>(
 ) -> Result<IncidentView, Problem> {
     limit(&state.limits.mutations, &principal)?;
     let id = parse_id(&incident_id)?;
-    let key = if key_required || headers.contains_key(IDEMPOTENCY_KEY_HEADER) {
-        Some(idempotency_key(&headers)?)
+    let key = optional_key(&headers, key_required)?;
+    let command = command(crate::body::json(&headers, body)?)?;
+    execute(&state, &principal, id, key, command).await
+}
+
+/// The key when required, or when given although optional.
+fn optional_key(headers: &HeaderMap, required: bool) -> Result<Option<IdempotencyKey>, Problem> {
+    if required || headers.contains_key(IDEMPOTENCY_KEY_HEADER) {
+        idempotency_key(headers).map(Some)
     } else {
-        None
-    };
+        Ok(None)
+    }
+}
+
+/// Runs one domain command and re-reads the incident.
+async fn execute(
+    state: &AppState,
+    principal: &Principal,
+    id: IncidentId,
+    key: Option<IdempotencyKey>,
+    command: Command,
+) -> Result<IncidentView, Problem> {
     {
-        let command = command(crate::body::json(&headers, body)?)?;
         let auth = principal.authorization(state.resolver.as_ref());
         let mut client = acquire(&state.pool)
             .await
@@ -539,6 +556,117 @@ pub async fn add_note(
         Ok(view) => (StatusCode::CREATED, Json(view)).into_response(),
         Err(problem) => problem.into_response(),
     }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TagRequest {
+    /// Up to 256 characters.
+    pub value: String,
+}
+
+/// The common part of both tag endpoints: limit, parse, decide.
+async fn tag_command(
+    state: AppState,
+    principal: Principal,
+    incident_id: String,
+    headers: HeaderMap,
+    command: impl FnOnce() -> Result<Command, Problem>,
+) -> Response {
+    let result = async {
+        limit(&state.limits.mutations, &principal)?;
+        let id = parse_id(&incident_id)?;
+        let key = optional_key(&headers, false)?;
+        execute(&state, &principal, id, key, command()?).await
+    }
+    .await;
+    match result {
+        Ok(view) => Json(view).into_response(),
+        Err(problem) => problem.into_response(),
+    }
+}
+
+/// Sets one tag, replacing its value if the key exists. Needs
+/// `incident.update`.
+///
+/// `PUT` is idempotent by definition, so no `expected_version` is
+/// required, and `Idempotency-Key` is optional.
+#[utoipa::path(
+    put,
+    path = "/api/v1/incidents/{incident_id}/tags/{key}",
+    tag = "incidents",
+    params(
+        ("incident_id" = String, Path, description = "The incident's UUID"),
+        ("key" = String, Path, description = "The tag key, up to 64 characters"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Optional; 16 to 255 characters"),
+    ),
+    request_body(content = TagRequest, content_type = "application/json"),
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "The incident with the tag set", body = IncidentView),
+        (status = 400, description = "Bad id, header or body, or an unknown field", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "No usable token", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "The role lacks incident.update", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "No such incident in the caller's tenant", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "The tag limit is reached, or the key was reused", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 415, description = "The body is not application/json", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, description = "The key or value is too long", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 429, description = "Rate limited", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "The database is unreachable", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+    )
+)]
+pub async fn set_tag(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Path((incident_id, key)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    // Parsed only after the limit and the id, like every other command.
+    let content_type = headers.clone();
+    tag_command(state, principal, incident_id, headers, move || {
+        let request: TagRequest = crate::body::json(&content_type, body)?;
+        Ok(Command::AddTag {
+            key,
+            value: request.value,
+        })
+    })
+    .await
+}
+
+/// Removes one tag. Removing a tag that is not set succeeds. Needs
+/// `incident.update`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/incidents/{incident_id}/tags/{key}",
+    tag = "incidents",
+    params(
+        ("incident_id" = String, Path, description = "The incident's UUID"),
+        ("key" = String, Path, description = "The tag key"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Optional; 16 to 255 characters"),
+    ),
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "The incident without the tag", body = IncidentView),
+        (status = 400, description = "Bad id or header", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "No usable token", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "The role lacks incident.update", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "No such incident in the caller's tenant", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "The key was reused", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 429, description = "Rate limited", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "The database is unreachable", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+    )
+)]
+pub async fn remove_tag(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Path((incident_id, key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    tag_command(state, principal, incident_id, headers, move || {
+        Ok(Command::RemoveTag { key })
+    })
+    .await
 }
 
 #[cfg(test)]
