@@ -1,14 +1,96 @@
-# wetechinetmonctl CLI
+# wetechinetmonctl
 
-**Status:** Reserved — not yet implemented.
+The incident CLI ([Milestone 5E](../../docs/development/phase5-implementation-plan.md),
+[ADR 0040](../../docs/architecture/decisions/0040-phase5e-cli-client.md)).
 
-**Planned for:** Phase 2 onward (see [../../docs/roadmap.md](../../docs/roadmap.md)).
+It is an API client and nothing more. Every command maps to an
+[API endpoint](../api/README.md). It holds no business logic and never
+touches the database, so authorization and audit cannot be bypassed by
+using it.
 
-Original CLI (see docs/naming-and-branding.md). Command surface defined in docs/functional-requirements.md (FR-9).
+## Status
 
-This directory is intentionally a placeholder as of Phase 1
-(repository and documentation foundation). No production code has been
-added here yet, per `prompts/CLAUDE_MASTER_PROMPT.md`. Do not implement
-functionality in this directory ahead of its scheduled phase without an
-explicit decision recorded in `docs/roadmap.md` and, where applicable, an
-architecture decision record under `docs/architecture/decisions/`.
+The read commands are implemented. The commands that change incidents
+come next in 5E.
+
+## Connecting
+
+Credentials are **never** command-line flags, because flags land in shell
+history. The environment overrides the config file, field by field.
+
+| Setting | Environment | Profile field |
+|---|---|---|
+| API URL | `WETECHINETMON_API_URL` | `url` |
+| Token | `WETECHINETMON_API_TOKEN` | `token` |
+| CA bundle (PEM) | `WETECHINETMON_API_CA_FILE` | `ca_file` |
+
+The config file is JSON, at `$WETECHINETMON_CONFIG`. By default it is at
+`~/.config/wetechinetmon/cli.json`, or `%APPDATA%\wetechinetmon\cli.json`
+on Windows.
+
+```json
+{
+  "default_profile": "noc",
+  "profiles": {
+    "noc": {
+      "url": "https://wnm-api.example.net:8443",
+      "ca_file": "/etc/wetechinetmon/ca.pem",
+      "token": "wnm_..."
+    }
+  }
+}
+```
+
+Keep the file readable only by you, because it holds a token.
+`--profile NAME` picks a profile.
+
+- **`https://` needs a CA bundle.** TLS verification cannot be turned off.
+  On Linux, the system bundle works, for example
+  `/etc/ssl/certs/ca-certificates.crt`.
+- **`http://` is accepted only for a loopback API.**
+
+## Commands
+
+```text
+wetechinetmonctl [--output table|wide|json] [--profile NAME] incidents <verb> ...
+
+incidents list [--state S] [--severity S] [--priority P] [--direction D]
+               [--target-type T] [--sort opened_at|last_detected_at]
+               [--order desc|asc] [--limit N] [--cursor C]
+               [--opened-from TIME --opened-to TIME]
+incidents show INCIDENT
+incidents timeline INCIDENT [--limit N] [--cursor C]
+incidents detections INCIDENT [--limit N] [--cursor C]
+incidents audit INCIDENT [--limit N] [--cursor C]
+incidents note list INCIDENT
+```
+
+`INCIDENT` is the incident's id or its number, such as `WNM-2026-000123`.
+A number is looked up in your tenant.
+
+### Output formats
+
+| Format | What it prints |
+|---|---|
+| `table` | For people. |
+| `wide` | `table` with more columns. |
+| `json` | The API's response body, **verbatim**. Errors are the API's problem document, so scripts switch on its `error` code. |
+
+Text from the API, such as titles and notes, has its control characters
+replaced before it reaches the terminal.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Generic failure |
+| `2` | Usage error, or input the API refused as malformed (`400`, `413`, `415`, `422`) |
+| `3` | Authentication or authorization (`401`, `403`) |
+| `4` | Conflict (`409`) |
+| `5` | Not found (`404`) |
+| `6` | Rate limited (`429`) |
+| `7` | Unreachable, or the server failed after retries (`5xx`) |
+
+Requests are retried only after a connection error or a `5xx`, at most
+three times, and never after a `4xx`.

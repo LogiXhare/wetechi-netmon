@@ -105,6 +105,9 @@ pub struct ListFilter {
     pub priorities: Vec<String>,
     pub direction: Option<String>,
     pub target_type: Option<String>,
+    /// Exact match, served by the `(tenant_id, incident_number)` unique
+    /// index (ADR 0040).
+    pub incident_number: Option<String>,
     /// `[from, to)` on `opened_at`, in microseconds.
     pub opened_between: Option<(i64, i64)>,
     pub sort: ListSort,
@@ -219,6 +222,14 @@ fn where_clause(
             &mut params,
             " AND target_type = $?",
             Box::new(target_type.clone()),
+        );
+    }
+    if let Some(number) = &filter.incident_number {
+        bind(
+            &mut sql,
+            &mut params,
+            " AND incident_number = $?",
+            Box::new(number.clone()),
         );
     }
     if let Some((from, to)) = filter.opened_between {
@@ -638,6 +649,7 @@ mod tests {
             priorities: vec![],
             direction: None,
             target_type: None,
+            incident_number: None,
             opened_between: None,
             sort: ListSort::OpenedAt,
             order: SortOrder::Desc,
