@@ -1,7 +1,8 @@
 # 0038. Phase 5D API Boundary: TLS, Identity, Authorization, Rate Limits, Errors
 
-Status: **Accepted**. The two crates it names, `governor` and `getrandom`,
-are conditional on the 5D dependency probe, as in [ADR 0037](0037-phase5d-http-framework-and-openapi.md).
+Status: **Accepted**, amended by the 5D dependency probe (gate 8,
+2026-10-05). `getrandom` was approved. `governor` was rejected, and the
+rate limiter is implemented in-house (gate 6 below).
 Date: 2026-10-05
 Deciders: Repository owner. On 2026-10-05 the owner delegated these choices to
 industry practice and standards.
@@ -104,11 +105,20 @@ kind. OIDC/JWT and SSO are Phase 8.
 
 ### Gate 6: rate limiting — GCRA in memory, per actor and surface
 
-- **Algorithm:** GCRA, a token-bucket equivalent, through `governor`
-  (0.10.4, MIT, 17.4 M downloads in 90 days, `boinkor-net/governor`
-  pushed 2026-08-24, no advisories). It is used directly, keyed by actor
-  and surface, rather than through `tower_governor`, which keys by
-  address and has not been released since August 2025.
+- **Algorithm:** GCRA, a token-bucket equivalent, keyed by actor and
+  surface, implemented in `apps/api` on `std` alone.
+  - The state is one "theoretical arrival time" per key, behind a
+    `Mutex<HashMap>`, with no `unsafe` and property-tested against the
+    algorithm's definition.
+  - The first draft of this ADR chose `governor` (0.10.4, MIT, 17.4 M
+    downloads in 90 days, no advisories). The gate-8 probe rejected it on
+    ADR 0018's closure criterion. Even with `default-features = false,
+    features = ["std"]` it added 8 crates and about 920 `unsafe`
+    occurrences (`portable-atomic` alone 727). That is roughly 1 420 of
+    the 1 477 the whole API closure would carry, for an algorithm this
+    small.
+  - `tower_governor` was never in contention: it keys by address and has
+    not been released since August 2025.
 - **Limits** from the security model:
 
   | Surface | Limit |

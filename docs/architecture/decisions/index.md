@@ -78,5 +78,5 @@ yet:
 | [0034](0034-phase5b-persistence-bridge-load-run-flush.md) | Phase 5B Persistence Bridge: Load, Run, Flush | Accepted |
 | [0035](0035-phase5c-detection-event-inbox.md) | Phase 5C Detection-Event Inbox | Accepted |
 | [0036](0036-phase5c-incident-manager-process.md) | Phase 5C Incident Manager Process | Accepted |
-| [0037](0037-phase5d-http-framework-and-openapi.md) | Phase 5D HTTP Framework and OpenAPI | Conditionally Accepted |
+| [0037](0037-phase5d-http-framework-and-openapi.md) | Phase 5D HTTP Framework and OpenAPI | Accepted |
 | [0038](0038-phase5d-api-boundary.md) | Phase 5D API Boundary: TLS, Identity, Authorization, Rate Limits, Errors | Accepted |

@@ -1,0 +1,17 @@
+[package]
+name = "wetechinetmon-api"
+description = "WetechiNetMon incident REST API (Phase 5D). At this commit: the gate-8 dependency probe only — ADR 0037/0038's crates added and measured, no endpoint yet."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# ADR 0037: the HTTP framework, default features (measured as such by the
+# gate-8 probe; any unused one is trimmed when the API is written).
+axum = "0.8.9"
+# ADR 0037: OpenAPI generated from the handlers.
+utoipa = "6.0.0"
+# ADR 0038: OS CSPRNG for API tokens. Already in Cargo.lock transitively.
+getrandom = "0.4.3"
+tokio.workspace = true
