@@ -34,11 +34,42 @@ pub struct ProblemDocument {
         description = "Incident management REST API. Errors are RFC 9457 problem details with a stable `error` code.",
         license(name = "Apache-2.0", identifier = "Apache-2.0"),
     ),
-    paths(crate::healthz, crate::readyz),
-    components(schemas(ProblemDocument, crate::Health)),
-    tags((name = "operations", description = "Liveness and readiness"))
+    paths(crate::healthz, crate::readyz, crate::incidents::get_incident),
+    components(schemas(
+        ProblemDocument,
+        crate::Health,
+        crate::incidents::IncidentView,
+        crate::incidents::SuppressionView,
+        crate::incidents::PolicyRefView,
+    )),
+    modifiers(&BearerAuth),
+    tags(
+        (name = "operations", description = "Liveness and readiness"),
+        (name = "incidents", description = "Incidents in the caller's tenant"),
+    )
 )]
 pub struct ApiDoc;
+
+/// Declares the `bearer` scheme: an opaque `wnm_` API token (ADR 0038).
+struct BearerAuth;
+
+impl utoipa::Modify for BearerAuth {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "bearer",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .description(Some(
+                        "An API token, `wnm_` and 64 hex characters, from `wetechinetmon-api token create`.",
+                    ))
+                    .build(),
+            ),
+        );
+    }
+}
 
 /// The document as committed: pretty JSON with a trailing newline.
 pub fn document() -> String {

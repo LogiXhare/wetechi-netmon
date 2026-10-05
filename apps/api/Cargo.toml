@@ -50,3 +50,6 @@ serde_json = "1"
 # already in the closure through axum.
 tower = { version = "0.5.3", features = ["util"] }
 proptest.workspace = true
+# tests/get_incident.rs builds detection events with the shared
+# PostgreSQL fixtures.
+wetechinetmon-detector = { path = "../../crates/detector" }

@@ -40,7 +40,8 @@ async fn main() {
         "starting wetechinetmon-api"
     );
 
-    let app = router(AppState { pool });
+    let app = router(AppState::new(pool))
+        .into_make_service_with_connect_info::<wetechinetmon_api::server::PeerAddr>();
     let served = match listener {
         Bound::Plain(tcp) => {
             axum::serve(tcp, app)

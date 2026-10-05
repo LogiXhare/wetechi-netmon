@@ -39,6 +39,16 @@ wetechinetmon-api
 `GET /readyz` is readiness: `503 api.unavailable` until the database
 answers. Neither needs a token.
 
+## Endpoints
+
+| Method | Path | Permission | Limit |
+|---|---|---|---|
+| `GET` | `/healthz` | none | none |
+| `GET` | `/readyz` | none | none |
+| `GET` | `/api/v1/incidents/{id}` | `incident.read` | 120/min per actor |
+
+The full contract is the generated [OpenAPI document](../../docs/api/openapi.json). Another tenant's incident is `404 incident.not_found`, indistinguishable from a missing one.
+
 ## API tokens
 
 Every `/api/v1` request needs `Authorization: Bearer <token>`. Tokens are

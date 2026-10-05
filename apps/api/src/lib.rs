@@ -12,11 +12,13 @@
 
 pub mod auth;
 pub mod config;
+pub mod incidents;
 pub mod openapi;
 pub mod problem;
 pub mod rate_limit;
 pub mod request_id;
 pub mod server;
+pub mod time;
 pub mod token_admin;
 
 use axum::extract::State;
@@ -26,9 +28,12 @@ use axum::routing::get;
 use axum::{Json, Router};
 use deadpool_postgres::Pool;
 use serde::Serialize;
+use std::sync::Arc;
 use utoipa::ToSchema;
+use wetechinetmon_incident::authorization::{FixedBundleResolver, PermissionResolver};
 use wetechinetmon_incident_postgres::pool::acquire;
 
+use crate::auth::{AuthLayerState, TokenAuthenticator};
 use crate::problem::{ErrorCode, Problem};
 
 /// The largest request body accepted, before any handler sees it.
@@ -38,14 +43,41 @@ pub const BODY_LIMIT_BYTES: usize = 64 * 1024;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: Pool,
+    /// Bearer authentication and its failure limiter (ADR 0038, gate 4).
+    pub auth: AuthLayerState,
+    /// Role to permissions (ADR 0017's `PermissionResolver`, gate 5).
+    pub resolver: Arc<dyn PermissionResolver>,
+    /// Per-actor limits for each surface (gate 6).
+    pub limits: Arc<incidents::Limits>,
+}
+
+impl AppState {
+    /// The Community wiring: the token table and the fixed role bundles.
+    pub fn new(pool: Pool) -> Self {
+        AppState {
+            auth: AuthLayerState::new(Arc::new(TokenAuthenticator::new(pool.clone()))),
+            resolver: Arc::new(FixedBundleResolver),
+            limits: Arc::new(incidents::Limits::default()),
+            pool,
+        }
+    }
 }
 
 /// The whole API: routes, problem-details fallbacks, request ids and the
 /// body limit.
 pub fn router(state: AppState) -> Router {
+    // Every /api/v1 route requires a principal. `route_layer` applies only
+    // to matched routes, so an unknown path is a plain 404 either way.
+    let api = Router::new()
+        .route("/incidents/{incident_id}", get(incidents::get_incident))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.auth.clone(),
+            auth::require_principal,
+        ));
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .nest("/api/v1", api)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_BYTES))
@@ -127,7 +159,7 @@ mod tests {
             },
         )
         .unwrap();
-        AppState { pool }
+        AppState::new(pool)
     }
 
     async fn call(
