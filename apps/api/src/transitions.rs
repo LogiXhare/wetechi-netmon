@@ -1,4 +1,5 @@
-//! State transitions and safety-relevant field changes (5D-6).
+//! State transitions and safety-relevant field changes (5D-6), and adding
+//! a note (5D-7).
 //!
 //! Each is a `POST` action on one incident, never a `PATCH` of `state`
 //! (the API plan): a transition has its own permission, its own fields
@@ -23,7 +24,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
 use axum::extract::{Path, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde::de::DeserializeOwned;
@@ -33,6 +34,7 @@ use wetechinetmon_incident::assignment::Assignee;
 use wetechinetmon_incident::closure::ClosureReason;
 use wetechinetmon_incident::command::Command;
 use wetechinetmon_incident::idempotency::IdempotencyKey;
+use wetechinetmon_incident::incident::NoteVisibility;
 use wetechinetmon_incident::severity::{Priority, Severity};
 use wetechinetmon_incident_postgres::pool::acquire;
 use wetechinetmon_incident_postgres::queries;
@@ -71,19 +73,24 @@ fn idempotency_key(headers: &HeaderMap) -> Result<IdempotencyKey, Problem> {
     })
 }
 
-/// The shared path of every transition: limit, parse, decide, render.
-async fn run<T: DeserializeOwned>(
+/// The shared path of every command: limit, parse, decide, re-read.
+async fn apply<T: DeserializeOwned>(
     state: AppState,
     principal: Principal,
     incident_id: String,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
+    key_required: bool,
     command: impl FnOnce(T) -> Result<Command, Problem>,
-) -> Response {
-    let result = async {
-        limit(&state.limits.mutations, &principal)?;
-        let id = parse_id(&incident_id)?;
-        let key = idempotency_key(&headers)?;
+) -> Result<IncidentView, Problem> {
+    limit(&state.limits.mutations, &principal)?;
+    let id = parse_id(&incident_id)?;
+    let key = if key_required || headers.contains_key(IDEMPOTENCY_KEY_HEADER) {
+        Some(idempotency_key(&headers)?)
+    } else {
+        None
+    };
+    {
         let command = command(crate::body::json(&headers, body)?)?;
         let auth = principal.authorization(state.resolver.as_ref());
         let mut client = acquire(&state.pool)
@@ -91,7 +98,7 @@ async fn run<T: DeserializeOwned>(
             .map_err(|error| Problem::from(&error))?;
         state
             .incidents
-            .handle_command(&mut client, &auth, id, command, Some(key))
+            .handle_command(&mut client, &auth, id, command, key)
             .await
             .map_err(|error| Problem::from(&error))?
             .map_err(|error| Problem::from(&error))?;
@@ -101,8 +108,18 @@ async fn run<T: DeserializeOwned>(
             .map_err(|error| Problem::from(&error))?;
         IncidentView::from_incident(&incident)
     }
-    .await;
-    match result {
+}
+
+/// A transition: the key is required, and success is `200`.
+async fn run<T: DeserializeOwned>(
+    state: AppState,
+    principal: Principal,
+    incident_id: String,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+    command: impl FnOnce(T) -> Result<Command, Problem>,
+) -> Response {
+    match apply(state, principal, incident_id, headers, body, true, command).await {
         Ok(view) => Json(view).into_response(),
         Err(problem) => problem.into_response(),
     }
@@ -448,6 +465,81 @@ transition!(
         new_priority: r.priority.into(),
     })
 );
+
+/// Who may read a note. Only `internal` exists in Phase 5.
+#[derive(Debug, Clone, Copy, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteVisibilityValue {
+    #[default]
+    Internal,
+    /// Refused with `501 incident.customer_visible_unsupported`.
+    CustomerVisible,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NoteRequest {
+    /// Untrusted operator text, stored and returned verbatim.
+    pub body: String,
+    /// Defaults to `internal`.
+    #[serde(default)]
+    pub visibility: NoteVisibilityValue,
+}
+
+fn note(request: NoteRequest) -> Result<Command, Problem> {
+    match request.visibility {
+        NoteVisibilityValue::Internal => Ok(Command::AddNote {
+            body: request.body,
+            visibility: NoteVisibility::Internal,
+        }),
+        NoteVisibilityValue::CustomerVisible => {
+            Err(Problem::new(ErrorCode::CustomerVisibleUnsupported))
+        }
+    }
+}
+
+/// Adds an internal note. Needs `incident.note.create`.
+///
+/// Notes are append-only and cannot conflict, so neither
+/// `expected_version` nor `Idempotency-Key` is required; a key, when
+/// given, makes a retry replay instead of adding the note twice.
+#[utoipa::path(
+    post,
+    path = "/api/v1/incidents/{incident_id}/notes",
+    tag = "incidents",
+    params(
+        ("incident_id" = String, Path, description = "The incident's UUID"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Optional; 16 to 255 characters"),
+    ),
+    request_body(content = NoteRequest, content_type = "application/json"),
+    security(("bearer" = [])),
+    responses(
+        (status = 201, description = "The incident with the note added, or the current incident on a replay", body = IncidentView),
+        (status = 400, description = "Bad id, header or body, or an unknown field", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "No usable token", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "The role lacks incident.note.create", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "No such incident in the caller's tenant", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "The note limit is reached, or the key was reused", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 413, description = "The body is over 64 KiB", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 415, description = "The body is not application/json", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, description = "The note is too long", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 429, description = "Rate limited", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 501, description = "Customer-visible notes are not available", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "The database is unreachable", body = crate::openapi::ProblemDocument, content_type = "application/problem+json"),
+    )
+)]
+pub async fn add_note(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Path(incident_id): Path<String>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    match apply(state, principal, incident_id, headers, body, false, note).await {
+        Ok(view) => (StatusCode::CREATED, Json(view)).into_response(),
+        Err(problem) => problem.into_response(),
+    }
+}
 
 #[cfg(test)]
 mod tests {

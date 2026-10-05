@@ -55,6 +55,7 @@ pub struct ProblemDocument {
         crate::transitions::unassign,
         crate::transitions::severity,
         crate::transitions::priority,
+        crate::transitions::add_note,
     ),
     components(schemas(
         ProblemDocument,
@@ -81,6 +82,8 @@ pub struct ProblemDocument {
         crate::transitions::SeverityRequest,
         crate::transitions::PriorityValue,
         crate::transitions::PriorityRequest,
+        crate::transitions::NoteVisibilityValue,
+        crate::transitions::NoteRequest,
         crate::history::NoteView,
         crate::history::NoteList,
     )),

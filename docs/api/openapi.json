@@ -1383,6 +1383,174 @@
             "bearer": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "incidents"
+        ],
+        "summary": "Adds an internal note. Needs `incident.note.create`.",
+        "description": "Notes are append-only and cannot conflict, so neither\n`expected_version` nor `Idempotency-Key` is required; a key, when\ngiven, makes a retry replay instead of adding the note twice.",
+        "operationId": "add_note",
+        "parameters": [
+          {
+            "name": "incident_id",
+            "in": "path",
+            "description": "The incident's UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Optional; 16 to 255 characters",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The incident with the note added, or the current incident on a replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad id, header or body, or an unknown field",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No usable token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role lacks incident.note.create",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such incident in the caller's tenant",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The note limit is reached, or the key was reused",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is over 64 KiB",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not application/json",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The note is too long",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Customer-visible notes are not available",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unreachable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/api/v1/incidents/{incident_id}/priority": {
@@ -3199,6 +3367,23 @@
           }
         }
       },
+      "NoteRequest": {
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Untrusted operator text, stored and returned verbatim."
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/NoteVisibilityValue",
+            "description": "Defaults to `internal`."
+          }
+        },
+        "additionalProperties": false
+      },
       "NoteView": {
         "type": "object",
         "description": "One note.",
@@ -3226,6 +3411,14 @@
             "description": "internal or customer_visible."
           }
         }
+      },
+      "NoteVisibilityValue": {
+        "type": "string",
+        "description": "Who may read a note. Only `internal` exists in Phase 5.",
+        "enum": [
+          "internal",
+          "customer_visible"
+        ]
       },
       "PolicyRefView": {
         "type": "object",

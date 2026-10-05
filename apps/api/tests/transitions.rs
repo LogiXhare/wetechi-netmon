@@ -1,4 +1,5 @@
-//! Milestone 5D-6: state transitions over HTTP against PostgreSQL.
+//! Milestones 5D-6 and 5D-7: state transitions and notes over HTTP against
+//! PostgreSQL.
 //! - One incident walks the whole lifecycle through the API, every step
 //!   under the role that holds its permission.
 //! - **The same `Idempotency-Key` and body replays**; the same key with a
@@ -286,6 +287,53 @@ async fn transitions_are_idempotent_versioned_and_tenant_scoped() {
     assert_eq!(stale["error"], "incident.version_conflict");
     assert_eq!(stale["current_version"].as_u64().unwrap(), version);
     assert_eq!(stale["current_state"], "acknowledged");
+
+    // --- Notes: no version, the key optional, replayed when given ---
+    let notes = format!("{base}/notes");
+    let (status, body) = post(&app, &notes, &viewer, None, json!({"body": "seen"})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, body) = post(
+        &app,
+        &notes,
+        &operator,
+        None,
+        json!({"body": "upstream confirms spoofing"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["version"].as_u64().unwrap(), version + 1);
+    version += 1;
+    let keyed = json!({"body": "scrubbing requested", "visibility": "internal"});
+    let (status, body) = post(&app, &notes, &operator, Some(&key("note")), keyed.clone()).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    version += 1;
+    let (status, body) = post(&app, &notes, &operator, Some(&key("note")), keyed).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(
+        body["version"].as_u64().unwrap(),
+        version,
+        "a replayed note is not added twice"
+    );
+    let (status, body) = post(
+        &app,
+        &notes,
+        &operator,
+        None,
+        json!({"body": "x", "visibility": "customer_visible"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    assert_eq!(body["error"], "incident.customer_visible_unsupported");
+    let (status, body) = send(
+        &app,
+        Request::get(&notes)
+            .header(header::AUTHORIZATION, format!("Bearer {viewer}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"].as_array().unwrap().len(), 2, "{body}");
 
     // --- Every other transition, each under its own role ---
     let step = |path: &'static str, token: &str, body: Value| {

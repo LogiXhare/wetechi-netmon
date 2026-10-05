@@ -49,6 +49,7 @@ answers. Neither needs a token.
 | `GET` | `/api/v1/incidents/{id}` | `incident.read` | 120/min per actor |
 | `GET` | `/api/v1/incidents/{id}/timeline` | `incident.read` | 120/min per actor |
 | `GET` | `/api/v1/incidents/{id}/notes` | `incident.read` | 120/min per actor |
+| `POST` | `/api/v1/incidents/{id}/notes` | `incident.note.create` | 60/min per actor |
 | `GET` | `/api/v1/incidents/{id}/detections` | `incident.read` | 120/min per actor |
 | `GET` | `/api/v1/incidents/{id}/audit` | `incident.audit.read` | 30/min per actor |
 | `POST` | `/api/v1/incidents/{id}/acknowledge` | `incident.acknowledge` | 60/min per actor |
@@ -64,7 +65,7 @@ answers. Neither needs a token.
 | `POST` | `/api/v1/incidents/{id}/severity` | `incident.severity.change` | 60/min per actor |
 | `POST` | `/api/v1/incidents/{id}/priority` | `incident.priority.change` | 60/min per actor |
 
-Every `POST` needs an `Idempotency-Key` header (16 to 255 characters) and `expected_version` in its JSON body. A retry with the same key and body replays the first outcome; a stale version is `409 incident.version_conflict`. Each answers with the incident as it now is.
+Every transition `POST` needs an `Idempotency-Key` header (16 to 255 characters) and `expected_version` in its JSON body. A retry with the same key and body replays the first outcome; a stale version is `409 incident.version_conflict`. Each answers with the incident as it now is. Adding a note needs neither: notes are append-only, and a key, when given, still makes a retry replay. It answers `201` with the incident.
 
 The full contract is the generated [OpenAPI document](../../docs/api/openapi.json). Another tenant's incident is `404 incident.not_found`, indistinguishable from a missing one.
 

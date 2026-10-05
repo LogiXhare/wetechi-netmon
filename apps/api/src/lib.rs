@@ -85,7 +85,10 @@ pub fn router(state: AppState) -> Router {
         .route("/incidents", get(list::list_incidents))
         .route("/incidents/{incident_id}", get(incidents::get_incident))
         .route("/incidents/{incident_id}/timeline", get(history::timeline))
-        .route("/incidents/{incident_id}/notes", get(history::notes))
+        .route(
+            "/incidents/{incident_id}/notes",
+            get(history::notes).post(transitions::add_note),
+        )
         .route(
             "/incidents/{incident_id}/detections",
             get(history::detections),
