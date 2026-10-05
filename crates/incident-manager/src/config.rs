@@ -35,14 +35,7 @@ pub const MAINTENANCE_INTERVAL_SECS_ENV_VAR: &str =
     "WETECHINETMON_INCIDENT_MAINTENANCE_INTERVAL_SECS";
 pub const RETENTION_INTERVAL_SECS_ENV_VAR: &str = "WETECHINETMON_INCIDENT_RETENTION_INTERVAL_SECS";
 
-/// Paths to operator-managed PEM files (ADR 0023). None of them belongs
-/// in Git.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TlsFiles {
-    pub ca_file: PathBuf,
-    /// Mutual TLS: the client certificate chain and its private key.
-    pub client_identity: Option<(PathBuf, PathBuf)>,
-}
+pub use wetechinetmon_incident_postgres::connect::TlsFiles;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Config {
@@ -112,30 +105,12 @@ impl Config {
         let database_url = get(DATABASE_URL_ENV_VAR)?.ok_or(ConfigError::Missing {
             var: DATABASE_URL_ENV_VAR,
         })?;
-        let ca_file = get(DATABASE_CA_FILE_ENV_VAR)?.map(PathBuf::from);
-        let client_cert = get(DATABASE_CLIENT_CERT_FILE_ENV_VAR)?.map(PathBuf::from);
-        let client_key = get(DATABASE_CLIENT_KEY_FILE_ENV_VAR)?.map(PathBuf::from);
-        let client_identity = match (client_cert, client_key) {
-            (Some(cert), Some(key)) => Some((cert, key)),
-            (None, None) => None,
-            _ => {
-                return Err(ConfigError::Incomplete {
-                    detail: "a client certificate and its key must be set together",
-                })
-            }
-        };
-        let tls = match (ca_file, client_identity) {
-            (Some(ca_file), client_identity) => Some(TlsFiles {
-                ca_file,
-                client_identity,
-            }),
-            (None, None) => None,
-            (None, Some(_)) => {
-                return Err(ConfigError::Incomplete {
-                    detail: "a client certificate needs a CA file to verify the server with",
-                })
-            }
-        };
+        let tls = TlsFiles::from_paths(
+            get(DATABASE_CA_FILE_ENV_VAR)?.map(PathBuf::from),
+            get(DATABASE_CLIENT_CERT_FILE_ENV_VAR)?.map(PathBuf::from),
+            get(DATABASE_CLIENT_KEY_FILE_ENV_VAR)?.map(PathBuf::from),
+        )
+        .map_err(|detail| ConfigError::Incomplete { detail })?;
 
         let default_pool = PoolPolicy::starting_default();
         let pool = PoolPolicy {

@@ -19,7 +19,7 @@
 //!   the sink accepting, then flushes what is left, and reports anything it
 //!   could not write.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -183,7 +183,88 @@ impl DetectionEventSink for InboxSink {
     }
 }
 
+/// One producer per tenant behind a single sink, for a detector that serves
+/// several tenants. Each event goes to its own tenant's queue, so one
+/// tenant's backlog or refused batch never holds up another's.
+#[derive(Debug, Clone)]
+pub struct TenantRouter {
+    sinks: Arc<HashMap<String, InboxSink>>,
+    unrouted: Arc<AtomicU64>,
+}
+
+/// Builds a [`TenantRouter`] and one drain per distinct tenant. Each drain
+/// needs its own task running [`InboxDrain::run`].
+pub fn inbox_producers(
+    tenants: impl IntoIterator<Item = TenantId>,
+    policy: ProducerPolicy,
+) -> (TenantRouter, Vec<InboxDrain>) {
+    let mut sinks = HashMap::new();
+    let mut drains = Vec::new();
+    for tenant in tenants {
+        if sinks.contains_key(tenant.as_str()) {
+            continue;
+        }
+        let key = tenant.as_str().to_string();
+        let (sink, drain) = inbox_producer(tenant, policy);
+        sinks.insert(key, sink);
+        drains.push(drain);
+    }
+    (
+        TenantRouter {
+            sinks: Arc::new(sinks),
+            unrouted: Arc::new(AtomicU64::new(0)),
+        },
+        drains,
+    )
+}
+
+impl TenantRouter {
+    /// Events accepted and not yet written, across every tenant.
+    pub fn queued(&self) -> usize {
+        self.sinks.values().map(InboxSink::queued).sum()
+    }
+
+    /// Events refused because their tenant's queue was full.
+    pub fn dropped_full(&self) -> u64 {
+        self.sinks.values().map(InboxSink::dropped_full).sum()
+    }
+
+    /// Events refused because no producer serves their tenant.
+    pub fn unrouted(&self) -> u64 {
+        self.unrouted.load(Ordering::Relaxed)
+    }
+
+    /// How many tenants have a producer.
+    pub fn tenants(&self) -> usize {
+        self.sinks.len()
+    }
+}
+
+impl DetectionEventSink for TenantRouter {
+    fn publish(&self, event: &DetectionEvent) -> Result<(), SinkError> {
+        match self.sinks.get(&event.target.tenant) {
+            Some(sink) => sink.publish(event),
+            None => {
+                self.unrouted.fetch_add(1, Ordering::Relaxed);
+                Err(SinkError::Backend {
+                    sink: SINK_NAME,
+                    detail: "no inbox producer serves this event's tenant".to_string(),
+                })
+            }
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        SINK_NAME
+    }
+}
+
 impl InboxDrain {
+    /// The tenant this drain writes for.
+    pub fn tenant(&self) -> &TenantId {
+        &self.shared.tenant
+    }
+
     /// Writes the batch at the head of the queue, and removes it only once
     /// the write succeeded. `Ok(None)` when the queue is empty.
     pub async fn flush_batch(
@@ -209,6 +290,11 @@ impl InboxDrain {
     }
 
     async fn flush_from_pool(&mut self, pool: &Pool) -> Result<Option<u64>, PersistError> {
+        // An idle producer holds no connection, and an unreachable database
+        // is not reported while there is nothing to write.
+        if self.shared.locked().is_empty() {
+            return Ok(None);
+        }
         let client = acquire(pool).await?;
         self.flush_batch(&**client).await
     }
@@ -220,11 +306,28 @@ impl InboxDrain {
     /// writer per queue: the batch a flush removes must be the batch it
     /// wrote.
     pub async fn run(&mut self, pool: &Pool, shutdown: impl Future<Output = ()>) -> DrainReport {
+        self.run_observed(pool, shutdown, |_| {}).await
+    }
+
+    /// [`Self::run`], calling `observe` after every write that wrote
+    /// something or failed, so a service can count and log each one.
+    pub async fn run_observed(
+        &mut self,
+        pool: &Pool,
+        shutdown: impl Future<Output = ()>,
+        mut observe: impl FnMut(Result<u64, &PersistError>),
+    ) -> DrainReport {
         let mut report = DrainReport::default();
         let mut failures: u32 = 0;
         tokio::pin!(shutdown);
         loop {
-            let wait = match self.flush_from_pool(pool).await {
+            let outcome = self.flush_from_pool(pool).await;
+            match &outcome {
+                Ok(Some(added)) => observe(Ok(*added)),
+                Ok(None) => {}
+                Err(error) => observe(Err(error)),
+            }
+            let wait = match outcome {
                 Ok(Some(added)) => {
                     report.enqueued += added;
                     failures = 0;
@@ -247,9 +350,13 @@ impl InboxDrain {
         let mut attempts: u32 = 0;
         loop {
             match self.flush_from_pool(pool).await {
-                Ok(Some(added)) => report.enqueued += added,
+                Ok(Some(added)) => {
+                    observe(Ok(added));
+                    report.enqueued += added;
+                }
                 Ok(None) => break,
-                Err(_) => {
+                Err(error) => {
+                    observe(Err(&error));
                     report.failed_writes += 1;
                     attempts += 1;
                     if attempts >= self.policy.retry.max_attempts.max(1) {
@@ -307,6 +414,49 @@ mod tests {
         ));
         assert_eq!(sink.refused_tenant(), 1);
         assert_eq!(sink.queued(), 0);
+    }
+
+    #[test]
+    fn the_router_sends_each_event_to_its_own_tenant() {
+        let (router, drains) = inbox_producers(
+            ["acme", "globex", "acme"].map(TenantId::new),
+            ProducerPolicy {
+                capacity: 1,
+                ..ProducerPolicy::starting_default()
+            },
+        );
+        assert_eq!(drains.len(), 2, "one drain per distinct tenant");
+        assert_eq!(router.tenants(), 2);
+        assert!(router.publish(&event_for("acme", 0)).is_ok());
+        assert!(router.publish(&event_for("globex", 0)).is_ok());
+        assert_eq!(router.queued(), 2);
+
+        // acme's full queue does not stop globex's.
+        assert_eq!(
+            router.publish(&event_for("acme", 1)),
+            Err(SinkError::Full { sink: SINK_NAME })
+        );
+        assert_eq!(router.dropped_full(), 1);
+        for drain in &drains {
+            let queued: Vec<String> = drain
+                .shared
+                .locked()
+                .iter()
+                .map(|e| e.target.tenant.clone())
+                .collect();
+            assert_eq!(queued, [drain.tenant().as_str()]);
+        }
+    }
+
+    #[test]
+    fn the_router_refuses_an_unknown_tenant_and_counts_it() {
+        let (router, _drains) = inbox_producers([TenantId::new("acme")], ProducerPolicy::default());
+        assert!(matches!(
+            router.publish(&event_for("initech", 0)),
+            Err(SinkError::Backend { .. })
+        ));
+        assert_eq!(router.unrouted(), 1);
+        assert_eq!(router.queued(), 0);
     }
 
     #[test]

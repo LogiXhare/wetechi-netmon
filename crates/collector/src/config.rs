@@ -9,8 +9,10 @@
 //! docs/configuration/aggregation.md, docs/configuration/prefixes.md.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use wetechinetmon_classifier::PrefixConfigEntry;
+use wetechinetmon_incident_postgres::connect::TlsFiles;
 
 const DEFAULT_BIND: &str = "0.0.0.0:2055";
 const DEFAULT_METRICS_BIND: &str = "0.0.0.0:9090";
@@ -41,6 +43,12 @@ const DETECTION_WINDOW_SECS_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_W
 const DETECTION_MAX_SCOPES_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_MAX_SCOPES";
 const DETECTION_EVENT_BUFFER_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_EVENT_BUFFER";
 const DETECTION_STALE_SECS_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_DETECTION_STALE_SECS";
+const INCIDENT_DATABASE_URL_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_INCIDENT_DATABASE_URL";
+const INCIDENT_DATABASE_CA_FILE_ENV_VAR: &str = "WETECHINETMON_COLLECTOR_INCIDENT_DATABASE_CA_FILE";
+const INCIDENT_DATABASE_CLIENT_CERT_FILE_ENV_VAR: &str =
+    "WETECHINETMON_COLLECTOR_INCIDENT_DATABASE_CLIENT_CERT_FILE";
+const INCIDENT_DATABASE_CLIENT_KEY_FILE_ENV_VAR: &str =
+    "WETECHINETMON_COLLECTOR_INCIDENT_DATABASE_CLIENT_KEY_FILE";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -86,6 +94,28 @@ pub struct Config {
     /// How long an open detection may go without a snapshot before it is
     /// force-closed as stale.
     pub detection_stale_secs: u64,
+    /// Where detection events go to become incidents (ADR 0035, ADR 0036).
+    /// **Off when unset**, and only used while detection is on.
+    pub incident_database: Option<IncidentDatabase>,
+}
+
+/// The incident database the inbox producer writes to.
+#[derive(Clone, PartialEq, Eq)]
+pub struct IncidentDatabase {
+    /// A libpq-style connection string. Never logged: it can carry a
+    /// password.
+    pub url: String,
+    /// `None` is allowed only for a loopback-only connection string.
+    pub tls: Option<TlsFiles>,
+}
+
+impl std::fmt::Debug for IncidentDatabase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncidentDatabase")
+            .field("url", &"<redacted>")
+            .field("tls", &self.tls)
+            .finish()
+    }
 }
 
 impl Config {
@@ -121,6 +151,18 @@ impl Config {
         )?;
         let detection_stale_secs =
             parse_u64_or_default(DETECTION_STALE_SECS_ENV_VAR, DEFAULT_DETECTION_STALE_SECS)?;
+        let incident_database = match env_value(INCIDENT_DATABASE_URL_ENV_VAR)? {
+            Some(url) if !url.trim().is_empty() => Some(IncidentDatabase {
+                url,
+                tls: TlsFiles::from_paths(
+                    env_value(INCIDENT_DATABASE_CA_FILE_ENV_VAR)?.map(PathBuf::from),
+                    env_value(INCIDENT_DATABASE_CLIENT_CERT_FILE_ENV_VAR)?.map(PathBuf::from),
+                    env_value(INCIDENT_DATABASE_CLIENT_KEY_FILE_ENV_VAR)?.map(PathBuf::from),
+                )
+                .map_err(|detail| ConfigError::Incomplete { detail })?,
+            }),
+            _ => None,
+        };
 
         Ok(Config {
             bind,
@@ -139,6 +181,7 @@ impl Config {
             detection_max_scopes,
             detection_event_buffer,
             detection_stale_secs,
+            incident_database,
         })
     }
 }
@@ -268,6 +311,8 @@ pub enum ConfigError {
         value: String,
         expected: &'static str,
     },
+    #[error("incomplete incident database TLS configuration: {detail}")]
+    Incomplete { detail: &'static str },
 }
 
 #[cfg(test)]
@@ -291,6 +336,10 @@ mod tests {
         INACTIVITY_TTL_SECS_ENV_VAR,
         SAMPLING_GLOBAL_DEFAULT_ENV_VAR,
         CLICKHOUSE_URL_ENV_VAR,
+        INCIDENT_DATABASE_URL_ENV_VAR,
+        INCIDENT_DATABASE_CA_FILE_ENV_VAR,
+        INCIDENT_DATABASE_CLIENT_CERT_FILE_ENV_VAR,
+        INCIDENT_DATABASE_CLIENT_KEY_FILE_ENV_VAR,
     ];
 
     fn clear_all() {
@@ -312,6 +361,30 @@ mod tests {
         assert!(config.local_prefixes.is_empty());
         assert_eq!(config.sampling_global_default, None);
         assert_eq!(config.clickhouse_url, None);
+        assert_eq!(config.incident_database, None);
+
+        clear_all();
+    }
+
+    #[test]
+    fn the_incident_database_is_read_redacted_and_checked() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_all();
+        std::env::set_var(INCIDENT_DATABASE_URL_ENV_VAR, "host=db password=hunter2");
+        std::env::set_var(INCIDENT_DATABASE_CA_FILE_ENV_VAR, "/etc/ca.pem");
+
+        let config = Config::from_env().unwrap();
+        let database = config.incident_database.clone().unwrap();
+        assert_eq!(database.url, "host=db password=hunter2");
+        assert_eq!(database.tls.unwrap().ca_file, PathBuf::from("/etc/ca.pem"));
+        assert!(!format!("{config:?}").contains("hunter2"));
+
+        // A client certificate without its key is refused, not ignored.
+        std::env::set_var(INCIDENT_DATABASE_CLIENT_CERT_FILE_ENV_VAR, "/etc/c.pem");
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::Incomplete { .. })
+        ));
 
         clear_all();
     }

@@ -17,6 +17,11 @@ wetechinetmon-classifier = { path = "../classifier" }
 wetechinetmon-aggregator = { path = "../aggregator" }
 wetechinetmon-detector = { path = "../detector" }
 wetechinetmon-storage = { path = "../storage" }
+# The incident inbox producer (ADR 0035, ADR 0036). Workspace crates and
+# workspace dependencies only; nothing new enters Cargo.lock.
+wetechinetmon-incident = { path = "../incident" }
+wetechinetmon-incident-postgres = { path = "../incident-postgres" }
+deadpool-postgres.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 prometheus.workspace = true
