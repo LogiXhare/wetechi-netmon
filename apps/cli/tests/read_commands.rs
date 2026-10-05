@@ -151,6 +151,7 @@ async fn cli(url: &str, line: &str) -> Outcome {
     let mut io = Io {
         out: &mut out,
         err: &mut err,
+        input: None,
         now_micros: NOW,
     };
     let code = run_with(&args, &env, &mut io, |client| client.without_backoff()).await;

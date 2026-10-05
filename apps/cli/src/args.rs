@@ -2,9 +2,9 @@
 //!
 //! `wetechinetmonctl [GLOBAL FLAGS] incidents <verb> [INCIDENT] [FLAGS]`.
 //! Flags may sit anywhere after the program name. An unknown flag, a
-//! missing value or a stray argument is a usage error, never ignored: a
-//! misspelled flag must fail loudly, not run a different command than the
-//! operator believes.
+//! missing value, a flag the verb does not take, or a stray argument is a
+//! usage error, never ignored: a misspelled flag must fail loudly, not run
+//! a different command than the operator believes.
 
 /// How results are printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,21 +35,6 @@ pub struct ListArgs {
     pub query: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Command {
-    Help,
-    Version,
-    List(ListArgs),
-    Show(IncidentRef),
-    /// A paged history, with `--limit` and `--cursor` passed through.
-    History {
-        kind: History,
-        incident: IncidentRef,
-        query: Vec<(String, String)>,
-    },
-    NoteList(IncidentRef),
-}
-
 /// The paged histories of one incident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum History {
@@ -66,6 +51,100 @@ impl History {
             History::Audit => "audit",
         }
     }
+}
+
+/// When a suppression ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Until {
+    /// RFC 3339 UTC, as given.
+    At(String),
+    /// From now.
+    For(std::time::Duration),
+}
+
+/// A change to one incident, mapped one-to-one to an API action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    Acknowledge,
+    Investigate,
+    Monitor,
+    Unassign,
+    Unsuppress,
+    Resolve {
+        note: Option<String>,
+    },
+    Close {
+        reason: String,
+        detail: Option<String>,
+    },
+    Reopen {
+        reason: String,
+    },
+    Suppress {
+        until: Until,
+        reason: String,
+    },
+    AssignUser(String),
+    AssignTeam(String),
+    Severity {
+        level: String,
+        reason: Option<String>,
+    },
+    Priority {
+        level: String,
+    },
+    Note {
+        body: String,
+    },
+}
+
+impl Action {
+    /// The API action path below `/incidents/{id}/`.
+    pub fn path(&self) -> &'static str {
+        match self {
+            Action::Acknowledge => "acknowledge",
+            Action::Investigate => "investigate",
+            Action::Monitor => "monitor",
+            Action::Unassign => "unassign",
+            Action::Unsuppress => "unsuppress",
+            Action::Resolve { .. } => "resolve",
+            Action::Close { .. } => "close",
+            Action::Reopen { .. } => "reopen",
+            Action::Suppress { .. } => "suppress",
+            Action::AssignUser(_) | Action::AssignTeam(_) => "assign",
+            Action::Severity { .. } => "severity",
+            Action::Priority { .. } => "priority",
+            Action::Note { .. } => "notes",
+        }
+    }
+
+    /// Whether the API needs `expected_version`. A note does not.
+    pub fn is_versioned(&self) -> bool {
+        !matches!(self, Action::Note { .. })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Command {
+    Help,
+    Version,
+    List(ListArgs),
+    Show(IncidentRef),
+    /// A paged history, with `--limit` and `--cursor` passed through.
+    History {
+        kind: History,
+        incident: IncidentRef,
+        query: Vec<(String, String)>,
+    },
+    NoteList(IncidentRef),
+    Change {
+        incident: IncidentRef,
+        action: Action,
+        /// Pins the version instead of reading it first.
+        expected_version: Option<u64>,
+        /// Answers the confirmation prompt in advance.
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +175,24 @@ Reading:
   incidents audit INCIDENT [--limit N] [--cursor C]
   incidents note list INCIDENT
 
+Changing (each reads the current version first unless --expected-version):
+  incidents acknowledge INCIDENT
+  incidents investigate INCIDENT
+  incidents monitor INCIDENT
+  incidents assign INCIDENT --user U | --team T
+  incidents unassign INCIDENT          (also: release)
+  incidents resolve INCIDENT [--note TEXT]
+  incidents close INCIDENT --reason R [--detail TEXT]          (confirms)
+  incidents reopen INCIDENT --reason TEXT                      (confirms)
+  incidents suppress INCIDENT (--until TIME | --for 2h) --reason TEXT  (confirms)
+  incidents unsuppress INCIDENT
+  incidents severity set INCIDENT LEVEL [--reason TEXT]   (confirms when lowering)
+  incidents priority set INCIDENT LEVEL
+  incidents note add INCIDENT --message TEXT
+
+  --yes answers a confirmation in advance; without a terminal it is required.
+  --expected-version N pins the version instead of reading it.
+
 INCIDENT is an incident id or number, such as WNM-2026-000123.
 --state, --severity and --priority repeat, or take a comma-separated list.
 
@@ -103,25 +200,122 @@ Credentials are never flags. Set WETECHINETMON_API_TOKEN, or a profile in
 the config file (WETECHINETMON_CONFIG). See apps/cli/README.md.
 ";
 
-/// Flags that take a value, and the `list` query parameter each becomes.
-const LIST_FLAGS: &[(&str, &str, bool)] = &[
-    // (flag, query parameter, may repeat as a comma-separated list)
-    ("--state", "state", true),
-    ("--severity", "severity", true),
-    ("--priority", "priority", true),
-    ("--direction", "direction", false),
-    ("--target-type", "target_type", false),
-    ("--sort", "sort", false),
-    ("--order", "order", false),
-    ("--limit", "limit", false),
-    ("--cursor", "cursor", false),
-    ("--opened-from", "opened_from", false),
-    ("--opened-to", "opened_to", false),
+/// Every flag that takes a value, as `(flag, name)`. Which verb accepts
+/// which is decided after parsing.
+const VALUE_FLAGS: &[(&str, &str)] = &[
+    ("--state", "state"),
+    ("--severity", "severity"),
+    ("--priority", "priority"),
+    ("--direction", "direction"),
+    ("--target-type", "target_type"),
+    ("--sort", "sort"),
+    ("--order", "order"),
+    ("--limit", "limit"),
+    ("--cursor", "cursor"),
+    ("--opened-from", "opened_from"),
+    ("--opened-to", "opened_to"),
+    ("--expected-version", "expected_version"),
+    ("--note", "note"),
+    ("--reason", "reason"),
+    ("--detail", "detail"),
+    ("--until", "until"),
+    ("--for", "for"),
+    ("--user", "user"),
+    ("--team", "team"),
+    ("--message", "message"),
+];
+
+/// `list` flags that may repeat or take a comma-separated list.
+const LIST_REPEATING: &[&str] = &["state", "severity", "priority"];
+const LIST_FLAGS: &[&str] = &[
+    "state",
+    "severity",
+    "priority",
+    "direction",
+    "target_type",
+    "sort",
+    "order",
+    "limit",
+    "cursor",
+    "opened_from",
+    "opened_to",
 ];
 
 /// Names that look like credentials. Refused with a pointer to the
 /// environment, because flags land in shell history.
 const CREDENTIAL_FLAGS: &[&str] = &["--token", "--api-token", "--password", "--secret"];
+
+/// Flags the verb has not consumed yet.
+struct Flags {
+    values: Vec<(String, String)>,
+    yes: bool,
+}
+
+impl Flags {
+    /// The one value of `name`, if given; twice is an error.
+    fn take(&mut self, name: &str) -> Result<Option<String>, UsageError> {
+        let mut found = None;
+        let mut index = 0;
+        while index < self.values.len() {
+            if self.values[index].0 == name {
+                let (_, value) = self.values.remove(index);
+                if found.replace(value).is_some() {
+                    return Err(usage(format!("--{} may be given once", flag(name))));
+                }
+            } else {
+                index += 1;
+            }
+        }
+        Ok(found)
+    }
+
+    fn require(&mut self, name: &str, verb: &str) -> Result<String, UsageError> {
+        self.take(name)?
+            .ok_or_else(|| usage(format!("incidents {verb} needs --{}", flag(name))))
+    }
+
+    /// Refuses whatever the verb did not consume.
+    fn finish(self, verb: &str, allows_yes: bool) -> Result<bool, UsageError> {
+        if let Some((name, _)) = self.values.first() {
+            return Err(usage(format!(
+                "--{} does not apply to incidents {verb}",
+                flag(name)
+            )));
+        }
+        if self.yes && !allows_yes {
+            return Err(usage(format!("--yes does not apply to incidents {verb}")));
+        }
+        Ok(self.yes)
+    }
+}
+
+fn flag(name: &str) -> String {
+    name.replace('_', "-")
+}
+
+/// `2h`, `30m`, `1d`, `90s`: a whole number and a unit.
+fn duration(text: &str) -> Result<std::time::Duration, UsageError> {
+    let invalid = || {
+        usage(format!(
+            "--for {text:?}: use a number and s, m, h or d, such as 2h"
+        ))
+    };
+    let unit = text.chars().last().ok_or_else(invalid)?;
+    let number: u64 = text[..text.len() - unit.len_utf8()]
+        .parse()
+        .map_err(|_| invalid())?;
+    let seconds = match unit {
+        's' => number,
+        'm' => number.checked_mul(60).ok_or_else(invalid)?,
+        'h' => number.checked_mul(3_600).ok_or_else(invalid)?,
+        'd' => number.checked_mul(86_400).ok_or_else(invalid)?,
+        _ => return Err(invalid()),
+    };
+    if seconds == 0 {
+        return Err(invalid());
+    }
+    Ok(std::time::Duration::from_secs(seconds))
+}
 
 pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut global = Global {
@@ -129,7 +323,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         profile: None,
     };
     let mut words: Vec<String> = Vec::new();
-    let mut flags: Vec<(String, String)> = Vec::new();
+    let mut flags = Flags {
+        values: Vec::new(),
+        yes: false,
+    };
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let (name, inline) = match arg.split_once('=') {
@@ -164,6 +361,12 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     command: Command::Version,
                 })
             }
+            "-y" | "--yes" => {
+                if inline.is_some() {
+                    return Err(usage("--yes takes no value"));
+                }
+                flags.yes = true;
+            }
             "-o" | "--output" => {
                 global.output = match value(name)?.as_str() {
                     "table" => Output::Table,
@@ -178,10 +381,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             }
             "--profile" => global.profile = Some(value(name)?),
             flag if flag.starts_with('-') && flag != "-" => {
-                let Some((_, query, _)) = LIST_FLAGS.iter().find(|(f, _, _)| *f == flag) else {
+                let Some((_, key)) = VALUE_FLAGS.iter().find(|(f, _)| *f == flag) else {
                     return Err(usage(format!("unknown flag {flag}")));
                 };
-                flags.push(((*query).to_string(), value(name)?));
+                flags.values.push(((*key).to_string(), value(name)?));
             }
             word => {
                 if inline.is_some() {
@@ -193,13 +396,20 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     }
 
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let reference = |id: &&str| IncidentRef((*id).to_string());
     let command = match words.as_slice() {
-        [] => Command::Help,
+        [] => {
+            flags.finish("", false)?;
+            Command::Help
+        }
         ["incidents", "list"] => {
             let mut query = Vec::new();
-            for (name, value) in flags.drain(..) {
-                let repeats = LIST_FLAGS.iter().any(|(_, q, r)| *q == name && *r);
-                if repeats {
+            for (name, value) in std::mem::take(&mut flags.values) {
+                if !LIST_FLAGS.contains(&name.as_str()) {
+                    flags.values.push((name, value));
+                    continue;
+                }
+                if LIST_REPEATING.contains(&name.as_str()) {
                     for one in value.split(',').filter(|v| !v.is_empty()) {
                         query.push((name.clone(), one.to_string()));
                     }
@@ -207,9 +417,13 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     query.push((name, value));
                 }
             }
+            flags.finish("list", false)?;
             Command::List(ListArgs { query })
         }
-        ["incidents", "show", id] => Command::Show(IncidentRef((*id).to_string())),
+        ["incidents", "show", id] => {
+            flags.finish("show", false)?;
+            Command::Show(reference(id))
+        }
         ["incidents", verb @ ("timeline" | "detections" | "audit"), id] => {
             let kind = match *verb {
                 "timeline" => History::Timeline,
@@ -217,22 +431,84 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 _ => History::Audit,
             };
             let mut query = Vec::new();
-            for (name, value) in std::mem::take(&mut flags) {
-                if name != "limit" && name != "cursor" {
-                    return Err(usage(format!(
-                        "--{} does not apply to incidents {verb}",
-                        name.replace('_', "-")
-                    )));
+            for name in ["limit", "cursor"] {
+                if let Some(value) = flags.take(name)? {
+                    query.push((name.to_string(), value));
                 }
-                query.push((name, value));
             }
+            flags.finish(verb, false)?;
             Command::History {
                 kind,
-                incident: IncidentRef((*id).to_string()),
+                incident: reference(id),
                 query,
             }
         }
-        ["incidents", "note", "list", id] => Command::NoteList(IncidentRef((*id).to_string())),
+        ["incidents", "note", "list", id] => {
+            flags.finish("note list", false)?;
+            Command::NoteList(reference(id))
+        }
+        ["incidents", "note", "add", id] => {
+            let body = flags.require("message", "note add")?;
+            change(flags, "note add", reference(id), Action::Note { body })?
+        }
+        ["incidents", "severity", "set", id, level] => {
+            let reason = flags.take("reason")?;
+            let action = Action::Severity {
+                level: (*level).to_string(),
+                reason,
+            };
+            change(flags, "severity set", reference(id), action)?
+        }
+        ["incidents", "priority", "set", id, level] => {
+            let action = Action::Priority {
+                level: (*level).to_string(),
+            };
+            change(flags, "priority set", reference(id), action)?
+        }
+        ["incidents", verb, id] if is_change_verb(verb) => {
+            let action = match *verb {
+                "acknowledge" => Action::Acknowledge,
+                "investigate" => Action::Investigate,
+                "monitor" => Action::Monitor,
+                "unassign" | "release" => Action::Unassign,
+                "unsuppress" => Action::Unsuppress,
+                "resolve" => Action::Resolve {
+                    note: flags.take("note")?,
+                },
+                "close" => Action::Close {
+                    reason: flags.require("reason", verb)?,
+                    detail: flags.take("detail")?,
+                },
+                "reopen" => Action::Reopen {
+                    reason: flags.require("reason", verb)?,
+                },
+                "suppress" => {
+                    let until = match (flags.take("until")?, flags.take("for")?) {
+                        (Some(at), None) => Until::At(at),
+                        (None, Some(text)) => Until::For(duration(&text)?),
+                        _ => {
+                            return Err(usage(
+                                "incidents suppress needs exactly one of --until and --for",
+                            ))
+                        }
+                    };
+                    Action::Suppress {
+                        until,
+                        reason: flags.require("reason", verb)?,
+                    }
+                }
+                _ => match (flags.take("user")?, flags.take("team")?) {
+                    (Some(user), None) => Action::AssignUser(user),
+                    (None, Some(team)) => Action::AssignTeam(team),
+                    _ => {
+                        return Err(usage(
+                            "incidents assign needs exactly one of --user and --team",
+                        ))
+                    }
+                },
+            };
+            change(flags, verb, reference(id), action)?
+        }
         ["incidents"] => return Err(usage("incidents needs a verb; see --help")),
         ["incidents", verb, ..] => {
             return Err(usage(format!(
@@ -241,13 +517,53 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         }
         [other, ..] => return Err(usage(format!("unknown command {other}; see --help"))),
     };
-    if let Some((name, _)) = flags.first() {
-        return Err(usage(format!(
-            "--{} only applies to incidents list",
-            name.replace('_', "-")
-        )));
-    }
     Ok(Invocation { global, command })
+}
+
+fn is_change_verb(verb: &str) -> bool {
+    matches!(
+        verb,
+        "acknowledge"
+            | "investigate"
+            | "monitor"
+            | "unassign"
+            | "release"
+            | "unsuppress"
+            | "resolve"
+            | "close"
+            | "reopen"
+            | "suppress"
+            | "assign"
+    )
+}
+
+/// A change command: takes `--expected-version` (not for a note) and
+/// `--yes`, and refuses any other leftover flag.
+fn change(
+    mut flags: Flags,
+    verb: &str,
+    incident: IncidentRef,
+    action: Action,
+) -> Result<Command, UsageError> {
+    let expected_version = match flags.take("expected_version")? {
+        Some(_) if !action.is_versioned() => {
+            return Err(usage(format!(
+                "--expected-version does not apply to incidents {verb}"
+            )))
+        }
+        Some(text) => Some(
+            text.parse()
+                .map_err(|_| usage("--expected-version is a whole number"))?,
+        ),
+        None => None,
+    };
+    let yes = flags.finish(verb, true)?;
+    Ok(Command::Change {
+        incident,
+        action,
+        expected_version,
+        yes,
+    })
 }
 
 #[cfg(test)]
@@ -261,6 +577,13 @@ mod tests {
 
     fn reference(id: &str) -> IncidentRef {
         IncidentRef(id.to_string())
+    }
+
+    fn action(line: &str) -> Action {
+        match run(line).unwrap().command {
+            Command::Change { action, .. } => action,
+            other => panic!("{line}: not a change: {other:?}"),
+        }
     }
 
     #[test]
@@ -305,9 +628,94 @@ mod tests {
     }
 
     #[test]
+    fn every_change_verb_parses() {
+        assert_eq!(action("incidents acknowledge X"), Action::Acknowledge);
+        assert_eq!(action("incidents investigate X"), Action::Investigate);
+        assert_eq!(action("incidents monitor X"), Action::Monitor);
+        assert_eq!(action("incidents release X"), Action::Unassign);
+        assert_eq!(action("incidents unassign X"), Action::Unassign);
+        assert_eq!(action("incidents unsuppress X"), Action::Unsuppress);
+        assert_eq!(
+            action("incidents resolve X --note done"),
+            Action::Resolve {
+                note: Some("done".into())
+            }
+        );
+        assert_eq!(
+            action("incidents close X --reason false_positive --yes"),
+            Action::Close {
+                reason: "false_positive".into(),
+                detail: None
+            }
+        );
+        assert_eq!(
+            action("incidents reopen X --reason recurred"),
+            Action::Reopen {
+                reason: "recurred".into()
+            }
+        );
+        assert_eq!(
+            action("incidents suppress X --for 2h --reason backup"),
+            Action::Suppress {
+                until: Until::For(std::time::Duration::from_secs(7_200)),
+                reason: "backup".into()
+            }
+        );
+        assert_eq!(
+            action("incidents suppress X --until 2026-10-06T00:00:00Z --reason backup"),
+            Action::Suppress {
+                until: Until::At("2026-10-06T00:00:00Z".into()),
+                reason: "backup".into()
+            }
+        );
+        assert_eq!(
+            action("incidents assign X --user u_1"),
+            Action::AssignUser("u_1".into())
+        );
+        assert_eq!(
+            action("incidents assign X --team noc"),
+            Action::AssignTeam("noc".into())
+        );
+        assert_eq!(
+            action("incidents severity set X minor --reason=subsided"),
+            Action::Severity {
+                level: "minor".into(),
+                reason: Some("subsided".into())
+            }
+        );
+        assert_eq!(
+            action("incidents priority set X P3"),
+            Action::Priority { level: "P3".into() }
+        );
+        assert_eq!(
+            action("incidents note add X --message hello"),
+            Action::Note {
+                body: "hello".into()
+            }
+        );
+    }
+
+    #[test]
+    fn version_and_confirmation_flags_reach_the_command() {
+        let Command::Change {
+            expected_version,
+            yes,
+            ..
+        } = run("incidents close X --reason resolved --expected-version 8 -y")
+            .unwrap()
+            .command
+        else {
+            panic!("not a change")
+        };
+        assert_eq!((expected_version, yes), (Some(8), true));
+    }
+
+    #[test]
     fn list_flags_become_query_pairs_and_lists_split() {
-        let parsed = run("incidents list --state open,acknowledged --state resolved --severity=critical --limit 5")
-            .unwrap();
+        let parsed = run(
+            "incidents list --state open,acknowledged --state resolved --severity=critical --limit 5",
+        )
+        .unwrap();
         let Command::List(list) = parsed.command else {
             panic!("not a list")
         };
@@ -352,6 +760,21 @@ mod tests {
             "incidents timeline X --state open",
             "incidents list --limit",
             "-o yaml incidents list",
+            "incidents list --yes",
+            "incidents close X",
+            "incidents close X --reason a --reason b",
+            "incidents acknowledge X --reason why",
+            "incidents assign X",
+            "incidents assign X --user a --team b",
+            "incidents suppress X --reason r",
+            "incidents suppress X --for 2h --until 2026-10-06T00:00:00Z --reason r",
+            "incidents suppress X --for 2w --reason r",
+            "incidents suppress X --for 0h --reason r",
+            "incidents acknowledge X --expected-version six",
+            "incidents note add X --message m --expected-version 3",
+            "incidents note add X",
+            "incidents severity set X",
+            "incidents --yes=true acknowledge X",
         ] {
             assert!(run(line).is_err(), "{line} should be refused");
         }

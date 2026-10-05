@@ -422,7 +422,14 @@ across retries.
 - credentials never accepted as flags, and plaintext only to loopback;
 - an incident number resolved through the API's new exact `incident_number` filter.
 
-The RFC 3339 helpers moved to `wetechinetmon_common::rfc3339`, so the API and the CLI share them. Next: the commands that change incidents, with confirmations and idempotency keys reused across retries.
+The RFC 3339 helpers moved to `wetechinetmon_common::rfc3339`, so the API and the CLI share them. 5E-2 adds the commands that change an incident: every transition, assignment, severity, priority and notes. Each change:
+
+- reads the version first, unless `--expected-version` pins it;
+- sends one UUIDv7 `Idempotency-Key`, reused on every retry;
+- asks before closing, reopening, suppressing and lowering severity. With no terminal and no `--yes`, that is an error and nothing is sent;
+- exits `4` on a `409`, showing the current version and state, without re-issuing.
+
+Next: `claim`, which needs the caller's identity, `export`, and opening an incident.
 
 Tests: output formats; exit codes per error class; confirmation required
 without `--yes`; **no TTY plus no `--yes` is an error, never an assumed
