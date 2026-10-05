@@ -62,7 +62,7 @@ jobs:
             echo "- PostgreSQL: \`postgres:17-alpine\` service container, default settings, data on the runner's disk"
             echo "- Commit: \`$GITHUB_SHA\`"
             echo
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Build (release)
         run: cargo test --release -p wetechinetmon-incident-postgres --test benchmark --no-run
       - name: Benchmark
