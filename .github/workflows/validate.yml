@@ -164,6 +164,16 @@ jobs:
             echo "A PostgreSQL test skipped even though the service container is up — failing."
             exit 1
           fi
+      # NFR-2: an untested restore is not a backup. A real pg_dump of a
+      # seeded database is restored into a fresh one, compared row for row,
+      # and proven to work. The tools run inside the service container so
+      # they match the server version under test.
+      - name: Backup and restore drill
+        env:
+          WETECHINETMON_INCIDENT_POSTGRES_TEST_URL: "host=127.0.0.1 port=55432 user=wetechinetmon_test password=wetechinetmon_test_only dbname=wetechinetmon_incident_test"
+          DRILL_PG_TOOL: docker exec -i ${{ job.services.postgres.id }}
+          DRILL_WORK_DIR: ${{ runner.temp }}/backup-drill
+        run: bash scripts/postgres-backup-restore-drill.sh
 
   docs:
     name: Docs (Markdown, YAML, links, MkDocs)
