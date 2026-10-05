@@ -1,7 +1,18 @@
 # Incident Observability
 
-Status: **Planning only.** Part of the
+Status: **Planning, partly implemented.** Part of the
 [Phase 5 plan](phase5-incident-management-plan.md).
+
+**Implemented so far (Milestone 5C, [ADR 0036](decisions/0036-phase5c-incident-manager-process.md)):**
+the incident manager serves `inbox_pending`, `outbox_pending` and
+`dead_letter_pending`; `inbox_events_total{result}` and
+`inbox_batches_total{result}` for the correlation worker (the
+per-outcome `events_ingested_total` is FU-52); `clock_skew_total`
+(ADR 0031); `maintenance_transitions_total{transition}` and
+`maintenance_incident_failures_total` for the timers;
+`retention_deleted_total{table}`; and `job_runs_total{job,result}`. Every
+label value is on the allowlist in `crates/incident-manager/src/metrics.rs`,
+which a test enforces. The rest of this page is still the plan.
 
 ## Metrics
 
@@ -43,6 +54,7 @@ established and that Phase 4's `wetechinetmon_detector_*` follows.
 | `wetechinetmon_incidents_unassigned` | `severity` |
 | `wetechinetmon_incident_outbox_pending` | — |
 | `wetechinetmon_incident_dead_letter_pending` | — |
+| `wetechinetmon_incident_inbox_pending` | — |
 | `wetechinetmon_incident_timeline_pressure` | — |
 | `wetechinetmon_incident_oldest_unacknowledged_seconds` | `severity` |
 

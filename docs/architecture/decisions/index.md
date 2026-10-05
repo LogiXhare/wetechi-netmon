@@ -77,3 +77,4 @@ yet:
 | [0033](0033-phase5b-transactional-outbox-and-dead-letter.md) | Phase 5B Transactional Outbox and Dead-Letter Design | Accepted |
 | [0034](0034-phase5b-persistence-bridge-load-run-flush.md) | Phase 5B Persistence Bridge: Load, Run, Flush | Accepted |
 | [0035](0035-phase5c-detection-event-inbox.md) | Phase 5C Detection-Event Inbox | Accepted |
+| [0036](0036-phase5c-incident-manager-process.md) | Phase 5C Incident Manager Process | Accepted |

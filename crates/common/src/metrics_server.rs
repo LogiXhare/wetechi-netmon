@@ -1,7 +1,8 @@
 //! A minimal `/metrics` HTTP endpoint for Prometheus scraping.
 //!
+//! Shared by every service binary (the collector, the incident manager).
 //! Deliberately hand-rolled instead of pulling in a full HTTP framework
-//! (axum/hyper): the collector only needs to serve one static-ish
+//! (axum/hyper): a service only needs to serve one static-ish
 //! response body on one path, so a framework would be dependency weight
 //! without a matching benefit at this phase. If the API/web crates need
 //! a real HTTP framework later, that's evaluated on its own merits then
@@ -93,13 +94,14 @@ fn not_found_response() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics::Metrics;
     use tokio::net::TcpStream;
 
     #[tokio::test]
     async fn serves_metrics_on_the_metrics_path() {
-        let (metrics, registry) = Metrics::new().unwrap();
-        metrics.datagrams_received_total.inc();
+        let registry = Registry::new();
+        let counter = prometheus::IntCounter::new("example_total", "An example.").unwrap();
+        registry.register(Box::new(counter.clone())).unwrap();
+        counter.inc();
         let registry = Arc::new(registry);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -118,13 +120,12 @@ mod tests {
         client.read_to_string(&mut response).await.unwrap();
 
         assert!(response.starts_with("HTTP/1.1 200 OK"));
-        assert!(response.contains("wetechinetmon_collector_flow_datagrams_received_total 1"));
+        assert!(response.contains("example_total 1"));
     }
 
     #[tokio::test]
     async fn returns_404_for_other_paths() {
-        let (_metrics, registry) = Metrics::new().unwrap();
-        let registry = Arc::new(registry);
+        let registry = Arc::new(Registry::new());
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

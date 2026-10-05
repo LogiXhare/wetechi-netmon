@@ -61,6 +61,10 @@ pub struct BatchReport {
     pub dead_lettered: usize,
     /// Rows whose lease another worker took over before this one finished.
     pub lease_lost: usize,
+    /// Events the domain refused on clock skew (ADR 0031). They are also
+    /// counted as retrying or dead-lettered; this count makes recurring
+    /// skew visible.
+    pub clock_skew: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,7 +371,12 @@ impl InboxWorker {
                             }
                             continue;
                         }
-                        Ok(Err(domain)) => format!("{}: {domain}", domain.code()),
+                        Ok(Err(domain)) => {
+                            if matches!(domain, IncidentError::ClockSkew { .. }) {
+                                report.clock_skew += 1;
+                            }
+                            format!("{}: {domain}", domain.code())
+                        }
                         Err(persist) => format!("incident.persistence: {persist}"),
                     }
                 }
@@ -398,6 +407,20 @@ impl InboxWorker {
         idle_wait: Duration,
         shutdown: impl Future<Output = ()>,
     ) -> WorkerReport {
+        self.run_observed(service, pool, idle_wait, shutdown, |_| {})
+            .await
+    }
+
+    /// [`Self::run`], calling `observe` after every batch, so a service can
+    /// count and log each one as it happens.
+    pub async fn run_observed(
+        &self,
+        service: &IncidentPersistence,
+        pool: &Pool,
+        idle_wait: Duration,
+        shutdown: impl Future<Output = ()>,
+        mut observe: impl FnMut(Result<&BatchReport, &PersistError>),
+    ) -> WorkerReport {
         let mut report = WorkerReport::default();
         let mut failures: u32 = 0;
         tokio::pin!(shutdown);
@@ -406,6 +429,7 @@ impl InboxWorker {
                 Ok(mut client) => self.process_batch(service, &mut client).await,
                 Err(error) => Err(error),
             };
+            observe(outcome.as_ref());
             let wait = match outcome {
                 Ok(batch) => {
                     failures = 0;
@@ -414,6 +438,7 @@ impl InboxWorker {
                     report.retrying += batch.retrying;
                     report.dead_lettered += batch.dead_lettered;
                     report.lease_lost += batch.lease_lost;
+                    report.clock_skew += batch.clock_skew;
                     if batch.claimed > 0 {
                         Duration::ZERO
                     } else {
@@ -447,6 +472,7 @@ pub struct WorkerReport {
     pub retrying: usize,
     pub dead_lettered: usize,
     pub lease_lost: usize,
+    pub clock_skew: usize,
 }
 
 fn count(report: &mut BatchReport, outcome: FailureOutcome) {

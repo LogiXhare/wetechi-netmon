@@ -19,9 +19,11 @@ pub mod config;
 pub mod detection;
 pub mod exporter;
 pub mod metrics;
-pub mod metrics_server;
 pub mod normalize;
 pub mod pipeline;
+
+/// Kept at its old path; the endpoint now lives in `wetechinetmon-common`.
+pub use wetechinetmon_common::metrics_server;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

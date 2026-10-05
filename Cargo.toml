@@ -8,6 +8,7 @@ members = [
     "crates/detector",
     "crates/incident",
     "crates/incident-postgres",
+    "crates/incident-manager",
     "crates/storage",
     "crates/collector",
     "tools/flow-replay",

@@ -11,7 +11,7 @@ name = "wetechinetmon-collector"
 path = "src/main.rs"
 
 [dependencies]
-wetechinetmon-common = { path = "../common" }
+wetechinetmon-common = { path = "../common", features = ["metrics-server"] }
 wetechinetmon-protocol-ipfix = { path = "../protocol-ipfix" }
 wetechinetmon-classifier = { path = "../classifier" }
 wetechinetmon-aggregator = { path = "../aggregator" }

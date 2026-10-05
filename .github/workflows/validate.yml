@@ -159,7 +159,7 @@ jobs:
           WETECHINETMON_INCIDENT_POSTGRES_TEST_URL: "host=127.0.0.1 port=55432 user=wetechinetmon_test password=wetechinetmon_test_only dbname=wetechinetmon_incident_test"
         run: |
           set -euo pipefail
-          cargo test -p wetechinetmon-incident-postgres -- --nocapture 2>&1 | tee pg-test.log
+          cargo test -p wetechinetmon-incident-postgres -p wetechinetmon-incident-manager -- --nocapture 2>&1 | tee pg-test.log
           if grep -qE "skipping [a-z_]+: WETECHINETMON_[A-Z_]+ is not set" pg-test.log; then
             echo "A PostgreSQL test skipped even though the service container is up — failing."
             exit 1
