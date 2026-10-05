@@ -194,6 +194,17 @@ impl From<&IncidentError> for Problem {
             (ErrorCode::ValidationFailed, E::ValidationError(detail)) => {
                 problem.with_detail(detail.clone())
             }
+            (
+                ErrorCode::VersionConflict,
+                E::VersionConflict {
+                    expected,
+                    current,
+                    current_state,
+                },
+            ) => problem
+                .with("expected_version", *expected)
+                .with("current_version", *current)
+                .with("current_state", current_state.as_str()),
             (ErrorCode::ClockSkew, _) => problem.retry_after(1),
             _ => problem,
         }
