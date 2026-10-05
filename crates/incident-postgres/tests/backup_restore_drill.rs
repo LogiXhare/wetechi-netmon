@@ -308,7 +308,10 @@ async fn drill_verify() {
     .ingest_detection_event(
         &mut client,
         &AuthorizationContext::correlator(TenantId::new(scope.tenant)),
-        &event(&scope, 1, EventKind::Started, "p-opening", MetricKind::Bps),
+        &in_episode(
+            event(&scope, 1, EventKind::Started, "p-opening", MetricKind::Bps),
+            "det-new-target",
+        ),
     )
     .await
     .expect("committed")

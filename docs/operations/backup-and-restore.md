@@ -117,7 +117,7 @@ wetechinetmonctl incidents audit <incident>     # the audit trail reaches back a
 
 ## The drill CI runs
 
-[`scripts/postgres-backup-restore-drill.sh`](https://github.com/LogiXhare/wetechi-netmon/blob/main/scripts/postgres-backup-restore-drill.sh)
+`scripts/postgres-backup-restore-drill.sh`
 runs in the PostgreSQL job on 15, 16, 17 and 18, in five steps:
 
 1. **Seed.** `drill_seed` fills a database through the service. It
