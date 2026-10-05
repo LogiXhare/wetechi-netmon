@@ -38,6 +38,7 @@ status.
 | `incident.state_unchanged` | 409 | The command would not change anything. |
 | `incident.clock_skew` | 503 | The decision time ran backward ([ADR 0031](../architecture/decisions/0031-phase5b-durable-time.md)). Retry. |
 | `incident.correlation_conflict` | 409 | The correlation key conflicts with an existing incident. |
+| `incident.customer_visible_unsupported` | 501 | A customer-visible note was asked for. Phase 5 keeps every note internal. |
 
 The `type` member is `https://wetechi.com/probs/` followed by the code,
 with `.` and `_` written as `-`, for example

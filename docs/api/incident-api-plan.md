@@ -181,6 +181,7 @@ suppression is how a real attack gets missed.
 - **The acknowledge `note` is not taken yet.** The domain command has no note, so the field is refused as unknown rather than dropped (FU-55).
 - **A suppression ends at most 30 days ahead.** `expires_at` must be in the future and no further away than that. Otherwise the request is refused with `422 incident.validation_failed`.
 - **A transition answers with the incident as it now is.** On a replay, that is the current incident, not a stored copy of the first answer.
+- **A note answers `201` with the incident.** The domain numbers notes by position, so the response does not identify the note. `GET .../notes` lists them.
 - **A version conflict carries extension members.** It includes `expected_version`, `current_version` and `current_state`.
 
 ## Draft OpenAPI

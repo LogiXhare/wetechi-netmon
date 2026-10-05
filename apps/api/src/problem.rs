@@ -77,6 +77,7 @@ error_codes! {
     StateUnchanged => ("incident.state_unchanged", 409, "State unchanged"),
     ClockSkew => ("incident.clock_skew", 503, "Clock skew; retry"),
     CorrelationConflict => ("incident.correlation_conflict", 409, "Correlation conflict"),
+    CustomerVisibleUnsupported => ("incident.customer_visible_unsupported", 501, "Customer-visible notes are not available"),
 }
 
 impl ErrorCode {

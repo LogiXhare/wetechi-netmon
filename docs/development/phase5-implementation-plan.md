@@ -381,7 +381,9 @@ The transitions are twelve `POST` actions (5D-6), from `acknowledge` to `priorit
 
 A stale version names the current version and state. A suppression is bounded at 30 days. The acknowledge `note` waits on the domain (FU-55).
 
-Next: notes, manual creation, tags and export.
+Adding a note is `POST .../notes` (5D-7). It needs no version, because notes are append-only, and the key is optional. A customer-visible note is refused with `501`.
+
+Next: manual creation, tags and export, which need domain and authorization decisions first.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
