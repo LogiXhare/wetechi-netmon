@@ -12,6 +12,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod history;
 pub mod incidents;
 pub mod list;
 pub mod openapi;
@@ -72,6 +73,13 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/incidents", get(list::list_incidents))
         .route("/incidents/{incident_id}", get(incidents::get_incident))
+        .route("/incidents/{incident_id}/timeline", get(history::timeline))
+        .route("/incidents/{incident_id}/notes", get(history::notes))
+        .route(
+            "/incidents/{incident_id}/detections",
+            get(history::detections),
+        )
+        .route("/incidents/{incident_id}/audit", get(history::audit))
         .route_layer(axum::middleware::from_fn_with_state(
             state.auth.clone(),
             auth::require_principal,
