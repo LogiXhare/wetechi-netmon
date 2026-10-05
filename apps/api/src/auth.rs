@@ -19,7 +19,7 @@
 //!   table's CHECK constraint.
 
 use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
@@ -223,8 +223,8 @@ pub async fn require_principal(
     // caller shares one bucket, which only ever makes limiting stricter.
     let source = request
         .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| info.0.ip())
+        .get::<ConnectInfo<crate::server::PeerAddr>>()
+        .map(|info| info.0 .0.ip())
         .unwrap_or(IpAddr::from([0, 0, 0, 0]));
     let now = Instant::now();
     if let Err(refusal) = auth.failures.peek(&source, now) {

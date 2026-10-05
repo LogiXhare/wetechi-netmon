@@ -2245,6 +2245,7 @@ dependencies = [
  "utoipa",
  "uuid",
  "wetechinetmon-common",
+ "wetechinetmon-detector",
  "wetechinetmon-incident",
  "wetechinetmon-incident-postgres",
 ]

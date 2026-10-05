@@ -10,6 +10,103 @@
     "version": "0.0.0"
   },
   "paths": {
+    "/api/v1/incidents/{incident_id}": {
+      "get": {
+        "tags": [
+          "incidents"
+        ],
+        "summary": "One incident.",
+        "operationId": "get_incident",
+        "parameters": [
+          {
+            "name": "incident_id",
+            "in": "path",
+            "description": "The incident's UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The incident",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The id is not a UUID",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No usable token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role lacks incident.read",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such incident in the caller's tenant",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unreachable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -77,6 +174,236 @@
           }
         }
       },
+      "IncidentView": {
+        "type": "object",
+        "description": "One incident, as `GET /api/v1/incidents/{id}` returns it.",
+        "required": [
+          "incident_id",
+          "incident_number",
+          "schema_version",
+          "tenant_id",
+          "title",
+          "state",
+          "severity",
+          "severity_source",
+          "maximum_detected_severity",
+          "priority",
+          "category",
+          "direction",
+          "address_family",
+          "target_type",
+          "target_id",
+          "correlation_key",
+          "first_detected_at",
+          "opened_at",
+          "last_detected_at",
+          "last_updated_at",
+          "reopen_count",
+          "policy_refs",
+          "policy_refs_omitted",
+          "tags",
+          "mitigation_status",
+          "notification_status",
+          "version",
+          "created_by",
+          "updated_by"
+        ],
+        "properties": {
+          "acknowledged_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address_family": {
+            "type": "integer",
+            "format": "int32",
+            "description": "4 or 6."
+          },
+          "assigned_team_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assigned_user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closure_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "correlation_key": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "type": "string",
+            "description": "incoming, outgoing, internal."
+          },
+          "first_detected_at": {
+            "type": "string"
+          },
+          "incident_id": {
+            "type": "string"
+          },
+          "incident_number": {
+            "type": "string",
+            "description": "Per tenant and year, for example `WNM-2026-000123`."
+          },
+          "last_detected_at": {
+            "type": "string"
+          },
+          "last_updated_at": {
+            "type": "string"
+          },
+          "maximum_detected_severity": {
+            "type": "string"
+          },
+          "mitigation_status": {
+            "type": "string",
+            "description": "Always `none` in Phase 5: nothing is ever mitigated."
+          },
+          "notification_status": {
+            "type": "string",
+            "description": "Always `none` in Phase 5: nothing is ever notified."
+          },
+          "opened_at": {
+            "type": "string"
+          },
+          "policy_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyRefView"
+            }
+          },
+          "policy_refs_omitted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Linked events whose policy was not recorded because the list is full."
+          },
+          "priority": {
+            "type": "string",
+            "description": "P1 to P4."
+          },
+          "recovering_since": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reopen_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reopened_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "severity": {
+            "type": "string",
+            "description": "info, minor, major, critical."
+          },
+          "severity_source": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "open, acknowledged, investigating, monitoring, recovering, resolved, closed."
+          },
+          "suppression": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SuppressionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_type": {
+            "type": "string",
+            "description": "host, network, hostgroup."
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "For `expected_version` on transitions."
+          }
+        }
+      },
+      "PolicyRefView": {
+        "type": "object",
+        "description": "A detection policy that contributed to the incident.",
+        "required": [
+          "policy_id",
+          "policy_version"
+        ],
+        "properties": {
+          "policy_id": {
+            "type": "string"
+          },
+          "policy_version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "ProblemDocument": {
         "type": "object",
         "description": "RFC 9457 problem details, as every error response carries them.",
@@ -112,6 +439,33 @@
             "description": "`https://wetechi.com/probs/` and the code, as an identifier."
           }
         }
+      },
+      "SuppressionView": {
+        "type": "object",
+        "description": "An active suppression.",
+        "required": [
+          "until",
+          "reason",
+          "by"
+        ],
+        "properties": {
+          "by": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API token, `wnm_` and 64 hex characters, from `wetechinetmon-api token create`."
       }
     }
   },
@@ -119,6 +473,10 @@
     {
       "name": "operations",
       "description": "Liveness and readiness"
+    },
+    {
+      "name": "incidents",
+      "description": "Incidents in the caller's tenant"
     }
   ]
 }

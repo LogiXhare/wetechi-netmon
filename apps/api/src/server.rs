@@ -171,6 +171,28 @@ impl Listener for TlsListener {
     }
 }
 
+/// The caller's address, for per-address limits. One type for both
+/// listeners: axum provides `SocketAddr` connection info only for its own
+/// `TcpListener`, and the orphan rule forbids adding it for ours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerAddr(pub SocketAddr);
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TcpListener>>
+    for PeerAddr
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, TcpListener>) -> Self {
+        PeerAddr(*stream.remote_addr())
+    }
+}
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsListener>>
+    for PeerAddr
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, TlsListener>) -> Self {
+        PeerAddr(*stream.remote_addr())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -356,7 +356,9 @@ Authentication is in place:
 - the bearer middleware: one `401` for every failure, per-address failure limiting, and `503` on an outage;
 - the `wetechinetmon-api token create|revoke|list` subcommand.
 
-Next: the incident endpoints.
+The first incident endpoint is `GET /api/v1/incidents/{id}`. It goes through `incident_postgres::queries`, which checks `incident.read` and scopes the read to the caller's tenant in one read-only snapshot. Another tenant's incident returns the same 404 as a missing one, and a PostgreSQL test proves it. The representation follows the API plan, with the gaps recorded as FU-54.
+
+Next: the list endpoint with cursor pagination, then the timeline, notes, detections, audit and the transitions.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
