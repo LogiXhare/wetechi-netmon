@@ -276,6 +276,34 @@ proptest! {
 
 /// A suppressed incident still ingests, links and counts: suppression
 /// hides nothing from the record.
+/// Gate 2: `executed` stays false on every linked event. Nothing in this
+/// release can act on traffic, so an event claiming it did is quarantined
+/// and changes nothing.
+#[test]
+fn an_event_claiming_an_executed_action_is_quarantined_and_never_linked() {
+    let mut fresh = uow();
+    let mut forged = event("det-9", 0, EventKind::Started, ADDR);
+    forged.executed = true;
+    let result = fresh
+        .ingest_detection_event(&correlator(), &forged)
+        .unwrap();
+    assert_eq!(
+        (result.outcome_kind, result.incident_id),
+        (IngestOutcomeKind::Quarantined, None)
+    );
+
+    let (mut uow, id, version) = opened();
+    let mut update = event("det-1", 1, EventKind::Updated, ADDR);
+    update.executed = true;
+    let result = uow.ingest_detection_event(&correlator(), &update).unwrap();
+    assert_eq!(result.outcome_kind, IngestOutcomeKind::Quarantined);
+    assert_eq!(uow.get(&id).unwrap().version, version, "nothing was linked");
+    // The genuine event with the same identity still links afterwards.
+    let genuine = event("det-1", 1, EventKind::Updated, ADDR);
+    let result = uow.ingest_detection_event(&correlator(), &genuine).unwrap();
+    assert_eq!(result.outcome_kind, IngestOutcomeKind::Updated);
+}
+
 #[test]
 fn a_suppressed_incident_still_accumulates_events() {
     let (mut uow, id, version) = opened();
