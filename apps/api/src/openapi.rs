@@ -60,6 +60,7 @@ pub struct ProblemDocument {
         crate::transitions::set_tag,
         crate::transitions::remove_tag,
         crate::export::export,
+        crate::whoami::whoami,
     ),
     components(schemas(
         ProblemDocument,
@@ -94,6 +95,7 @@ pub struct ProblemDocument {
         crate::create::CreateIncidentRequest,
         crate::export::Truncation,
         crate::export::IncidentExport,
+        crate::whoami::WhoAmI,
         crate::history::NoteView,
         crate::history::NoteList,
     )),
@@ -101,6 +103,7 @@ pub struct ProblemDocument {
     tags(
         (name = "operations", description = "Liveness and readiness"),
         (name = "incidents", description = "Incidents in the caller's tenant"),
+        (name = "identity", description = "Who the bearer token identifies"),
     )
 )]
 pub struct ApiDoc;

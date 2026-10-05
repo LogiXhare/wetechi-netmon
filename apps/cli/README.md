@@ -10,8 +10,7 @@ using it.
 
 ## Status
 
-The read commands and the commands that change an incident are
-implemented. `claim`, `export` and opening an incident come next in 5E.
+Every command in the [CLI plan](../../docs/architecture/incident-cli-plan.md) is implemented. The CLI also covers opening an incident and tags, which the API gained in 5D.
 
 ## Connecting
 
@@ -73,6 +72,13 @@ incidents suppress INCIDENT (--until TIME | --for 2h) --reason TEXT   (confirms)
 incidents severity set INCIDENT LEVEL [--reason TEXT]    (confirms when lowering)
 incidents priority set INCIDENT LEVEL
 incidents note add INCIDENT --message TEXT
+incidents claim INCIDENT                    (assign to yourself)
+incidents tag set INCIDENT KEY VALUE
+incidents tag remove INCIDENT KEY
+incidents export INCIDENT [--file PATH]     (a new file; never overwritten)
+incidents open --title T --severity S --target-scope host|prefix|slash24|hostgroup_total
+               --target X --direction incoming|outgoing|internal
+               [--priority P] [--description TEXT] [--address-family 4|6]
 ```
 
 ### Changing an incident safely
