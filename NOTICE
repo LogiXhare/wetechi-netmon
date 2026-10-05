@@ -63,6 +63,7 @@ also vendored:
   utoipa                  MIT OR Apache-2.0  https://github.com/juhaku/utoipa
   getrandom (direct use)  MIT OR Apache-2.0  https://github.com/rust-random/getrandom
   tokio-rustls (direct use)  MIT OR Apache-2.0  https://github.com/rustls/tokio-rustls
+  sha2 (direct use)       MIT OR Apache-2.0  https://github.com/RustCrypto/hashes
 
 One transitive dependency of axum carries an attribution licence:
 

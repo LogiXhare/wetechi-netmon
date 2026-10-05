@@ -14,6 +14,8 @@ The incident endpoints come next.
 | `problem` | RFC 9457 problem details. `ErrorCode` is the registry behind [docs/api/error-codes.md](../../docs/api/error-codes.md). Another tenant's incident is `incident.not_found`, and internal faults say only `api.internal`. |
 | `request_id` | A UUIDv7 per request, in `X-Request-Id`, every problem body and the tracing span. A client-sent id is never trusted. |
 | `rate_limit` | GCRA on `std` (no `unsafe`), bounded keys that fail closed when full, property-tested against the conformance bound. |
+| `auth` | Bearer-token authentication behind the `Authenticator` seam. Every failure is the same `401`, failed attempts are limited per source address, and an outage is `503`, not a lockout. |
+| `token_admin` | Issuing, revoking and listing tokens for the `token` subcommand. |
 | `server` | Loopback may be plaintext (for a same-host proxy). Any other bind requires TLS with rustls, and handshakes run off the accept loop with a deadline. |
 | `openapi` | The document generated from the handlers, checked against [docs/api/openapi.json](../../docs/api/openapi.json). |
 
@@ -36,6 +38,27 @@ wetechinetmon-api
 `GET /healthz` is liveness: it answers while the process runs.
 `GET /readyz` is readiness: `503 api.unavailable` until the database
 answers. Neither needs a token.
+
+## API tokens
+
+Every `/api/v1` request needs `Authorization: Bearer <token>`. Tokens are
+issued from the same binary, and the command talks straight to the
+database. The incident manager must have run once to create the schema
+(migration V15).
+
+```sh
+wetechinetmon-api token create --tenant acme --actor-id alice --role operator --days 90 --description "alice laptop"
+wetechinetmon-api token list --tenant acme
+wetechinetmon-api token revoke --token-id <uuid>
+```
+
+- The token (`wnm_` and 64 hex characters) is printed **once**. Only its
+  SHA-256 is stored, and `list` never shows it.
+- The roles are `viewer`, `operator`, `senior_operator` and `noc_lead`.
+  `platform_admin` cannot be given to a token. The table refuses it too.
+- Every token expires, after at most 366 days. A revoked or expired
+  token is refused like a wrong one: `401 api.unauthenticated`. Thirty
+  failures a minute from one address lock that address out with `429`.
 
 ## Changing the API
 
