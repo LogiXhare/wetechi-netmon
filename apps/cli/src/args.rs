@@ -86,6 +86,8 @@ pub enum Action {
     },
     AssignUser(String),
     AssignTeam(String),
+    /// Assign to the caller, as `GET /whoami` names them.
+    Claim,
     Severity {
         level: String,
         reason: Option<String>,
@@ -111,7 +113,7 @@ impl Action {
             Action::Close { .. } => "close",
             Action::Reopen { .. } => "reopen",
             Action::Suppress { .. } => "suppress",
-            Action::AssignUser(_) | Action::AssignTeam(_) => "assign",
+            Action::AssignUser(_) | Action::AssignTeam(_) | Action::Claim => "assign",
             Action::Severity { .. } => "severity",
             Action::Priority { .. } => "priority",
             Action::Note { .. } => "notes",
@@ -137,6 +139,19 @@ pub enum Command {
         query: Vec<(String, String)>,
     },
     NoteList(IncidentRef),
+    /// Opens an incident by hand (ADR 0039).
+    Open(OpenArgs),
+    /// Writes the export document to a new file, or to stdout.
+    Export {
+        incident: IncidentRef,
+        file: Option<String>,
+    },
+    /// Sets (`Some`) or removes (`None`) one tag.
+    Tag {
+        incident: IncidentRef,
+        key: String,
+        value: Option<String>,
+    },
     Change {
         incident: IncidentRef,
         action: Action,
@@ -145,6 +160,19 @@ pub enum Command {
         /// Answers the confirmation prompt in advance.
         yes: bool,
     },
+}
+
+/// `incidents open`, field for field the API request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenArgs {
+    pub title: String,
+    pub description: Option<String>,
+    pub severity: String,
+    pub priority: Option<String>,
+    pub target_scope: String,
+    pub target: String,
+    pub direction: String,
+    pub address_family: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +217,13 @@ Changing (each reads the current version first unless --expected-version):
   incidents severity set INCIDENT LEVEL [--reason TEXT]   (confirms when lowering)
   incidents priority set INCIDENT LEVEL
   incidents note add INCIDENT --message TEXT
+  incidents claim INCIDENT                 (assign to yourself)
+  incidents tag set INCIDENT KEY VALUE
+  incidents tag remove INCIDENT KEY
+  incidents export INCIDENT [--file PATH]  (a new file, never overwritten)
+  incidents open --title T --severity S --target-scope host|prefix|slash24|hostgroup_total
+                 --target X --direction incoming|outgoing|internal
+                 [--priority P] [--description TEXT] [--address-family 4|6]
 
   --yes answers a confirmation in advance; without a terminal it is required.
   --expected-version N pins the version instead of reading it.
@@ -223,6 +258,12 @@ const VALUE_FLAGS: &[(&str, &str)] = &[
     ("--user", "user"),
     ("--team", "team"),
     ("--message", "message"),
+    ("--file", "file"),
+    ("--title", "title"),
+    ("--description", "description"),
+    ("--target-scope", "target_scope"),
+    ("--target", "target"),
+    ("--address-family", "address_family"),
 ];
 
 /// `list` flags that may repeat or take a comma-separated list.
@@ -451,6 +492,51 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             let body = flags.require("message", "note add")?;
             change(flags, "note add", reference(id), Action::Note { body })?
         }
+        ["incidents", "open"] => {
+            let address_family = match flags.take("address_family")? {
+                Some(text) => Some(
+                    text.parse()
+                        .map_err(|_| usage("--address-family is 4 or 6"))?,
+                ),
+                None => None,
+            };
+            let open = OpenArgs {
+                title: flags.require("title", "open")?,
+                description: flags.take("description")?,
+                severity: flags.require("severity", "open")?,
+                priority: flags.take("priority")?,
+                target_scope: flags.require("target_scope", "open")?,
+                target: flags.require("target", "open")?,
+                direction: flags.require("direction", "open")?,
+                address_family,
+            };
+            flags.finish("open", false)?;
+            Command::Open(open)
+        }
+        ["incidents", "export", id] => {
+            let file = flags.take("file")?;
+            flags.finish("export", false)?;
+            Command::Export {
+                incident: reference(id),
+                file,
+            }
+        }
+        ["incidents", "tag", "set", id, key, value] => {
+            flags.finish("tag set", false)?;
+            Command::Tag {
+                incident: reference(id),
+                key: (*key).to_string(),
+                value: Some((*value).to_string()),
+            }
+        }
+        ["incidents", "tag", "remove", id, key] => {
+            flags.finish("tag remove", false)?;
+            Command::Tag {
+                incident: reference(id),
+                key: (*key).to_string(),
+                value: None,
+            }
+        }
         ["incidents", "severity", "set", id, level] => {
             let reason = flags.take("reason")?;
             let action = Action::Severity {
@@ -472,6 +558,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 "monitor" => Action::Monitor,
                 "unassign" | "release" => Action::Unassign,
                 "unsuppress" => Action::Unsuppress,
+                "claim" => Action::Claim,
                 "resolve" => Action::Resolve {
                     note: flags.take("note")?,
                 },
@@ -534,6 +621,7 @@ fn is_change_verb(verb: &str) -> bool {
             | "reopen"
             | "suppress"
             | "assign"
+            | "claim"
     )
 }
 
@@ -683,6 +771,7 @@ mod tests {
                 reason: Some("subsided".into())
             }
         );
+        assert_eq!(action("incidents claim X"), Action::Claim);
         assert_eq!(
             action("incidents priority set X P3"),
             Action::Priority { level: "P3".into() }
@@ -691,6 +780,49 @@ mod tests {
             action("incidents note add X --message hello"),
             Action::Note {
                 body: "hello".into()
+            }
+        );
+    }
+
+    #[test]
+    fn open_export_and_tags_parse() {
+        let Command::Open(open) = run(
+            "incidents open --title Spoofing --severity major --target-scope host              --target 203.0.113.5 --direction incoming --address-family 4",
+        )
+        .unwrap()
+        .command
+        else {
+            panic!("not open")
+        };
+        assert_eq!(
+            (
+                open.title.as_str(),
+                open.target.as_str(),
+                open.address_family
+            ),
+            ("Spoofing", "203.0.113.5", Some(4))
+        );
+        assert_eq!(
+            run("incidents export X --file out.json").unwrap().command,
+            Command::Export {
+                incident: reference("X"),
+                file: Some("out.json".into())
+            }
+        );
+        assert_eq!(
+            run("incidents tag set X env prod").unwrap().command,
+            Command::Tag {
+                incident: reference("X"),
+                key: "env".into(),
+                value: Some("prod".into())
+            }
+        );
+        assert_eq!(
+            run("incidents tag remove X env").unwrap().command,
+            Command::Tag {
+                incident: reference("X"),
+                key: "env".into(),
+                value: None
             }
         );
     }
@@ -775,6 +907,12 @@ mod tests {
             "incidents note add X",
             "incidents severity set X",
             "incidents --yes=true acknowledge X",
+            "incidents open --title t --severity major",
+            "incidents open --title t --severity major --target-scope host --target x --direction incoming --address-family six",
+            "incidents export X --yes",
+            "incidents tag set X env",
+            "incidents tag remove X env --reason r",
+            "incidents claim X --user u",
         ] {
             assert!(run(line).is_err(), "{line} should be refused");
         }

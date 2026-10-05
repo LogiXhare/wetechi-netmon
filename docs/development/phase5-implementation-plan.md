@@ -429,7 +429,13 @@ The RFC 3339 helpers moved to `wetechinetmon_common::rfc3339`, so the API and th
 - asks before closing, reopening, suppressing and lowering severity. With no terminal and no `--yes`, that is an error and nothing is sent;
 - exits `4` on a `409`, showing the current version and state, without re-issuing.
 
-Next: `claim`, which needs the caller's identity, `export`, and opening an incident.
+5E-3 completes the command set:
+
+- `claim`, through a new `GET /api/v1/whoami` that answers with the token's own tenant, actor, role and permission names (`Permission::name`, checked against the security model);
+- `export`, to stdout or a new file that is never overwritten;
+- `open`, and `tag set` and `tag remove`.
+
+Every command maps to one endpoint, and the CLI holds no business logic. This meets the 5E exit criterion.
 
 Tests: output formats; exit codes per error class; confirmation required
 without `--yes`; **no TTY plus no `--yes` is an error, never an assumed

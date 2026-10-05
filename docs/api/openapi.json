@@ -3286,6 +3286,52 @@
         ]
       }
     },
+    "/api/v1/whoami": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "The caller's identity and permissions.",
+        "operationId": "whoami",
+        "responses": {
+          "200": {
+            "description": "The caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoAmI"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No usable token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -4414,6 +4460,40 @@
           }
         },
         "additionalProperties": false
+      },
+      "WhoAmI": {
+        "type": "object",
+        "description": "The caller, as its token identifies it.",
+        "required": [
+          "tenant_id",
+          "actor_type",
+          "actor_id",
+          "role",
+          "permissions"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "actor_type": {
+            "type": "string",
+            "description": "operator or service_account."
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the role grants, such as `incident.read`."
+          },
+          "role": {
+            "type": "string",
+            "description": "viewer, operator, senior_operator or noc_lead."
+          },
+          "tenant_id": {
+            "type": "string"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -4432,6 +4512,10 @@
     {
       "name": "incidents",
       "description": "Incidents in the caller's tenant"
+    },
+    {
+      "name": "identity",
+      "description": "Who the bearer token identifies"
     }
   ]
 }

@@ -44,6 +44,7 @@ answers. Neither needs a token.
 | Method | Path | Permission | Limit |
 |---|---|---|---|
 | `GET` | `/healthz` | none | none |
+| `GET` | `/api/v1/whoami` | any token | 120/min per actor |
 | `GET` | `/readyz` | none | none |
 | `GET` | `/api/v1/incidents` | `incident.list` | 120/min per actor; `include_total` costs 2 |
 | `POST` | `/api/v1/incidents` | `incident.create` | 60/min per actor |

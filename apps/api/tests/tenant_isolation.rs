@@ -318,4 +318,20 @@ async fn no_endpoint_crosses_the_tenant_boundary() {
     );
     assert_ne!(theirs["incident_id"], id.as_str());
     assert_eq!(theirs["tenant_id"], "globex");
+
+    // --- whoami answers with the token's own identity, never another's ---
+    let (status, me) = send(&app, &Method::GET, "/api/v1/whoami", &outsider, "", None).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["tenant_id"], "globex");
+    assert_eq!(me["actor_type"], "operator");
+    assert_eq!(me["actor_id"], "globex-noc_lead");
+    assert_eq!(me["role"], "noc_lead");
+    let permissions: Vec<&str> = me["permissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    assert!(permissions.contains(&"incident.export"), "{permissions:?}");
+    assert!(!permissions.contains(&"incident.closure_policy.override"));
 }

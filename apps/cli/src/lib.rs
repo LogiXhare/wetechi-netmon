@@ -16,7 +16,7 @@ use hyper::Method;
 use serde_json::{json, Value};
 use wetechinetmon_common::rfc3339::{parse_rfc3339, rfc3339};
 
-use crate::args::{Action, Command, IncidentRef, Invocation, Output, Until};
+use crate::args::{Action, Command, IncidentRef, Invocation, OpenArgs, Output, Until};
 use crate::client::{Call, Client, Reply};
 use crate::config::Environment;
 
@@ -315,6 +315,15 @@ async fn execute(client: &Client, invocation: &Invocation, io: &mut Io<'_>) -> R
             let _ = write!(io.out, "{}", output::notes(&list));
             Ok(())
         }
+        Command::Open(open) => open_incident(client, open, io, output).await,
+        Command::Export { incident, file } => {
+            export(client, incident, file.as_deref(), io, output).await
+        }
+        Command::Tag {
+            incident,
+            key,
+            value,
+        } => tag(client, incident, key, value.as_deref(), io, output).await,
         Command::Change {
             incident,
             action,
@@ -437,6 +446,14 @@ fn body(action: &Action, version: Option<u64>, now_micros: i64) -> Result<Value,
         }
         Action::AssignUser(user) => json!({ "user_id": user }),
         Action::AssignTeam(team) => json!({ "team_id": team }),
+        // Resolved to AssignUser before a body is built.
+        Action::Claim => {
+            return Err(Stop::new(
+                exit::FAILURE,
+                "Error: claim was not resolved to a user
+",
+            ))
+        }
         Action::Severity { level, reason } => json!({ "severity": level, "reason": reason }),
         Action::Priority { level } => json!({ "priority": level }),
         Action::Note { body } => json!({ "body": body }),
@@ -463,6 +480,13 @@ async fn change(
     output: Output,
 ) -> Result<(), Stop> {
     let id = resolve_id(client, incident, io, output).await?;
+    let claimed;
+    let action = if matches!(action, Action::Claim) {
+        claimed = Action::AssignUser(caller(client, io, output).await?);
+        &claimed
+    } else {
+        action
+    };
     let needs_current = (action.is_versioned() && expected_version.is_none())
         || matches!(action, Action::Severity { .. });
     let current = if needs_current {
@@ -535,6 +559,145 @@ fn field_or(value: &Value, name: &str, fallback: &str) -> String {
         Value::Null => output::clean(fallback),
         other => other.to_string(),
     }
+}
+
+/// The caller's operator id, from `GET /whoami`, for `claim`.
+async fn caller(client: &Client, io: &mut Io<'_>, output: Output) -> Result<String, Stop> {
+    let reply = fetch(client, get("/api/v1/whoami".to_string()), io, output).await?;
+    let me = parse_json(&reply.body)?;
+    match (me["actor_type"].as_str(), me["actor_id"].as_str()) {
+        (Some("operator"), Some(id)) if !id.is_empty() => Ok(id.to_string()),
+        _ => Err(Stop::new(
+            exit::USAGE,
+            "Error: claim assigns to the operator the token belongs to, and this token \
+             is not an operator's. Use incidents assign --user instead.\n",
+        )),
+    }
+}
+
+/// `incidents open`: `POST /api/v1/incidents` with one idempotency key.
+async fn open_incident(
+    client: &Client,
+    open: &OpenArgs,
+    io: &mut Io<'_>,
+    output: Output,
+) -> Result<(), Stop> {
+    let mut body = json!({
+        "title": open.title,
+        "description": open.description,
+        "severity": open.severity,
+        "priority": open.priority,
+        "target_scope": open.target_scope,
+        "target": open.target,
+        "direction": open.direction,
+        "address_family": open.address_family,
+    });
+    body.as_object_mut()
+        .expect("an object")
+        .retain(|_, value| !value.is_null());
+    let call = Call {
+        method: Method::POST,
+        path: "/api/v1/incidents".to_string(),
+        body: Some(body.to_string().into_bytes()),
+        idempotency_key: Some(idempotency_key(io.now_micros)),
+    };
+    let reply = fetch(client, call, io, output).await?;
+    if output == Output::Json {
+        print_verbatim(io, &reply.body);
+        return Ok(());
+    }
+    let opened = parse_json(&reply.body)?;
+    let _ = writeln!(
+        io.out,
+        "Opened {} ({})",
+        field_or(&opened, "incident_number", "?"),
+        field_or(&opened, "incident_id", "?"),
+    );
+    Ok(())
+}
+
+/// `incidents export`: the API's document, verbatim, to a new file or
+/// stdout. An existing file is never overwritten.
+async fn export(
+    client: &Client,
+    incident: &IncidentRef,
+    file: Option<&str>,
+    io: &mut Io<'_>,
+    output: Output,
+) -> Result<(), Stop> {
+    let id = resolve_id(client, incident, io, output).await?;
+    let call = Call {
+        method: Method::POST,
+        path: format!("/api/v1/incidents/{id}/export"),
+        body: None,
+        idempotency_key: None,
+    };
+    let reply = fetch(client, call, io, output).await?;
+    let Some(path) = file else {
+        print_verbatim(io, &reply.body);
+        return Ok(());
+    };
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut handle| handle.write_all(&reply.body));
+    match written {
+        Ok(()) => {
+            let _ = writeln!(io.err, "Exported to {path}");
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(Stop::new(
+            exit::USAGE,
+            format!("Error: {path} exists; an export never overwrites a file\n"),
+        )),
+        Err(error) => Err(Stop::new(
+            exit::FAILURE,
+            format!("Error: {path}: {error}\n"),
+        )),
+    }
+}
+
+/// `incidents tag set|remove`: `PUT` or `DELETE` one tag.
+async fn tag(
+    client: &Client,
+    incident: &IncidentRef,
+    key: &str,
+    value: Option<&str>,
+    io: &mut Io<'_>,
+    output: Output,
+) -> Result<(), Stop> {
+    let id = resolve_id(client, incident, io, output).await?;
+    let path = format!("/api/v1/incidents/{id}/tags/{}", encode(key));
+    let call = match value {
+        Some(value) => Call {
+            method: Method::PUT,
+            path,
+            body: Some(json!({ "value": value }).to_string().into_bytes()),
+            idempotency_key: Some(idempotency_key(io.now_micros)),
+        },
+        None => Call {
+            method: Method::DELETE,
+            path,
+            body: None,
+            idempotency_key: Some(idempotency_key(io.now_micros)),
+        },
+    };
+    let reply = fetch(client, call, io, output).await?;
+    if output == Output::Json {
+        print_verbatim(io, &reply.body);
+        return Ok(());
+    }
+    let after = parse_json(&reply.body)?;
+    let _ = writeln!(
+        io.out,
+        "{}: tag {} {}; version {}",
+        field_or(&after, "incident_number", &incident.0),
+        output::clean(key),
+        if value.is_some() { "set" } else { "removed" },
+        field_or(&after, "version", "?"),
+    );
+    Ok(())
 }
 
 #[cfg(test)]

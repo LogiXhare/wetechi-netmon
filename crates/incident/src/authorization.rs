@@ -46,6 +46,38 @@ pub enum Permission {
     PlatformIncidentAdmin,
 }
 
+impl Permission {
+    /// The dotted name the security model and the API use, such as
+    /// `incident.note.create`. Stable: an API client may switch on it.
+    pub fn name(self) -> &'static str {
+        use Permission::*;
+        match self {
+            IncidentRead => "incident.read",
+            IncidentList => "incident.list",
+            IncidentCreate => "incident.create",
+            IncidentUpdate => "incident.update",
+            IncidentAcknowledge => "incident.acknowledge",
+            IncidentAssign => "incident.assign",
+            IncidentInvestigate => "incident.investigate",
+            IncidentNoteCreate => "incident.note.create",
+            IncidentNoteCustomerVisible => "incident.note.customer_visible",
+            IncidentSeverityChange => "incident.severity.change",
+            IncidentPriorityChange => "incident.priority.change",
+            IncidentResolve => "incident.resolve",
+            IncidentClose => "incident.close",
+            IncidentReopen => "incident.reopen",
+            IncidentSuppress => "incident.suppress",
+            IncidentExport => "incident.export",
+            IncidentAuditRead => "incident.audit.read",
+            IncidentConfigRead => "incident.config.read",
+            IncidentClosurePolicyOverride => "incident.closure_policy.override",
+            IncidentIngest => "incident.ingest",
+            PlatformIncidentReadAll => "platform.incident.read_all",
+            PlatformIncidentAdmin => "platform.incident.admin",
+        }
+    }
+}
+
 /// Who is performing an action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Actor {
@@ -193,6 +225,17 @@ impl PermissionResolver for FixedBundleResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every name is the one the security model's permission table uses.
+    #[test]
+    fn names_match_the_security_model() {
+        let document = include_str!("../../../docs/architecture/incident-security-model.md");
+        let resolver = FixedBundleResolver;
+        for permission in resolver.permissions_for("platform_admin") {
+            let row = format!("| `{}` |", permission.name());
+            assert!(document.contains(&row), "the security model lacks {row}");
+        }
+    }
 
     #[test]
     fn closure_policy_override_is_in_no_default_bundle() {

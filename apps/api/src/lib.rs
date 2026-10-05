@@ -26,6 +26,7 @@ pub mod server;
 pub mod time;
 pub mod token_admin;
 pub mod transitions;
+pub mod whoami;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -84,6 +85,7 @@ pub fn router(state: AppState) -> Router {
     // Every /api/v1 route requires a principal. `route_layer` applies only
     // to matched routes, so an unknown path is a plain 404 either way.
     let api = Router::new()
+        .route("/whoami", get(whoami::whoami))
         .route(
             "/incidents",
             get(list::list_incidents).post(create::create_incident),
