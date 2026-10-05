@@ -177,5 +177,5 @@ The two alerts the decision calls for exist as the `outbox_pending` and
 - [x] **BQ-7** — dependency approval.
 - [ ] Revisit when correlation needs more than one node; NATS is the
       recorded direction (ADR 0004).
-- [ ] Runbook entries for outbox backlog and dead-letter review —
-      [operations plan](../../operations/incident-runbook-plan.md).
+- [x] Runbook entries for outbox backlog and dead-letter review —
+      [incident runbook](../../operations/incident-runbook.md).
