@@ -60,6 +60,16 @@ const CLICKHOUSE_EXPORT_INTERVAL: Duration = Duration::from_secs(15);
 /// Runs the collector until the process is asked to stop (Ctrl+C or, on
 /// Unix, SIGTERM) or an unrecoverable I/O error occurs binding a socket.
 pub async fn run(config: Config) -> std::io::Result<()> {
+    run_until(config, std::future::pending()).await
+}
+
+/// [`run`], also stopping when `shutdown` completes, so a test can run the
+/// real collector in-process and stop it cleanly.
+pub async fn run_until(
+    config: Config,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> std::io::Result<()> {
+    tokio::pin!(shutdown);
     let (metrics, registry) =
         Metrics::new().expect("metric registration should never collide at startup");
     let metrics_registry = registry.clone();
@@ -300,6 +310,10 @@ pub async fn run(config: Config) -> std::io::Result<()> {
                         );
                     }
                 }
+            }
+            () = &mut shutdown => {
+                tracing::info!("shutdown requested, shutting down");
+                break;
             }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Ctrl+C received, shutting down");
