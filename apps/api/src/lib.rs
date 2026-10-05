@@ -11,6 +11,7 @@
 //! including unknown paths and wrong methods.
 
 pub mod auth;
+pub mod body;
 pub mod config;
 pub mod history;
 pub mod incidents;
@@ -22,18 +23,22 @@ pub mod request_id;
 pub mod server;
 pub mod time;
 pub mod token_admin;
+pub mod transitions;
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use deadpool_postgres::Pool;
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
 use wetechinetmon_incident::authorization::{FixedBundleResolver, PermissionResolver};
+use wetechinetmon_incident::clock::SystemClock;
+use wetechinetmon_incident_postgres::id::UuidV7IncidentGenerator;
 use wetechinetmon_incident_postgres::pool::acquire;
+use wetechinetmon_incident_postgres::service::IncidentPersistence;
 
 use crate::auth::{AuthLayerState, TokenAuthenticator};
 use crate::problem::{ErrorCode, Problem};
@@ -51,6 +56,8 @@ pub struct AppState {
     pub resolver: Arc<dyn PermissionResolver>,
     /// Per-actor limits for each surface (gate 6).
     pub limits: Arc<incidents::Limits>,
+    /// The command path: the same unit of work the incident manager runs.
+    pub incidents: Arc<IncidentPersistence>,
 }
 
 impl AppState {
@@ -60,6 +67,10 @@ impl AppState {
             auth: AuthLayerState::new(Arc::new(TokenAuthenticator::new(pool.clone()))),
             resolver: Arc::new(FixedBundleResolver),
             limits: Arc::new(incidents::Limits::default()),
+            incidents: Arc::new(IncidentPersistence::new(
+                Arc::new(UuidV7IncidentGenerator::new()),
+                Arc::new(SystemClock),
+            )),
             pool,
         }
     }
@@ -80,6 +91,45 @@ pub fn router(state: AppState) -> Router {
             get(history::detections),
         )
         .route("/incidents/{incident_id}/audit", get(history::audit))
+        .route(
+            "/incidents/{incident_id}/acknowledge",
+            post(transitions::acknowledge),
+        )
+        .route(
+            "/incidents/{incident_id}/investigate",
+            post(transitions::investigate),
+        )
+        .route(
+            "/incidents/{incident_id}/monitor",
+            post(transitions::monitor),
+        )
+        .route(
+            "/incidents/{incident_id}/resolve",
+            post(transitions::resolve),
+        )
+        .route("/incidents/{incident_id}/close", post(transitions::close))
+        .route("/incidents/{incident_id}/reopen", post(transitions::reopen))
+        .route(
+            "/incidents/{incident_id}/suppress",
+            post(transitions::suppress),
+        )
+        .route(
+            "/incidents/{incident_id}/unsuppress",
+            post(transitions::unsuppress),
+        )
+        .route("/incidents/{incident_id}/assign", post(transitions::assign))
+        .route(
+            "/incidents/{incident_id}/unassign",
+            post(transitions::unassign),
+        )
+        .route(
+            "/incidents/{incident_id}/severity",
+            post(transitions::severity),
+        )
+        .route(
+            "/incidents/{incident_id}/priority",
+            post(transitions::priority),
+        )
         .route_layer(axum::middleware::from_fn_with_state(
             state.auth.clone(),
             auth::require_principal,

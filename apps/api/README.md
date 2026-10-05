@@ -51,6 +51,20 @@ answers. Neither needs a token.
 | `GET` | `/api/v1/incidents/{id}/notes` | `incident.read` | 120/min per actor |
 | `GET` | `/api/v1/incidents/{id}/detections` | `incident.read` | 120/min per actor |
 | `GET` | `/api/v1/incidents/{id}/audit` | `incident.audit.read` | 30/min per actor |
+| `POST` | `/api/v1/incidents/{id}/acknowledge` | `incident.acknowledge` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/investigate` | `incident.investigate` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/monitor` | `incident.investigate` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/resolve` | `incident.resolve` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/close` | `incident.close` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/reopen` | `incident.reopen` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/suppress` | `incident.suppress` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/unsuppress` | `incident.suppress` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/assign` | `incident.assign` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/unassign` | `incident.assign` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/severity` | `incident.severity.change` | 60/min per actor |
+| `POST` | `/api/v1/incidents/{id}/priority` | `incident.priority.change` | 60/min per actor |
+
+Every `POST` needs an `Idempotency-Key` header (16 to 255 characters) and `expected_version` in its JSON body. A retry with the same key and body replays the first outcome; a stale version is `409 incident.version_conflict`. Each answers with the incident as it now is.
 
 The full contract is the generated [OpenAPI document](../../docs/api/openapi.json). Another tenant's incident is `404 incident.not_found`, indistinguishable from a missing one.
 

@@ -373,7 +373,15 @@ An incident's history is read through four sub-resources (5D-5): `timeline`, `no
 - needs `incident.read`, except `audit`, which needs `incident.audit.read` and has the tighter audit limit;
 - is keyset-paginated oldest first, except notes, which the domain bounds and which are returned whole.
 
-Next: the transitions, with `Idempotency-Key` and `expected_version`.
+The transitions are twelve `POST` actions (5D-6), from `acknowledge` to `priority`. Each one:
+
+- requires an `Idempotency-Key` and an `expected_version`;
+- is decided by the same unit of work the incident manager runs, which checks the permission, the tenant and the state machine;
+- answers with the incident as it now is.
+
+A stale version names the current version and state. A suppression is bounded at 30 days. The acknowledge `note` waits on the domain (FU-55).
+
+Next: notes, manual creation, tags and export.
 
 Endpoints from the [API plan](../architecture/incident-api-plan.md);
 authorization at the command boundary; cursor pagination; filtering and
