@@ -570,7 +570,7 @@ fn micros_of(value: SystemTime, column: &'static str) -> Result<i64, PersistErro
         .map_err(|e| PersistError::corrupt(column, e.to_string()))
 }
 
-fn required_micros(row: &Row, column: &'static str) -> Result<i64, PersistError> {
+pub(crate) fn required_micros(row: &Row, column: &'static str) -> Result<i64, PersistError> {
     micros_of(row.try_get(column)?, column)
 }
 

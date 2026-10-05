@@ -34,13 +34,20 @@ pub struct ProblemDocument {
         description = "Incident management REST API. Errors are RFC 9457 problem details with a stable `error` code.",
         license(name = "Apache-2.0", identifier = "Apache-2.0"),
     ),
-    paths(crate::healthz, crate::readyz, crate::incidents::get_incident),
+    paths(
+        crate::healthz,
+        crate::readyz,
+        crate::list::list_incidents,
+        crate::incidents::get_incident,
+    ),
     components(schemas(
         ProblemDocument,
         crate::Health,
         crate::incidents::IncidentView,
         crate::incidents::SuppressionView,
         crate::incidents::PolicyRefView,
+        crate::list::IncidentSummaryView,
+        crate::list::IncidentPage,
     )),
     modifiers(&BearerAuth),
     tags(
