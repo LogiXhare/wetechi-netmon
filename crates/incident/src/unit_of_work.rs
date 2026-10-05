@@ -349,8 +349,11 @@ impl IncidentUnitOfWork {
             return Err(IncidentError::TenantMismatch);
         }
 
-        // 1. Schema gate.
-        if event.schema_version > wetechinetmon_detector::EVENT_SCHEMA_VERSION {
+        // 1. Schema and safety gate. Nothing in this release can act on
+        // traffic (ADR 0007, ADR 0011), so an event reporting an executed
+        // action is forged or corrupt: quarantined, never linked, so no
+        // incident ever holds one (Gate 2).
+        if event.schema_version > wetechinetmon_detector::EVENT_SCHEMA_VERSION || event.executed {
             return Ok(IngestResult {
                 outcome_kind: IngestOutcomeKind::Quarantined,
                 incident_id: None,

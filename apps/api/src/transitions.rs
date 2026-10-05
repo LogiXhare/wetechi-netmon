@@ -580,7 +580,7 @@ async fn tag_command(
         let command = command()?;
         // A tag key arrives in the path, outside the body's NUL check.
         if let Command::AddTag { key: tag, .. } | Command::RemoveTag { key: tag } = &command {
-            if tag.contains(' ') {
+            if tag.contains('\0') {
                 return Err(Problem::new(ErrorCode::InvalidRequest)
                     .with_detail("text may not contain a NUL character"));
             }
